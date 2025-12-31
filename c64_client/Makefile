@@ -37,10 +37,12 @@ $(PRG): $(OBJECTS)
 	@echo "Build complete: $(PRG)"
 	@ls -lh $(PRG)
 
-# Compile C files
+# Compile C files (compile to .s then assemble to .o)
 $(TARGETDIR)/%.o: src/%.c
 	@echo "Compiling $<..."
-	CC65_HOME=$(CC65_HOME) $(CC) $(CFLAGS) -c $< -o $@
+	CC65_HOME=$(CC65_HOME) cc65 $(CFLAGS) $< -o $(TARGETDIR)/$*.s
+	@echo "Assembling $*.s..."
+	CC65_HOME=$(CC65_HOME) $(AS) $(ASFLAGS) -o $@ $(TARGETDIR)/$*.s
 
 # Assemble ASM files
 $(TARGETDIR)/%.o: src/%.s
