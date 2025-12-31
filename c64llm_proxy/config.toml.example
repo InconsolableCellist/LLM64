@@ -1,0 +1,22 @@
+# C64 LLM Proxy Configuration
+# Copy to config.toml and edit as needed
+
+[api]
+# OpenAI API endpoint (or compatible)
+base_url = "https://api.openai.com/v1"
+
+# API key (can also use OPENAI_API_KEY environment variable - recommended)
+# key = "sk-..."
+
+# Model to use
+model = "gpt-3.5-turbo"
+
+# Temperature (0.0 - 2.0, lower = more focused)
+temperature = 0.7
+
+# Maximum tokens in response
+max_tokens = 2000
+
+[storage]
+# Directory for conversation storage
+data_dir = "./data"
