@@ -6,9 +6,9 @@ import logging
 import sys
 from pathlib import Path
 
-from tcp_server import C64Server
-from api_client import APIClient
-from config import Config
+from .tcp_server import C64Server
+from .api_client import APIClient
+from .config import Config
 
 
 def setup_logging(verbose: bool = False):

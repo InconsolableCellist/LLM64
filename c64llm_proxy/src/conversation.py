@@ -22,7 +22,7 @@ class ConversationManager:
 
     def new_conversation(self) -> int:
         """Start a new conversation"""
-        conv_id = int(time.time() * 1000)  # Millisecond precision for uniqueness
+        conv_id = int(time.time())  # Unix timestamp (32-bit safe)
         self.current_id = conv_id
         self.current_conversation = {
             'id': conv_id,

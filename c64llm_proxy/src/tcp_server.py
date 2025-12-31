@@ -3,8 +3,8 @@
 import asyncio
 import logging
 from typing import Optional
-from protocol import ProtocolHandler
-from conversation import ConversationManager
+from .protocol import ProtocolHandler
+from .conversation import ConversationManager
 
 
 class ClientHandler:

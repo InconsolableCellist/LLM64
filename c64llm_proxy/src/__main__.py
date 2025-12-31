@@ -1,6 +1,6 @@
 """Allow running as python -m src"""
 
-from main import main
+from .main import main
 import asyncio
 
 if __name__ == '__main__':
