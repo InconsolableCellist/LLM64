@@ -1,51 +1,77 @@
 # C64 LLM Interface - System Architecture & Communication Protocol
 
 ## Overview
-A Commodore 64 client application communicates over serial (User Port) with a Linux host that proxies requests to an OpenAI-compatible API. The system enables interactive LLM chat sessions with full conversation history.
+A Commodore 64 client application communicates over TCP/IP (via the C64 Ultimate's WiFi-enabled emulated ACIA modem) with a Linux host that proxies requests to an OpenAI-compatible API. The system enables interactive LLM chat sessions with full conversation history.
 
 ## High-Level Architecture
 
 ```
-┌─────────────────────────────────────┐
-│         Commodore 64                │
-│  ┌──────────────────────────────┐   │
-│  │   TUI Application (C/ASM)    │   │
-│  │  - Text Editor               │   │
-│  │  - Chat Display              │   │
-│  │  - Conversation Selector     │   │
-│  │  - F-key Menu System         │   │
-│  └──────────────┬───────────────┘   │
-│                 │                   │
-│  ┌──────────────▼───────────────┐   │
-│  │  Serial I/O Layer (ASM)      │   │
-│  │  - Non-blocking TX/RX        │   │
-│  │  - Protocol handler          │   │
-│  └──────────────┬───────────────┘   │
-└─────────────────┼───────────────────┘
-                  │ User Port (1200-2400 baud)
-                  │ RS-232 TTL levels
-┌─────────────────▼───────────────────┐
-│         Linux Host                  │
-│  ┌──────────────────────────────┐   │
-│  │  Serial Proxy (Python)       │   │
-│  │  - Protocol handler          │   │
-│  │  - Conversation manager      │   │
-│  └──────┬───────────────┬───────┘   │
-│         │               │           │
-│  ┌──────▼─────┐  ┌──────▼────────┐  │
-│  │ OpenAI API │  │ Conversation  │  │
-│  │ Client     │  │ Storage (JSON)│  │
-│  └────────────┘  └───────────────┘  │
-└─────────────────────────────────────┘
+┌─────────────────────────────────────────┐
+│         Commodore 64 Ultimate           │
+│  ┌──────────────────────────────────┐   │
+│  │   TUI Application (C/ASM)        │   │
+│  │  - Text Editor                   │   │
+│  │  - Chat Display                  │   │
+│  │  - Conversation Selector         │   │
+│  │  - F-key Menu System             │   │
+│  └──────────────┬───────────────────┘   │
+│                 │                       │
+│  ┌──────────────▼───────────────────┐   │
+│  │  ACIA Driver (ASM)               │   │
+│  │  - 6551 registers at $DE00       │   │
+│  │  - IRQ-driven RX                 │   │
+│  │  - Protocol handler              │   │
+│  └──────────────┬───────────────────┘   │
+│                 │                       │
+│  ┌──────────────▼───────────────────┐   │
+│  │  Ultimate WiFi Modem Emulation   │   │
+│  │  - Hayes AT command set          │   │
+│  │  - TCP/IP over WiFi              │   │
+│  └──────────────┬───────────────────┘   │
+└─────────────────┼───────────────────────┘
+                  │ WiFi TCP/IP
+                  │ (9600 baud ACIA interface)
+┌─────────────────▼───────────────────────┐
+│         Linux Host                      │
+│  ┌──────────────────────────────────┐   │
+│  │  TCP Server (Python)             │   │
+│  │  - Protocol handler              │   │
+│  │  - Conversation manager          │   │
+│  └──────┬───────────────┬───────────┘   │
+│         │               │               │
+│  ┌──────▼─────┐  ┌──────▼────────┐      │
+│  │ OpenAI API │  │ Conversation  │      │
+│  │ Client     │  │ Storage (JSON)│      │
+│  └────────────┘  └───────────────┘      │
+└─────────────────────────────────────────┘
 ```
 
 ## Communication Protocol
 
 ### Physical Layer
-- **Interface**: C64 User Port with RS-232 adapter or software bit-banging
-- **Baud Rate**: 1200 baud (reliable) or 2400 baud (if adapter supports)
+- **Interface**: 6551 ACIA (emulated by C64 Ultimate at $DE00-$DE03)
+- **Transport**: TCP/IP over WiFi (Ultimate's built-in modem emulation)
+- **Baud Rate**: 9600 baud (or higher: 19200 possible)
 - **Format**: 8N1 (8 data bits, no parity, 1 stop bit)
-- **Flow Control**: Software (XON/XOFF) with protocol-level ACKs
+- **Flow Control**: Hardware (RTS/CTS) + protocol-level ACKs
+
+### Connection Establishment
+The C64 uses Hayes AT commands to establish a TCP connection:
+```
+C64 → Modem:  ATZ              (reset modem)
+Modem → C64:  OK
+C64 → Modem:  ATE0             (echo off)
+Modem → C64:  OK
+C64 → Modem:  ATDThost:6400    (dial = TCP connect)
+Modem → C64:  CONNECT 9600
+[Binary protocol begins]
+```
+
+**Configuration:**
+- Default server: Configurable hostname/IP (e.g., "raspberrypi.local:6400")
+- Port: 6400 (configurable)
+- Timeout: 30 seconds for connection
+- Fallback: Display error if connection fails
 
 ### Protocol Design Principles
 1. **Binary frame-based** - not line-based text
@@ -210,14 +236,14 @@ C64 → Linux:  ACK
 5. **API Errors**: Linux sends CHAT_ERROR with error message
 
 ### Flow Control
-- C64 sends XON/XOFF when receive buffer >75% full
-- Linux respects XON/XOFF immediately
+- ACIA hardware flow control (RTS/CTS) handles buffer management
 - Protocol ACKs provide additional backpressure
-- C64 maintains ~512-byte receive buffer
+- C64 maintains ~1KB receive buffer (larger due to better performance)
 - Linux maintains per-conversation state
 
 ### Responsiveness Strategy
-- **Non-blocking I/O**: C64 polls serial in main loop
+- **IRQ-driven RX**: ACIA interrupt on byte received (very responsive)
+- **Polled TX**: Check ACIA status before sending
 - **Incremental rendering**: Display CHAT_CHUNKs as they arrive
 - **Keyboard scanning**: Check keyboard every frame (60Hz)
 - **Interrupt support**: User can press F3 to cancel anytime
@@ -225,30 +251,35 @@ C64 → Linux:  ACK
 ## Performance Considerations
 
 ### Bandwidth Usage
-- At 1200 baud: ~120 bytes/sec effective throughput
-- At 2400 baud: ~240 bytes/sec effective throughput
+- At 9600 baud: ~960 bytes/sec effective throughput (8x faster than 1200!)
+- At 19200 baud: ~1920 bytes/sec (if stable)
 - Frame overhead: 5 bytes per message (~4% for 100-byte payloads)
-- Typical chat message: 100-500 bytes
-- Response chunks: 20-50 bytes each for smooth display
+- Typical chat message: 100-500 bytes (0.5-5 seconds transfer)
+- Response chunks: 50-100 bytes each for smooth display
+- TCP/IP overhead: Minimal, handled by Ultimate firmware
 
 ### Latency
-- Serial transmission: ~0.5-1 sec per 100 bytes at 1200 baud
+- ACIA transmission: ~0.1 sec per 100 bytes at 9600 baud
+- TCP round-trip: <10ms on local network
 - API latency: Variable (1-10 seconds typical)
 - First token: ~1-3 seconds (user sees "thinking" status)
-- Subsequent tokens: Stream as CHAT_CHUNKs arrive
+- Subsequent tokens: Stream as CHAT_CHUNKs arrive, displayed immediately
+- Overall: Very responsive, limited mainly by API speed
 
 ### C64 Memory Constraints
-- Receive buffer: 512 bytes (circular)
-- Transmit buffer: 256 bytes
+- Receive buffer: 1024 bytes (circular, IRQ fills)
+- Transmit buffer: 256 bytes (polled transmission)
 - Current message display: ~2KB (active conversation window)
 - Conversation list cache: ~1KB (20-30 entries)
 - Total conversation history: Stored on Linux side only
 
 ## Security Considerations
-- **No authentication** in v1 (trusted serial connection)
-- **No encryption** (local serial link)
+- **No authentication** in v1 (trusted network connection)
+- **No encryption** (WiFi WPA2, TCP plaintext)
+- **Network exposure**: Server should bind to localhost or use firewall
 - Future: Could add simple shared-secret challenge/response
 - Conversation data privacy maintained by Linux proxy
+- Ultimate modem already on trusted LAN
 
 ## Future Extensions
 - File transfer protocol for saving/loading conversations to C64 disk

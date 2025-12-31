@@ -35,11 +35,12 @@ $0801-$1FFF   Main application code (~6KB)
 $2000-$23FF   Screen buffer (1024 bytes, double-buffer for flicker-free)
 $2400-$27FF   Color RAM shadow (1024 bytes)
 $2800-$2BFF   Text edit buffer (1024 bytes max message)
-$2C00-$2FFF   Serial RX buffer (512 bytes circular)
-$3000-$30FF   Serial TX buffer (256 bytes circular)
+$2C00-$2FFF   ACIA RX buffer (1024 bytes circular, IRQ fills)
+$3000-$30FF   ACIA TX buffer (256 bytes circular)
 $3100-$33FF   Current conversation buffer (~768 bytes, ring buffer)
 $3400-$37FF   Conversation list cache (1KB, ~20 entries)
-$3800-$3FFF   Temporary/scratch buffers (2KB)
+$3800-$3BFF   AT command buffer & connection state (1KB)
+$3C00-$3FFF   Temporary/scratch buffers (1KB)
 $4000-$9FFF   Extended code/data if needed
 ```
 
@@ -174,10 +175,39 @@ void main_loop(void) {
 
 **Functions:**
 - `void main(void)` - Entry point, initialization
-- `void init_system(void)` - Hardware setup, bank switching
+- `void init_system(void)` - Hardware setup, bank switching, IRQ setup
 - `void init_app(void)` - Application state initialization
+- `uint8_t connect_to_server(void)` - Establish ACIA connection via Hayes AT
 - `void main_loop(void)` - Main event loop
-- `void shutdown(void)` - Cleanup and exit
+- `void shutdown(void)` - Cleanup, disconnect, exit
+
+**Initialization Sequence:**
+```c
+void main(void) {
+    // 1. Initialize system (IRQ vectors, screen, colors)
+    init_system();
+
+    // 2. Initialize application state
+    init_app();
+
+    // 3. Display "Connecting to server..." status
+    ui_show_status("Connecting...");
+
+    // 4. Establish ACIA connection
+    if (connect_to_server() != 0) {
+        ui_show_status("Connection failed! Press key.");
+        // Wait for keypress, retry or exit
+        return;
+    }
+
+    // 5. Connection successful, start main loop
+    ui_show_status("Connected!");
+    main_loop();
+
+    // 6. Clean shutdown
+    shutdown();
+}
+```
 
 ### 2. ui.c - User Interface Rendering
 
@@ -292,36 +322,55 @@ typedef struct {
 - Cursor Up/Down: Scroll by 1 line
 - Page Up/Down: Scroll by viewport height
 
-### 5. serial.c / serial.s - Serial Communication Layer
+### 5. serial.c / serial.s - ACIA Communication Layer
 
 **Responsibilities:**
-- Low-level UART communication (User Port)
-- Non-blocking TX/RX
-- Circular buffer management
-- XON/XOFF flow control
-- Baud rate configuration
+- 6551 ACIA hardware interface ($DE00-$DE03)
+- Hayes AT command handling for connection
+- IRQ-driven RX with circular buffer
+- Polled TX with status checking
+- Hardware flow control (RTS/CTS)
+
+**ACIA Registers (SwiftLink/Turbo232 standard):**
+```
+$DE00 - Data register (R/W)
+$DE01 - Status register (R) / Reset (W)
+$DE02 - Command register (W)
+$DE03 - Control register (W)
+```
 
 **Implementation Notes:**
-- Use CIA #2 ($DD00) for User Port bit-banging OR
-- Use 6551 ACIA if available (faster, hardware UART)
-- Assembly implementation for speed
-- IRQ-driven or polled (polled simpler for v1)
+- IRQ-based receive for maximum responsiveness
+- Polled transmit (simpler, fast enough at 9600 baud)
+- 1KB circular RX buffer
+- 256-byte TX buffer
+- Custom IRQ handler (chain to system IRQ)
 
 **C Interface:**
 ```c
-// Initialize serial port
-void serial_init(uint16_t baud);
+// Initialize ACIA and connect to server
+// Returns 0 on success, error code on failure
+uint8_t serial_init(const char* hostname, uint16_t port);
 
-// Check if data available to read
+// Disconnect and reset ACIA
+void serial_disconnect(void);
+
+// Check if connected
+uint8_t serial_is_connected(void);
+
+// Check if data available to read (check buffer)
 uint8_t serial_available(void);
 
 // Non-blocking read (returns 0 if no data)
 uint8_t serial_read(void);
 
+// Read multiple bytes (returns count actually read)
+uint16_t serial_read_buffer(uint8_t* dest, uint16_t max_len);
+
 // Non-blocking write (returns 0 if buffer full)
 uint8_t serial_write(uint8_t byte);
 
-// Write multiple bytes
+// Write multiple bytes (returns count actually written)
 uint16_t serial_write_buffer(const uint8_t* data, uint16_t len);
 
 // Check if TX buffer has space
@@ -329,16 +378,50 @@ uint8_t serial_can_write(void);
 
 // Flush TX buffer (blocking until sent)
 void serial_flush(void);
-
-// Poll serial port (call from main loop)
-void serial_poll(void);
 ```
 
 **Assembly Routines (serial.s):**
-- `_serial_init`: Configure User Port pins, baud rate timer
-- `_serial_tx_byte`: Transmit one byte (bit-banging)
-- `_serial_rx_byte`: Receive one byte (bit-banging)
-- `_serial_poll`: Check for incoming data, manage buffers
+- `_acia_init`: Initialize ACIA hardware, set baud rate
+- `_acia_send_at_command`: Send Hayes AT command, wait for response
+- `_acia_connect`: Full connection sequence (ATZ, ATE0, ATDT)
+- `_acia_irq_handler`: IRQ handler, read byte into circular buffer
+- `_acia_tx_byte`: Transmit one byte (check status register first)
+- `_acia_rx_available`: Check if bytes in RX buffer
+- `_acia_rx_byte`: Pop byte from RX buffer
+
+**Hayes AT Command Sequence:**
+```assembly
+; Example connection sequence in serial_init:
+1. Send "ATZ\r"      -> Wait for "OK"
+2. Send "ATE0\r"     -> Wait for "OK" (echo off)
+3. Send "ATDT<host>:<port>\r" -> Wait for "CONNECT"
+4. Return success, ready for binary protocol
+```
+
+**IRQ Handler:**
+```c
+// Called on ACIA interrupt (byte received)
+void acia_irq(void) {
+    // Read ACIA status register
+    uint8_t status = ACIA_STATUS;
+
+    if (status & 0x08) {  // RX buffer full
+        uint8_t byte = ACIA_DATA;
+
+        // Add to circular buffer
+        rx_buffer[rx_head++] = byte;
+        if (rx_head >= RX_BUFFER_SIZE) rx_head = 0;
+
+        // Check for overflow
+        if (rx_head == rx_tail) {
+            // Buffer overflow! (should handle)
+        }
+    }
+
+    // Chain to system IRQ
+    // jmp $ea31 (or saved vector)
+}
+```
 
 ### 6. protocol.c - Protocol Message Handling
 

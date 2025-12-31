@@ -1,11 +1,11 @@
 # Linux Proxy Server - Technical Design Document
 
 ## Overview
-A Python-based proxy server that bridges serial communication from the C64 client to OpenAI-compatible API endpoints, manages conversation persistence in Open WebUI-compatible format, and handles streaming responses.
+A Python-based TCP server that bridges connections from the C64 Ultimate client to OpenAI-compatible API endpoints, manages conversation persistence in Open WebUI-compatible format, and handles streaming responses.
 
 ## Technology Stack
 - **Language**: Python 3.10+
-- **Serial**: pyserial
+- **Network**: asyncio (built-in TCP server)
 - **HTTP**: httpx (async support)
 - **Storage**: JSON files (Open WebUI compatible)
 - **Async**: asyncio
@@ -23,8 +23,8 @@ A Python-based proxy server that bridges serial communication from the C64 clien
 │  └────┬──────────────────────────────┬──────┘  │
 │       │                              │         │
 │  ┌────▼─────────┐              ┌─────▼──────┐  │
-│  │   Serial     │              │  Protocol  │  │
-│  │   Handler    │◄────────────►│  Handler   │  │
+│  │   TCP        │              │  Protocol  │  │
+│  │   Server     │◄────────────►│  Handler   │  │
 │  └────┬─────────┘              └─────┬──────┘  │
 │       │                              │         │
 │       │  ┌───────────────────────┐   │         │
@@ -47,7 +47,7 @@ c64llm_proxy/
 ├── src/
 │   ├── __init__.py
 │   ├── main.py              - Entry point, event loop
-│   ├── serial_handler.py    - Serial communication
+│   ├── tcp_server.py        - TCP server for C64 clients
 │   ├── protocol.py          - Protocol encode/decode
 │   ├── conversation.py      - Conversation management
 │   ├── storage.py           - JSON persistence
@@ -74,9 +74,7 @@ c64llm_proxy/
 import asyncio
 import argparse
 import logging
-from serial_handler import SerialHandler
-from protocol import ProtocolHandler
-from conversation import ConversationManager
+from tcp_server import C64Server
 from api_client import APIClient
 from config import Config
 
@@ -84,8 +82,8 @@ async def main():
     """Main entry point"""
     # Parse command line args
     parser = argparse.ArgumentParser()
-    parser.add_argument('--port', default='/dev/ttyUSB0', help='Serial port')
-    parser.add_argument('--baud', type=int, default=1200, help='Baud rate')
+    parser.add_argument('--host', default='0.0.0.0', help='Bind address')
+    parser.add_argument('--port', type=int, default=6400, help='TCP port')
     parser.add_argument('--config', default='config.toml', help='Config file')
     args = parser.parse_args()
 
@@ -93,99 +91,160 @@ async def main():
     config = Config(args.config)
 
     # Setup logging
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
     logger = logging.getLogger(__name__)
 
     # Initialize components
     api_client = APIClient(config)
-    conv_manager = ConversationManager(config)
-    protocol = ProtocolHandler(conv_manager, api_client)
-    serial = SerialHandler(args.port, args.baud, protocol)
+    server = C64Server(args.host, args.port, config, api_client)
 
     try:
-        # Run serial handler (this blocks in event loop)
-        await serial.run()
+        # Run server (this blocks in event loop)
+        logger.info(f"Starting server on {args.host}:{args.port}")
+        await server.run()
     except KeyboardInterrupt:
         logger.info("Shutting down...")
     finally:
-        await serial.close()
+        await server.close()
         await api_client.close()
 
 if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-### 2. serial_handler.py - Serial Communication
+### 2. tcp_server.py - TCP Server
 
 **Responsibilities:**
-- Manage serial port connection
-- Async read/write to serial
-- Buffer management
-- XON/XOFF flow control
+- Accept TCP connections from C64 clients
+- Manage multiple concurrent clients
+- Create protocol handler per client
+- Handle client disconnections
 
 ```python
 import asyncio
-import serial_asyncio
 import logging
-from typing import Callable
+from typing import Optional
+from protocol import ProtocolHandler
+from conversation import ConversationManager
 
-class SerialHandler:
-    """Handles serial port communication"""
+class ClientHandler:
+    """Handles a single C64 client connection"""
 
-    def __init__(self, port: str, baud: int, protocol_handler):
-        self.port = port
-        self.baud = baud
-        self.protocol = protocol_handler
-        self.reader = None
-        self.writer = None
-        self.logger = logging.getLogger(__name__)
+    def __init__(self, reader, writer, config, api_client, client_id):
+        self.reader = reader
+        self.writer = writer
+        self.config = config
+        self.api_client = api_client
+        self.client_id = client_id
+        self.logger = logging.getLogger(f"Client-{client_id}")
 
-    async def connect(self):
-        """Open serial connection"""
-        self.reader, self.writer = await serial_asyncio.open_serial_connection(
-            url=self.port,
-            baudrate=self.baud,
-            bytesize=8,
-            parity='N',
-            stopbits=1,
-            xonxoff=True  # Enable software flow control
-        )
-        self.logger.info(f"Connected to {self.port} at {self.baud} baud")
-
-    async def run(self):
-        """Main serial read loop"""
-        await self.connect()
-
-        # Register write callback with protocol
+        # Create conversation manager and protocol handler for this client
+        self.conv_manager = ConversationManager(config, client_id)
+        self.protocol = ProtocolHandler(self.conv_manager, api_client)
         self.protocol.set_write_callback(self.write)
+
+    async def handle(self):
+        """Main client handler loop"""
+        addr = self.writer.get_extra_info('peername')
+        self.logger.info(f"Client connected from {addr}")
 
         try:
             while True:
-                # Read one byte at a time
+                # Read one byte at a time for protocol parsing
                 data = await self.reader.read(1)
-                if data:
-                    # Pass to protocol handler
-                    await self.protocol.process_byte(data[0])
+                if not data:
+                    # Connection closed
+                    break
+
+                # Pass to protocol handler
+                await self.protocol.process_byte(data[0])
+
         except asyncio.CancelledError:
-            self.logger.info("Serial handler cancelled")
+            self.logger.info("Client handler cancelled")
+        except Exception as e:
+            self.logger.error(f"Error handling client: {e}")
+        finally:
+            await self.close()
 
     async def write(self, data: bytes):
-        """Write data to serial port"""
-        self.writer.write(data)
-        await self.writer.drain()
+        """Write data to client"""
+        try:
+            self.writer.write(data)
+            await self.writer.drain()
+        except Exception as e:
+            self.logger.error(f"Error writing to client: {e}")
+            raise
 
     async def close(self):
-        """Close serial connection"""
-        if self.writer:
+        """Close client connection"""
+        self.logger.info("Closing client connection")
+        try:
             self.writer.close()
             await self.writer.wait_closed()
+        except Exception:
+            pass
+
+
+class C64Server:
+    """TCP server for C64 clients"""
+
+    def __init__(self, host: str, port: int, config, api_client):
+        self.host = host
+        self.port = port
+        self.config = config
+        self.api_client = api_client
+        self.server: Optional[asyncio.Server] = None
+        self.logger = logging.getLogger(__name__)
+        self.client_counter = 0
+        self.clients = []
+
+    async def handle_client(self, reader, writer):
+        """Handle new client connection"""
+        self.client_counter += 1
+        client = ClientHandler(
+            reader, writer, self.config, self.api_client, self.client_counter
+        )
+        self.clients.append(client)
+
+        try:
+            await client.handle()
+        finally:
+            self.clients.remove(client)
+
+    async def run(self):
+        """Start TCP server"""
+        self.server = await asyncio.start_server(
+            self.handle_client,
+            self.host,
+            self.port
+        )
+
+        addr = self.server.sockets[0].getsockname()
+        self.logger.info(f"Server listening on {addr}")
+
+        async with self.server:
+            await self.server.serve_forever()
+
+    async def close(self):
+        """Shutdown server"""
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
+
+        # Close all client connections
+        for client in self.clients:
+            await client.close()
 ```
 
 **Key Features:**
-- Uses `serial_asyncio` for non-blocking serial I/O
-- Integrates with asyncio event loop
-- Automatic XON/XOFF handling
-- Byte-by-byte processing for protocol parsing
+- Pure asyncio, no external dependencies for networking
+- Supports multiple concurrent C64 clients
+- Each client gets its own conversation manager instance
+- Graceful connection handling and cleanup
+- Per-client logging for debugging
 
 ### 3. protocol.py - Protocol Handler
 
@@ -817,11 +876,12 @@ baud = 1200
 
 ### requirements.txt
 ```
-pyserial-asyncio>=0.6
 httpx>=0.24.0
 python-dotenv>=1.0.0
 toml>=0.10.2
 ```
+
+**Note:** No serial library needed! Pure asyncio TCP networking.
 
 ## Deployment
 
@@ -841,14 +901,17 @@ cp config.toml.example config.toml
 
 ### Running
 ```bash
-# Basic
+# Basic (listens on 0.0.0.0:6400)
 python -m src.main
 
-# With custom serial port
-python -m src.main --port /dev/ttyUSB0 --baud 2400
+# With custom host/port
+python -m src.main --host 127.0.0.1 --port 6400
 
 # With environment variables
 OPENAI_API_KEY=sk-... python -m src.main
+
+# Bind to specific interface for security
+python -m src.main --host 192.168.1.100 --port 6400
 ```
 
 ### Systemd Service (Optional)
@@ -871,10 +934,10 @@ WantedBy=multi-user.target
 
 ## Error Handling
 
-### Serial Errors
-- **Port not found**: Exit with error message
-- **Permission denied**: Suggest adding user to dialout group
-- **Connection lost**: Attempt reconnection with exponential backoff
+### Network Errors
+- **Port already in use**: Exit with error message suggesting different port
+- **Connection lost**: Client handler exits gracefully, logs disconnect
+- **Client timeout**: No action needed, TCP keepalive handles detection
 
 ### API Errors
 - **Rate limit**: Send status to C64, retry with backoff
@@ -1003,10 +1066,25 @@ socat -d -d pty,raw,echo=0 pty,raw,echo=0
 
 ### Common Issues
 
-**Serial port permission denied**
+**Port already in use**
 ```bash
-sudo usermod -a -G dialout $USER
-# Log out and back in
+# Check what's using port 6400
+sudo lsof -i :6400
+
+# Or use a different port
+python -m src.main --port 6401
+```
+
+**Can't connect from C64**
+```bash
+# Check if server is listening
+netstat -tuln | grep 6400
+
+# Check firewall
+sudo ufw allow 6400/tcp
+
+# Test with telnet from another machine
+telnet <server-ip> 6400
 ```
 
 **API key not working**
@@ -1020,11 +1098,13 @@ curl https://api.openai.com/v1/models \
 ```
 
 **Slow responses**
-- Check baud rate (try 2400 instead of 1200)
 - Verify API endpoint latency
-- Check network connection
+- Check network connection quality
+- Check WiFi signal strength on C64 Ultimate
+- Try lower temperature for faster API responses
 
-**Garbled text**
-- Verify baud rate matches C64
-- Check serial cable connections
-- Enable flow control (XON/XOFF)
+**Connection drops**
+- Check WiFi stability on C64 Ultimate
+- Verify network isn't blocking idle connections
+- Check server logs for errors
+- Ensure server has stable internet connection
