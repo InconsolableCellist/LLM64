@@ -52,4 +52,11 @@ void chat_area_clear_screen(void);
 /* Draw one line of text (PETSCII) at a chat-area row, optional reverse */
 void ui_draw_row(uint8_t row, const char* petscii, uint8_t color, uint8_t reverse);
 
+/* Low-level: blit one row of cells (screen codes in 40-col, ASCII in
+   SOFT80; bit7 = reverse in both). cells must be TEXT_COLS long. */
+void ui_blit_row(uint8_t row, const uint8_t* cells, uint8_t color);
+
+/* Convert one PETSCII char to a display cell for the current mode */
+uint8_t ui_cell_from_petscii(uint8_t c);
+
 #endif /* UI_H */

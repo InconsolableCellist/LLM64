@@ -138,6 +138,9 @@ def main():
     parser.add_argument('--no-warp', action='store_true',
                         help='Run the emulator at real C64 speed (exposes '
                              'wall-clock timing issues that warp hides)')
+    parser.add_argument('--cols80', action='store_true',
+                        help='Client built with MODE80=1: read the ASCII '
+                             'shadow at $C000 instead of screen RAM')
     parser.add_argument('--tui', action='store_true',
                         help='Drive the interactive TUI via keyboard injection '
                              'instead of asserting the scripted debug session')
@@ -219,7 +222,7 @@ def main():
 
         # Let autostart finish before pausing the machine with monitor reads
         time.sleep(4)
-        monitor = ViceMonitor(port=mon_port)
+        monitor = ViceMonitor(port=mon_port, cols80=args.cols80)
 
         # 5. Assertions
         tag = f'{args.mode}-tui' if args.tui else args.mode

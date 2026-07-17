@@ -58,10 +58,14 @@ class ViceMonitorError(Exception):
 
 
 class ViceMonitor:
-    def __init__(self, host='127.0.0.1', port=6502, timeout=10.0):
+    def __init__(self, host='127.0.0.1', port=6502, timeout=10.0,
+                 cols80=False):
         self.sock = socket.create_connection((host, port), timeout=timeout)
         self.sock.settimeout(timeout)
         self._req_id = 0
+        # In soft-80 mode the visible screen is a bitmap; the client keeps
+        # an ASCII shadow of all 80x25 cells at $C000 for us.
+        self.cols80 = cols80
 
     def close(self):
         try:
@@ -128,6 +132,13 @@ class ViceMonitor:
 
     def screen_rows(self):
         """Return the 25 screen rows as decoded ASCII-ish strings."""
+        if self.cols80:
+            data = self.read_memory(0xC000, 0xC000 + 80 * 25 - 1)
+            return [
+                ''.join(chr(b) if 0x20 <= b < 0x7F else '?'
+                        for b in data[r * 80:(r + 1) * 80])
+                for r in range(SCREEN_ROWS)
+            ]
         data = self.read_memory(SCREEN_RAM,
                                 SCREEN_RAM + SCREEN_COLS * SCREEN_ROWS - 1)
         return [

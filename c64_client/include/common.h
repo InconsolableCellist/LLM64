@@ -24,6 +24,13 @@ typedef signed long int32_t;
 #define SCREEN_WIDTH     40
 #define SCREEN_HEIGHT    25
 
+/* Logical text width: 40 (hardware chars) or 80 (SOFT80 bitmap mode) */
+#ifdef SOFT80
+#define TEXT_COLS        80
+#else
+#define TEXT_COLS        40
+#endif
+
 /* Application memory areas */
 #define SCREEN_BUFFER    0x2000  /* 1024 bytes double buffer */
 #define COLOR_BUFFER     0x2400  /* 1024 bytes color shadow */

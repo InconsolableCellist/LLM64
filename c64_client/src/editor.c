@@ -1,17 +1,16 @@
 /**
  * C64 LLM Client - input editor implementation
  *
- * Single logical line up to 120 chars, displayed across three screen rows
- * with a software cursor (reverse video cell). Emacs-style bindings.
+ * Single logical line up to EDIT_MAX chars, displayed across three text
+ * rows with a software cursor (reverse video cell). Emacs-style bindings.
+ * Rendering goes through ui_blit_row so it works in 40 and 80 columns.
  */
 
 #include <string.h>
 #include <c64.h>
 #include "editor.h"
 #include "text.h"
-
-#define SCREEN ((uint8_t*)0x0400)
-#define COLORS ((uint8_t*)0xD800)
+#include "ui.h"
 
 #define EDIT_ROW_FIRST 21
 #define EDIT_ROWS      3
@@ -19,6 +18,7 @@
 static char buf[EDIT_MAX + 1];  /* PETSCII */
 static uint8_t len;
 static uint8_t cur;
+static uint8_t rowcells[TEXT_COLS];
 
 void editor_init(void) {
     editor_clear();
@@ -97,17 +97,18 @@ uint8_t editor_key(uint8_t key) {
 }
 
 void editor_redraw(void) {
-    uint8_t* dst = SCREEN + EDIT_ROW_FIRST * SCREEN_WIDTH;
-    uint8_t* cdst = COLORS + EDIT_ROW_FIRST * SCREEN_WIDTH;
+    uint8_t row;
     uint8_t i;
-    uint8_t total = EDIT_ROWS * SCREEN_WIDTH;
+    uint16_t idx = 0;
 
-    for (i = 0; i < total; ++i) {
-        uint8_t code = (i < len)
-            ? petscii_to_screen((uint8_t)buf[i])
-            : 0x20;
-        if (i == cur) code |= 0x80;  /* software cursor */
-        dst[i] = code;
+    for (row = 0; row < EDIT_ROWS; ++row) {
+        for (i = 0; i < TEXT_COLS; ++i, ++idx) {
+            uint8_t code = (idx < len)
+                ? ui_cell_from_petscii((uint8_t)buf[idx])
+                : 0x20;
+            if (idx == cur) code |= 0x80;  /* software cursor */
+            rowcells[i] = code;
+        }
+        ui_blit_row(EDIT_ROW_FIRST + row, rowcells, COLOR_YELLOW);
     }
-    memset(cdst, COLOR_YELLOW, total);
 }

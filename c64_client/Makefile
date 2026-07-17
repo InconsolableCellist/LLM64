@@ -29,6 +29,15 @@ endif
 ifdef DEBUG_CLIENT
 CFLAGS += -DDEBUG_CLIENT
 endif
+# MODE80=1 builds the soft-80-column bitmap UI instead of 40-column text.
+# Custom linker config caps the program at $C000: above it live the ASCII
+# shadow ($C000), the color matrix ($CC00) and (under the KERNAL ROM) the
+# bitmap ($E000); the default config would put the C stack on top of them.
+ifdef MODE80
+CFLAGS += -DSOFT80
+ASFLAGS += -D SOFT80
+LDFLAGS += -C c64-soft80.cfg
+endif
 ifeq ($(CONNECT),direct)
 CFLAGS += -DCONNECT_DIRECT
 endif
