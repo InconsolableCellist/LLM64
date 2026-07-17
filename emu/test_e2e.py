@@ -194,6 +194,8 @@ def main():
                 'OPENAI_MODEL': 'mock',
                 # deterministic card set regardless of the user's cards/
                 'C64LLM_CARDS_DIR': str(REPO / 'emu' / 'fixtures'),
+                # keep test conversations out of the user's data dir
+                'C64LLM_DATA_DIR': str(artifacts / 'data'),
             })
             print(f"mock LLM on :{mock_port}")
 

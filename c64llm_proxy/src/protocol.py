@@ -480,6 +480,10 @@ class ProtocolHandler:
 
             self.logger.info(f"Response complete: {len(full_response)} bytes")
 
+            # Give the conversation a meaningful LLM-generated title
+            # (fire-and-forget; does not delay the DONE frame above)
+            asyncio.create_task(self._maybe_title())
+
         except asyncio.CancelledError:
             self.logger.info("Stream cancelled")
             # Send partial completion
@@ -494,6 +498,35 @@ class ProtocolHandler:
             self.logger.error(f"Error streaming response: {e}")
             error_msg = str(e)[:200].encode('ascii', errors='replace') + b'\x00'
             await self.send_message(MessageType.CHAT_ERROR, error_msg)
+
+    async def _maybe_title(self):
+        """Ask the model for a short conversation title, once per
+        conversation, after the first exchange completes."""
+        conv = self.conv_manager.current_conversation
+        if not conv or conv.get('auto_titled'):
+            return
+        msgs = self.conv_manager.get_messages()
+        if len(msgs) < 2:
+            return
+        try:
+            excerpt = "\n".join(
+                f"{m['role']}: {m['content'][:300]}" for m in msgs[:4])
+            prompt = [{'role': 'user', 'content':
+                       "Reply with ONLY a short title (3-5 words, plain "
+                       "ASCII, no quotes or punctuation) describing this "
+                       "conversation:\n\n" + excerpt}]
+            out = ''
+            async for kind, chunk in self.api_client.stream_chat(
+                    prompt, system_prompt='',
+                    sampling={'max_tokens': 24, 'temperature': 0.3},
+                    model=self.model_override):
+                if kind == 'content':
+                    out += chunk
+            title = out.strip().strip('"\'').splitlines()[0].strip()[:38]
+            if title:
+                self.conv_manager.set_title(title, auto=True)
+        except Exception as e:
+            self.logger.warning(f"Title generation failed: {e}")
 
     async def handle_cancel(self):
         """Handle cancel request"""

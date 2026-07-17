@@ -33,6 +33,9 @@ void chat_append_petscii(const char* s);
 /* End the current message (flush pending word, blank separator line) */
 void chat_finish(void);
 
+/* Suppress rendering during bulk loads; unfreezing draws the final view */
+void chat_freeze(uint8_t on);
+
 /* Clear all scrollback */
 void chat_clear(void);
 

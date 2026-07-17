@@ -37,6 +37,7 @@ static uint8_t wbuf[TEXT_COLS];
 static uint8_t wlen;
 
 static uint8_t view_scroll;  /* 0 = pinned to bottom */
+static uint8_t frozen;       /* suppress rendering (bulk conversation load) */
 static uint8_t lines_dirty;  /* a line committed since last full redraw */
 static uint8_t commits_pending;  /* commits since last full draw (scroll opt) */
 static int16_t stream_drawn_total;  /* total lines at last stream draw */
@@ -178,7 +179,15 @@ void chat_finish(void) {
     if (cur_len) commit_line();
     commit_line();  /* blank separator line */
     view_scroll = 0;
-    chat_redraw();
+    if (!frozen) chat_redraw();
+}
+
+/* Freeze/unfreeze rendering: bulk loads append everything with rendering
+   off, then unfreeze draws the final (bottom) view once - loading a long
+   conversation jumps straight to its end instead of painting each line. */
+void chat_freeze(uint8_t on) {
+    frozen = on;
+    if (!on) chat_redraw();
 }
 
 void chat_clear(void) {
@@ -226,10 +235,38 @@ static uint8_t build_view_row(uint8_t r) {
     }
 }
 
+/* "NN%" (or "     " when everything fits) at the right end of the title
+   bar: how far down the conversation the current view reaches. */
+static void draw_scroll_pct(void) {
+    uint8_t cells[5];
+    uint16_t total = line_count + ((cur_len || wlen) ? 1 : 0);
+    uint8_t i;
+
+    for (i = 0; i < 5; ++i) cells[i] = 0x20 | 0x80;
+    if (total > CHAT_HEIGHT) {
+        uint16_t bottom = total - view_scroll;
+        uint16_t pct = (bottom * 100) / total;
+        cells[4] = cell_from_ascii(0x25) | 0x80;  /* % */
+        cells[3] = cell_from_ascii(0x30 + pct % 10) | 0x80;
+        pct /= 10;
+        if (pct) {
+            cells[2] = cell_from_ascii(0x30 + pct % 10) | 0x80;
+            pct /= 10;
+            if (pct) cells[1] = cell_from_ascii(0x30 + pct) | 0x80;
+        }
+    }
+    {
+        static uint8_t full[TEXT_COLS];
+        memcpy(full + TEXT_COLS - 5, cells, 5);
+        ui_blit_span(0, full, TEXT_COLS - 5, 5);
+    }
+}
+
 void chat_redraw(void) {
     uint8_t r;
     uint8_t color;
 
+    if (frozen) return;
     for (r = 0; r < CHAT_HEIGHT; ++r) {
         color = build_view_row(r);
         /* Scrolled into history: reverse "v" marker, bottom-right */
@@ -245,6 +282,7 @@ void chat_redraw(void) {
     commits_pending = 0;
     stream_drawn_total = line_count + ((cur_len || wlen) ? 1 : 0);
     stream_partial_end = cur_len + wlen;
+    draw_scroll_pct();
 }
 
 void chat_redraw_stream(void) {
@@ -337,6 +375,7 @@ void chat_redraw_stream(void) {
     ui_blit_row(CHAT_START_ROW + r, rowbuf, color);
 #endif
     stream_partial_end = new_end;
+    draw_scroll_pct();
 }
 
 void chat_area_clear_screen(void) {

@@ -65,6 +65,16 @@ class ConversationManager:
             for msg in self.current_conversation['messages']
         ]
 
+    def set_title(self, title: str, auto: bool = False):
+        """Set the conversation title (auto=True marks it LLM-generated)"""
+        if not self.current_conversation:
+            return
+        self.current_conversation['title'] = title
+        if auto:
+            self.current_conversation['auto_titled'] = True
+        self.save()
+        self.logger.info(f"Conversation titled: {title}")
+
     def save(self):
         """Save current conversation to disk (Open WebUI format)"""
         if not self.current_conversation:
@@ -77,6 +87,7 @@ class ConversationManager:
         data = {
             'id': str(self.current_id),
             'title': self.current_conversation['title'],
+            'auto_titled': self.current_conversation.get('auto_titled', False),
             'created_at': self.current_conversation['created_at'],
             'updated_at': self.current_conversation['updated_at'],
             'chat': {
@@ -106,6 +117,7 @@ class ConversationManager:
             self.current_conversation = {
                 'id': conv_id,
                 'title': data['title'],
+                'auto_titled': data.get('auto_titled', False),
                 'created_at': data['created_at'],
                 'updated_at': data['updated_at'],
                 'messages': data['chat']['messages']

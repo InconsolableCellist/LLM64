@@ -296,6 +296,7 @@ static void conv_load_selected(void) {
     uint32_t id = convs[conv_sel].id;
     conv_close();
     chat_clear();
+    chat_freeze(1);  /* render once at the end: jump straight to the bottom */
     ui_status("Loading conversation...");
     proto_send_message(MSG_LOAD_CONVERSATION, (uint8_t*)&id, 4);
 }
@@ -348,6 +349,7 @@ static void conv_data_frame(void) {
         chat_finish();
     }
     if (!more) {
+        chat_freeze(0);
         ui_status("Conversation loaded. Ready.");
     }
 }
@@ -401,6 +403,7 @@ static void handle_message(uint8_t msg_type) {
             break;
         case MSG_CHAT_ERROR: {
             char* p = (char*)proto_get_payload(&proto);
+            chat_freeze(0);  /* in case a bulk load failed midway */
             chat_start(2);
             chat_append_petscii("error: ");
             chat_append_ascii(p);

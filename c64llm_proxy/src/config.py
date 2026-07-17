@@ -70,9 +70,9 @@ class Config:
             config.get('api', {}).get('system_prompt', '')
         )
 
-        self.data_dir = config.get('storage', {}).get(
-            'data_dir',
-            './data'
+        self.data_dir = os.getenv(
+            'C64LLM_DATA_DIR',
+            config.get('storage', {}).get('data_dir', './data')
         )
 
         # --- interaction modes -----------------------------------------

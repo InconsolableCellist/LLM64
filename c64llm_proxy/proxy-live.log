@@ -131,3 +131,28 @@
 2026-07-17 14:31:43 - src.protocol - INFO - Response complete: 346 bytes
 2026-07-17 14:32:37 - src.protocol - INFO - Received: CANCEL_REQUEST (length=0)
 2026-07-17 14:32:37 - src.protocol - INFO - Cancel request received
+2026-07-17 15:00:30 - Client-1 - INFO - Connection closed by client
+2026-07-17 15:00:30 - Client-1 - INFO - Closing client connection
+2026-07-17 15:00:42 - Client-2 - INFO - Client connected from ('192.168.1.64', 52433)
+2026-07-17 15:00:45 - src.protocol - INFO - Received: PING (length=0)
+2026-07-17 15:00:45 - src.protocol - INFO - Received: NEW_CONVERSATION (length=0)
+2026-07-17 15:00:45 - src.protocol - INFO - New conversation request
+2026-07-17 15:00:45 - ConversationManager-2 - INFO - Started new conversation: 1784322045
+2026-07-17 15:01:01 - src.protocol - INFO - Received: LIST_CONVERSATIONS (length=0)
+2026-07-17 15:01:01 - src.protocol - INFO - List conversations request
+2026-07-17 15:01:01 - src.protocol - INFO - Found 50 conversations
+2026-07-17 15:01:07 - src.protocol - INFO - Received: LOAD_CONVERSATION (length=4)
+2026-07-17 15:01:07 - src.protocol - INFO - Load conversation: 1784321993
+2026-07-17 15:01:07 - ConversationManager-2 - INFO - Loaded conversation: 1784321993
+2026-07-17 15:01:13 - src.protocol - INFO - Received: LIST_CONVERSATIONS (length=0)
+2026-07-17 15:01:13 - src.protocol - INFO - List conversations request
+2026-07-17 15:01:13 - src.protocol - INFO - Found 50 conversations
+2026-07-17 15:02:18 - src.protocol - INFO - Received: LOAD_CONVERSATION (length=4)
+2026-07-17 15:02:18 - src.protocol - INFO - Load conversation: 1784321993
+2026-07-17 15:02:18 - ConversationManager-2 - WARNING - Conversation not found: 1784321993
+2026-07-17 15:02:20 - src.protocol - INFO - Received: LIST_CONVERSATIONS (length=0)
+2026-07-17 15:02:20 - src.protocol - INFO - List conversations request
+2026-07-17 15:02:20 - src.protocol - INFO - Found 1 conversations
+2026-07-17 15:02:21 - src.protocol - INFO - Received: LOAD_CONVERSATION (length=4)
+2026-07-17 15:02:21 - src.protocol - INFO - Load conversation: 1784319754
+2026-07-17 15:02:21 - ConversationManager-2 - INFO - Loaded conversation: 1784319754

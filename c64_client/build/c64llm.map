@@ -2,51 +2,51 @@ Modules list:
 -------------
 debug_main.o:
 display.o:
-    CODE              Offs=000000  Size=00075F  Align=00001  Fill=0000
+    CODE              Offs=000000  Size=00092E  Align=00001  Fill=0000
     RODATA            Offs=000000  Size=00002C  Align=00001  Fill=0000
-    BSS               Offs=000000  Size=0033B8  Align=00001  Fill=0000
+    BSS               Offs=000000  Size=001A73  Align=00001  Fill=0000
 editor.o:
-    CODE              Offs=00075F  Size=0003F9  Align=00001  Fill=0000
-    BSS               Offs=0033B8  Size=0000DD  Align=00001  Fill=0000
+    CODE              Offs=00092E  Size=0003F9  Align=00001  Fill=0000
+    BSS               Offs=001A73  Size=0000B5  Align=00001  Fill=0000
 main.o:
-    CODE              Offs=000B58  Size=000D9A  Align=00001  Fill=0000
+    CODE              Offs=000D27  Size=000DA7  Align=00001  Fill=0000
     RODATA            Offs=00002C  Size=0004F9  Align=00001  Fill=0000
-    BSS               Offs=003495  Size=000777  Align=00001  Fill=0000
+    BSS               Offs=001B28  Size=000777  Align=00001  Fill=0000
     DATA              Offs=000000  Size=000003  Align=00001  Fill=0000
 protocol.o:
-    CODE              Offs=0018F2  Size=000581  Align=00001  Fill=0000
-    BSS               Offs=003C0C  Size=000115  Align=00001  Fill=0000
+    CODE              Offs=001ACE  Size=000581  Align=00001  Fill=0000
+    BSS               Offs=00229F  Size=000115  Align=00001  Fill=0000
 text.o:
-    CODE              Offs=001E73  Size=00016F  Align=00001  Fill=0000
+    CODE              Offs=00204F  Size=00016F  Align=00001  Fill=0000
 font48.o:
     RODATA            Offs=000525  Size=000600  Align=00001  Fill=0000
 keyboard.o:
-    CODE              Offs=001FE2  Size=0001BB  Align=00001  Fill=0000
+    CODE              Offs=0021BE  Size=0001BB  Align=00001  Fill=0000
     RODATA            Offs=000B25  Size=000010  Align=00001  Fill=0000
-    BSS               Offs=003D21  Size=000022  Align=00001  Fill=0000
+    BSS               Offs=0023B4  Size=000022  Align=00001  Fill=0000
 serial.o:
-    CODE              Offs=00219D  Size=000248  Align=00001  Fill=0000
-    BSS               Offs=003D43  Size=002006  Align=00001  Fill=0000
+    CODE              Offs=002379  Size=000248  Align=00001  Fill=0000
+    BSS               Offs=0023D6  Size=002006  Align=00001  Fill=0000
     DATA              Offs=000003  Size=00004D  Align=00001  Fill=0000
 soft80.o:
-    CODE              Offs=0023E5  Size=000330  Align=00001  Fill=0000
+    CODE              Offs=0025C1  Size=000330  Align=00001  Fill=0000
     RODATA            Offs=000B35  Size=000096  Align=00001  Fill=0000
-    BSS               Offs=005D49  Size=000005  Align=00001  Fill=0000
+    BSS               Offs=0043DC  Size=000005  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(_cursor.o):
-    BSS               Offs=005D4E  Size=000001  Align=00001  Fill=0000
+    BSS               Offs=0043E1  Size=000001  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(add.o):
-    CODE              Offs=002715  Size=00001C  Align=00001  Fill=0000
+    CODE              Offs=0028F1  Size=00001C  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(addeqsp.o):
-    CODE              Offs=002731  Size=000011  Align=00001  Fill=0000
+    CODE              Offs=00290D  Size=000011  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(addysp.o):
-    CODE              Offs=002742  Size=00000E  Align=00001  Fill=0000
+    CODE              Offs=00291E  Size=00000E  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(callmain.o):
-    CODE              Offs=002750  Size=000017  Align=00001  Fill=0000
+    CODE              Offs=00292C  Size=000017  Align=00001  Fill=0000
     DATA              Offs=000050  Size=000004  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(cgetc.o):
-    CODE              Offs=002767  Size=000047  Align=00001  Fill=0000
+    CODE              Offs=002943  Size=000047  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(condes.o):
-    CODE              Offs=0027AE  Size=00000C  Align=00001  Fill=0000
+    CODE              Offs=00298A  Size=00000C  Align=00001  Fill=0000
     DATA              Offs=000054  Size=000025  Align=00001  Fill=0000
     ONCE              Offs=000000  Size=00000C  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(crt0.o):
@@ -54,83 +54,85 @@ soft80.o:
     ONCE              Offs=00000C  Size=00001A  Align=00001  Fill=0000
     INIT              Offs=000000  Size=00001C  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(decax1.o):
-    CODE              Offs=0027BA  Size=000007  Align=00001  Fill=0000
+    CODE              Offs=002996  Size=000007  Align=00001  Fill=0000
+/usr/share/cc65/lib/c64.lib(decax5.o):
+    CODE              Offs=00299D  Size=000007  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(decaxy.o):
-    CODE              Offs=0027C1  Size=000009  Align=00001  Fill=0000
+    CODE              Offs=0029A4  Size=000009  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(exehdr.o):
     EXEHDR            Offs=000000  Size=00000C  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(icmp.o):
-    CODE              Offs=0027CA  Size=00002E  Align=00001  Fill=0000
+    CODE              Offs=0029AD  Size=00002E  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(incax1.o):
-    CODE              Offs=0027F8  Size=000007  Align=00001  Fill=0000
+    CODE              Offs=0029DB  Size=000007  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(incax8.o):
-    CODE              Offs=0027FF  Size=000005  Align=00001  Fill=0000
+    CODE              Offs=0029E2  Size=000005  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(incaxy.o):
-    CODE              Offs=002804  Size=00000B  Align=00001  Fill=0000
+    CODE              Offs=0029E7  Size=00000B  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(incsp1.o):
-    CODE              Offs=00280F  Size=000007  Align=00001  Fill=0000
+    CODE              Offs=0029F2  Size=000007  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(incsp2.o):
-    CODE              Offs=002816  Size=000016  Align=00001  Fill=0000
+    CODE              Offs=0029F9  Size=000016  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(incsp3.o):
-    CODE              Offs=00282C  Size=000005  Align=00001  Fill=0000
+    CODE              Offs=002A0F  Size=000005  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(incsp4.o):
-    CODE              Offs=002831  Size=000005  Align=00001  Fill=0000
+    CODE              Offs=002A14  Size=000005  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(incsp5.o):
-    CODE              Offs=002836  Size=000005  Align=00001  Fill=0000
+    CODE              Offs=002A19  Size=000005  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(incsp6.o):
-    CODE              Offs=00283B  Size=000005  Align=00001  Fill=0000
+    CODE              Offs=002A1E  Size=000005  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(kbhit.o):
-    CODE              Offs=002840  Size=000009  Align=00001  Fill=0000
+    CODE              Offs=002A23  Size=000009  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(kernal.o):
 /usr/share/cc65/lib/c64.lib(ldaxi.o):
-    CODE              Offs=002849  Size=00000D  Align=00001  Fill=0000
+    CODE              Offs=002A2C  Size=00000D  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(ldaxsp.o):
-    CODE              Offs=002856  Size=000009  Align=00001  Fill=0000
+    CODE              Offs=002A39  Size=000009  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(ldeaxi.o):
-    CODE              Offs=00285F  Size=000017  Align=00001  Fill=0000
+    CODE              Offs=002A42  Size=000017  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(loadaddr.o):
     LOADADDR          Offs=000000  Size=000002  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(makebool.o):
-    CODE              Offs=002876  Size=00002C  Align=00001  Fill=0000
+    CODE              Offs=002A59  Size=00002C  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(memcpy.o):
-    CODE              Offs=0028A2  Size=00003C  Align=00001  Fill=0000
+    CODE              Offs=002A85  Size=00003C  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(memmove.o):
-    CODE              Offs=0028DE  Size=000050  Align=00001  Fill=0000
+    CODE              Offs=002AC1  Size=000050  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(memset.o):
-    CODE              Offs=00292E  Size=00005D  Align=00001  Fill=0000
+    CODE              Offs=002B11  Size=00005D  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(mul8.o):
-    CODE              Offs=00298B  Size=00003A  Align=00001  Fill=0000
+    CODE              Offs=002B6E  Size=00003A  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(popa.o):
-    CODE              Offs=0029C5  Size=00000C  Align=00001  Fill=0000
+    CODE              Offs=002BA8  Size=00000C  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(popptr1.o):
-    CODE              Offs=0029D1  Size=00000E  Align=00001  Fill=0000
+    CODE              Offs=002BB4  Size=00000E  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(pusha.o):
-    CODE              Offs=0029DF  Size=000016  Align=00001  Fill=0000
+    CODE              Offs=002BC2  Size=000016  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(pushax.o):
-    CODE              Offs=0029F5  Size=00001A  Align=00001  Fill=0000
+    CODE              Offs=002BD8  Size=00001A  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(pushw.o):
-    CODE              Offs=002A0F  Size=00000F  Align=00001  Fill=0000
+    CODE              Offs=002BF2  Size=00000F  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(pushwsp.o):
-    CODE              Offs=002A1E  Size=00001C  Align=00001  Fill=0000
+    CODE              Offs=002C01  Size=00001C  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(staspidx.o):
-    CODE              Offs=002A3A  Size=000016  Align=00001  Fill=0000
+    CODE              Offs=002C1D  Size=000016  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(status.o):
 /usr/share/cc65/lib/c64.lib(staxspi.o):
-    CODE              Offs=002A50  Size=00001B  Align=00001  Fill=0000
+    CODE              Offs=002C33  Size=00001B  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(strcpy.o):
-    CODE              Offs=002A6B  Size=00001F  Align=00001  Fill=0000
+    CODE              Offs=002C4E  Size=00001F  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(strlen.o):
-    CODE              Offs=002A8A  Size=000016  Align=00001  Fill=0000
+    CODE              Offs=002C6D  Size=000016  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(sub.o):
-    CODE              Offs=002AA0  Size=000015  Align=00001  Fill=0000
+    CODE              Offs=002C83  Size=000015  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(udiv.o):
-    CODE              Offs=002AB5  Size=00004F  Align=00001  Fill=0000
+    CODE              Offs=002C98  Size=00004F  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(umod.o):
-    CODE              Offs=002B04  Size=000011  Align=00001  Fill=0000
+    CODE              Offs=002CE7  Size=000011  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(xor.o):
-    CODE              Offs=002B15  Size=000012  Align=00001  Fill=0000
+    CODE              Offs=002CF8  Size=000012  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(zerobss.o):
-    CODE              Offs=002B27  Size=000023  Align=00001  Fill=0000
+    CODE              Offs=002D0A  Size=000023  Align=00001  Fill=0000
 /usr/share/cc65/lib/c64.lib(zeropage.o):
     ZEROPAGE          Offs=000000  Size=00001A  Align=00001  Fill=0000
 
@@ -143,84 +145,85 @@ ZEROPAGE              000002  00001B  00001A  00001
 LOADADDR              0007FF  000800  000002  00001
 EXEHDR                000801  00080C  00000C  00001
 STARTUP               00080D  00083F  000033  00001
-CODE                  000840  003389  002B4A  00001
-RODATA                00338A  003F54  000BCB  00001
-DATA                  003F55  003FCD  000079  00001
-INIT                  003FCE  003FE9  00001C  00001
-BSS                   003FEA  009D38  005D4F  00001
-ONCE                  003FEA  00400F  000026  00001
+CODE                  000840  00356C  002D2D  00001
+RODATA                00356D  004137  000BCB  00001
+DATA                  004138  0041B0  000079  00001
+INIT                  0041B1  0041CC  00001C  00001
+BSS                   0041CD  0085AE  0043E2  00001
+ONCE                  0041CD  0041F2  000026  00001
 
 
 Exports list by name:
 ---------------------
 BSOUT                     00FFD2 RLA    ST                        000090 RLZ    
-__BSS_RUN__               003FEA RLA    __BSS_SIZE__              005D4F REA    
-__CONSTRUCTOR_COUNT__     000000 REA    __CONSTRUCTOR_TABLE__     004010 RLA    
-__DESTRUCTOR_COUNT__      000000 REA    __DESTRUCTOR_TABLE__      003F55 RLA    
+__BSS_RUN__               0041CD RLA    __BSS_SIZE__              0043E2 REA    
+__CONSTRUCTOR_COUNT__     000000 REA    __CONSTRUCTOR_TABLE__     0041F3 RLA    
+__DESTRUCTOR_COUNT__      000000 REA    __DESTRUCTOR_TABLE__      004138 RLA    
 __EXEHDR__                000001 REA    __HEADER_LAST__           00080D RLA    
-__HIMEM__                 00C000 REA    __LOADADDR__              000001 REA    
-__MAIN_SIZE__             00B7F3 REA    __MAIN_START__            00080D RLA    
-__ONCE_RUN__              003FEA RLA    __STACKSIZE__             000800 REA    
-__STARTUP__               000001 REA    _acia_init_hw             0029E3 RLA    
-_ascii_to_petscii         0026F4 RLA    _ascii_to_petscii_str     0027ED RLA    
-_cgetc                    002FA7 RLA    _chat_append_ascii        0008A3 RLA    
-_chat_append_ascii_char   0008D1 RLA    _chat_append_petscii      000941 RLA    
-_chat_area_clear_screen   000C10 RLA    _chat_clear               000988 RLA    
-_chat_finish              000972 RLA    _chat_redraw              000A29 RLA    
-_chat_redraw_stream       000AB3 RLA    _chat_scroll              00099C RLA    
-_chat_start               00086F RLA    _editor_clear             000FA2 RLA    
-_editor_init              000F9F RLA    _editor_key               000FB0 RLA    
-_editor_len               00117B RLA    _editor_text              00116E RLA    
-_font48                   0038AF RLA    _font48lo                 003BAF RLA    
-_kb_scan                  002822 RLA    _kbhit                    003080 RLA    
-_main                     0020A8 RLA    _memcpy                   0030E2 RLA    
-_memmove                  00311E RLA    _memset                   003176 RLA    
-_petscii_to_ascii         0026B3 RLA    _proto_fill_payload       002411 RLA    
-_proto_get_length         0024B3 RLA    _proto_get_payload        0024A5 RLA    
-_proto_in_payload         0023FC RLA    _proto_init               002132 RLA    
-_proto_process_byte       0021A4 RLA    _proto_send_cancel        002639 RLA    
-_proto_send_chat          002610 RLA    _proto_send_list_conversations 00262E RLA    
-_proto_send_message       0024C1 RLA    _proto_send_new_conversation 002623 RLA    
-_proto_send_ping          002605 RLA    _proto_send_text          002559 RLA    
-_serial_available         002B06 RLA    _serial_flush             002BD6 RLA    
-_serial_overflows         002B98 RLA    _serial_overruns          002B9E RLA    
-_serial_read              002B36 RLA    _serial_read_block        002B67 RLA    
-_serial_write             002BA4 RLA    _soft80_init              002C25 RLA    
-_soft80_row               002C8C RLA    _soft80_span              002CDC RLA    
-_strcpy                   0032AB RLA    _strlen                   0032CA RLA    
-_ui_blit_row              000CDD RLA    _ui_blit_span             000CF6 RLA    
-_ui_cell_from_petscii     000D36 RLA    _ui_draw_row              000C46 RLA    
-_ui_init                  000840 RLA    _ui_status                000857 RLA    
-addeq0sp                  002F71 RLA    addysp                    002F83 RLA    
-addysp1                   002F82 RLA    booleq                    0030BC RLA    
-callmain                  002F90 RLA    cursor                    009D38 RLA    
-decax1                    002FFA RLA    decaxy                    003001 RLA    
-donelib                   002FEE RLA    incax1                    003038 RLA    
-incax4                    003044 RLA    incax8                    00303F RLA    
-incaxy                    003046 RLA    incsp1                    00304F RLA    
-incsp2                    00305E RLA    incsp3                    00306C RLA    
-incsp4                    003071 RLA    incsp5                    003076 RLA    
-incsp6                    00307B RLA    initlib                   003FEA RLA    
-ldax0sp                   003096 RLA    ldaxi                     003089 RLA    
-ldaxidx                   00308B RLA    ldaxysp                   003098 RLA    
-ldeaxi                    00309F RLA    memcpy_getparams          00310B RLA    
-memcpy_upwards            0030E5 RLA    popa                      003205 RLA    
-popax                     003056 RLA    popptr1                   003211 RLA    
+__HIMEM__                 00D000 REA    __LOADADDR__              000001 REA    
+__MAIN_SIZE__             00C7F3 REA    __MAIN_START__            00080D RLA    
+__ONCE_RUN__              0041CD RLA    __STACKSIZE__             000800 REA    
+__STARTUP__               000001 REA    _acia_init_hw             002BBF RLA    
+_ascii_to_petscii         0028D0 RLA    _ascii_to_petscii_str     0029C9 RLA    
+_ascii_to_screen          00290A RLA    _cgetc                    003183 RLA    
+_chat_append_ascii        0008CB RLA    _chat_append_ascii_char   0008F9 RLA    
+_chat_append_petscii      000969 RLA    _chat_area_clear_screen   000C66 RLA    
+_chat_clear               0009CA RLA    _chat_finish              00099A RLA    
+_chat_freeze              0009B6 RLA    _chat_redraw              000A6B RLA    
+_chat_redraw_stream       000AFB RLA    _chat_scroll              0009DE RLA    
+_chat_start               000897 RLA    _editor_clear             001171 RLA    
+_editor_init              00116E RLA    _editor_key               00117F RLA    
+_editor_len               00134A RLA    _editor_text              00133D RLA    
+_font48                   003A92 RLA    _font48lo                 003D92 RLA    
+_kb_scan                  0029FE RLA    _kbhit                    003263 RLA    
+_main                     002284 RLA    _memcpy                   0032C5 RLA    
+_memmove                  003301 RLA    _memset                   003359 RLA    
+_petscii_to_ascii         00288F RLA    _proto_fill_payload       0025ED RLA    
+_proto_get_length         00268F RLA    _proto_get_payload        002681 RLA    
+_proto_in_payload         0025D8 RLA    _proto_init               00230E RLA    
+_proto_process_byte       002380 RLA    _proto_send_cancel        002815 RLA    
+_proto_send_chat          0027EC RLA    _proto_send_list_conversations 00280A RLA    
+_proto_send_message       00269D RLA    _proto_send_new_conversation 0027FF RLA    
+_proto_send_ping          0027E1 RLA    _proto_send_text          002735 RLA    
+_serial_available         002CE2 RLA    _serial_flush             002DB2 RLA    
+_serial_overflows         002D74 RLA    _serial_overruns          002D7A RLA    
+_serial_read              002D12 RLA    _serial_read_block        002D43 RLA    
+_serial_write             002D80 RLA    _strcpy                   00348E RLA    
+_strlen                   0034AD RLA    _ui_blit_row              000D33 RLA    
+_ui_blit_span             000D8F RLA    _ui_cell_from_petscii     000DE3 RLA    
+_ui_draw_row              000C9C RLA    _ui_init                  000840 RLA    
+_ui_status                00087F RLA    addeq0sp                  00314D RLA    
+addysp                    00315F RLA    addysp1                   00315E RLA    
+booleq                    00329F RLA    callmain                  00316C RLA    
+cursor                    0085AE RLA    decax1                    0031D6 RLA    
+decax5                    0031DD RLA    decaxy                    0031E4 RLA    
+donelib                   0031CA RLA    incax1                    00321B RLA    
+incax4                    003227 RLA    incax8                    003222 RLA    
+incaxy                    003229 RLA    incsp1                    003232 RLA    
+incsp2                    003241 RLA    incsp3                    00324F RLA    
+incsp4                    003254 RLA    incsp5                    003259 RLA    
+incsp6                    00325E RLA    initlib                   0041CD RLA    
+ldax0sp                   003279 RLA    ldaxi                     00326C RLA    
+ldaxidx                   00326E RLA    ldaxysp                   00327B RLA    
+ldeaxi                    003282 RLA    memcpy_getparams          0032EE RLA    
+memcpy_upwards            0032C8 RLA    popa                      0033E8 RLA    
+popax                     003239 RLA    popptr1                   0033F4 RLA    
 ptr1                      00000A RLZ    ptr2                      00000C RLZ    
 ptr3                      00000E RLZ    ptr4                      000010 RLZ    
-push0                     003235 RLA    pusha                     003223 RLA    
-pusha0                    003237 RLA    pushax                    003239 RLA    
-pushw0sp                  00325E RLA    pushwidx                  003251 RLA    
-pushwysp                  003260 RLA    regsave                   000006 RLZ    
+push0                     003418 RLA    pusha                     003406 RLA    
+pusha0                    00341A RLA    pushax                    00341C RLA    
+pushw0sp                  003441 RLA    pushwidx                  003434 RLA    
+pushwysp                  003443 RLA    regsave                   000006 RLZ    
 sp                        000002 RLZ    sreg                      000004 RLZ    
-staspidx                  00327A RLA    staxspidx                 003290 RLA    
+staspidx                  00345D RLA    staxspidx                 003473 RLA    
 tmp1                      000012 RLZ    tmp2                      000013 RLZ    
 tmp3                      000014 RLZ    tmp4                      000015 RLZ    
-tosaddax                  002F57 RLA    tosicmp                   00300C RLA    
-tosmula0                  0031CB RLA    tossubax                  0032E2 RLA    
-tosumoda0                 003344 RLA    tosumula0                 0031CB RLA    
-tosxora0                  003355 RLA    udiv16                    003306 RLA    
-zerobss                   003367 RLA    
+tosaddax                  003133 RLA    tosicmp                   0031EF RLA    
+tosmula0                  0033AE RLA    tossubax                  0034C5 RLA    
+tosudiva0                 0034D8 RLA    tosudivax                 0034DA RLA    
+tosumoda0                 003527 RLA    tosumula0                 0033AE RLA    
+tosxora0                  003538 RLA    udiv16                    0034E9 RLA    
+zerobss                   00354A RLA    
 
 
 Exports list by value:
@@ -235,63 +238,64 @@ tmp1                      000012 RLZ    tmp2                      000013 RLZ
 tmp3                      000014 RLZ    tmp4                      000015 RLZ    
 ST                        000090 RLZ    __STACKSIZE__             000800 REA    
 __HEADER_LAST__           00080D RLA    __MAIN_START__            00080D RLA    
-_ui_init                  000840 RLA    _ui_status                000857 RLA    
-_chat_start               00086F RLA    _chat_append_ascii        0008A3 RLA    
-_chat_append_ascii_char   0008D1 RLA    _chat_append_petscii      000941 RLA    
-_chat_finish              000972 RLA    _chat_clear               000988 RLA    
-_chat_scroll              00099C RLA    _chat_redraw              000A29 RLA    
-_chat_redraw_stream       000AB3 RLA    _chat_area_clear_screen   000C10 RLA    
-_ui_draw_row              000C46 RLA    _ui_blit_row              000CDD RLA    
-_ui_blit_span             000CF6 RLA    _ui_cell_from_petscii     000D36 RLA    
-_editor_init              000F9F RLA    _editor_clear             000FA2 RLA    
-_editor_key               000FB0 RLA    _editor_text              00116E RLA    
-_editor_len               00117B RLA    _main                     0020A8 RLA    
-_proto_init               002132 RLA    _proto_process_byte       0021A4 RLA    
-_proto_in_payload         0023FC RLA    _proto_fill_payload       002411 RLA    
-_proto_get_payload        0024A5 RLA    _proto_get_length         0024B3 RLA    
-_proto_send_message       0024C1 RLA    _proto_send_text          002559 RLA    
-_proto_send_ping          002605 RLA    _proto_send_chat          002610 RLA    
-_proto_send_new_conversation 002623 RLA    _proto_send_list_conversations 00262E RLA    
-_proto_send_cancel        002639 RLA    _petscii_to_ascii         0026B3 RLA    
-_ascii_to_petscii         0026F4 RLA    _ascii_to_petscii_str     0027ED RLA    
-_kb_scan                  002822 RLA    _acia_init_hw             0029E3 RLA    
-_serial_available         002B06 RLA    _serial_read              002B36 RLA    
-_serial_read_block        002B67 RLA    _serial_overflows         002B98 RLA    
-_serial_overruns          002B9E RLA    _serial_write             002BA4 RLA    
-_serial_flush             002BD6 RLA    _soft80_init              002C25 RLA    
-_soft80_row               002C8C RLA    _soft80_span              002CDC RLA    
-tosaddax                  002F57 RLA    addeq0sp                  002F71 RLA    
-addysp1                   002F82 RLA    addysp                    002F83 RLA    
-callmain                  002F90 RLA    _cgetc                    002FA7 RLA    
-donelib                   002FEE RLA    decax1                    002FFA RLA    
-decaxy                    003001 RLA    tosicmp                   00300C RLA    
-incax1                    003038 RLA    incax8                    00303F RLA    
-incax4                    003044 RLA    incaxy                    003046 RLA    
-incsp1                    00304F RLA    popax                     003056 RLA    
-incsp2                    00305E RLA    incsp3                    00306C RLA    
-incsp4                    003071 RLA    incsp5                    003076 RLA    
-incsp6                    00307B RLA    _kbhit                    003080 RLA    
-ldaxi                     003089 RLA    ldaxidx                   00308B RLA    
-ldax0sp                   003096 RLA    ldaxysp                   003098 RLA    
-ldeaxi                    00309F RLA    booleq                    0030BC RLA    
-_memcpy                   0030E2 RLA    memcpy_upwards            0030E5 RLA    
-memcpy_getparams          00310B RLA    _memmove                  00311E RLA    
-_memset                   003176 RLA    tosmula0                  0031CB RLA    
-tosumula0                 0031CB RLA    popa                      003205 RLA    
-popptr1                   003211 RLA    pusha                     003223 RLA    
-push0                     003235 RLA    pusha0                    003237 RLA    
-pushax                    003239 RLA    pushwidx                  003251 RLA    
-pushw0sp                  00325E RLA    pushwysp                  003260 RLA    
-staspidx                  00327A RLA    staxspidx                 003290 RLA    
-_strcpy                   0032AB RLA    _strlen                   0032CA RLA    
-tossubax                  0032E2 RLA    udiv16                    003306 RLA    
-tosumoda0                 003344 RLA    tosxora0                  003355 RLA    
-zerobss                   003367 RLA    _font48                   0038AF RLA    
-_font48lo                 003BAF RLA    __DESTRUCTOR_TABLE__      003F55 RLA    
-__BSS_RUN__               003FEA RLA    __ONCE_RUN__              003FEA RLA    
-initlib                   003FEA RLA    __CONSTRUCTOR_TABLE__     004010 RLA    
-__BSS_SIZE__              005D4F REA    cursor                    009D38 RLA    
-__MAIN_SIZE__             00B7F3 REA    __HIMEM__                 00C000 REA    
+_ui_init                  000840 RLA    _ui_status                00087F RLA    
+_chat_start               000897 RLA    _chat_append_ascii        0008CB RLA    
+_chat_append_ascii_char   0008F9 RLA    _chat_append_petscii      000969 RLA    
+_chat_finish              00099A RLA    _chat_freeze              0009B6 RLA    
+_chat_clear               0009CA RLA    _chat_scroll              0009DE RLA    
+_chat_redraw              000A6B RLA    _chat_redraw_stream       000AFB RLA    
+_chat_area_clear_screen   000C66 RLA    _ui_draw_row              000C9C RLA    
+_ui_blit_row              000D33 RLA    _ui_blit_span             000D8F RLA    
+_ui_cell_from_petscii     000DE3 RLA    _editor_init              00116E RLA    
+_editor_clear             001171 RLA    _editor_key               00117F RLA    
+_editor_text              00133D RLA    _editor_len               00134A RLA    
+_main                     002284 RLA    _proto_init               00230E RLA    
+_proto_process_byte       002380 RLA    _proto_in_payload         0025D8 RLA    
+_proto_fill_payload       0025ED RLA    _proto_get_payload        002681 RLA    
+_proto_get_length         00268F RLA    _proto_send_message       00269D RLA    
+_proto_send_text          002735 RLA    _proto_send_ping          0027E1 RLA    
+_proto_send_chat          0027EC RLA    _proto_send_new_conversation 0027FF RLA    
+_proto_send_list_conversations 00280A RLA    _proto_send_cancel        002815 RLA    
+_petscii_to_ascii         00288F RLA    _ascii_to_petscii         0028D0 RLA    
+_ascii_to_screen          00290A RLA    _ascii_to_petscii_str     0029C9 RLA    
+_kb_scan                  0029FE RLA    _acia_init_hw             002BBF RLA    
+_serial_available         002CE2 RLA    _serial_read              002D12 RLA    
+_serial_read_block        002D43 RLA    _serial_overflows         002D74 RLA    
+_serial_overruns          002D7A RLA    _serial_write             002D80 RLA    
+_serial_flush             002DB2 RLA    tosaddax                  003133 RLA    
+addeq0sp                  00314D RLA    addysp1                   00315E RLA    
+addysp                    00315F RLA    callmain                  00316C RLA    
+_cgetc                    003183 RLA    donelib                   0031CA RLA    
+decax1                    0031D6 RLA    decax5                    0031DD RLA    
+decaxy                    0031E4 RLA    tosicmp                   0031EF RLA    
+incax1                    00321B RLA    incax8                    003222 RLA    
+incax4                    003227 RLA    incaxy                    003229 RLA    
+incsp1                    003232 RLA    popax                     003239 RLA    
+incsp2                    003241 RLA    incsp3                    00324F RLA    
+incsp4                    003254 RLA    incsp5                    003259 RLA    
+incsp6                    00325E RLA    _kbhit                    003263 RLA    
+ldaxi                     00326C RLA    ldaxidx                   00326E RLA    
+ldax0sp                   003279 RLA    ldaxysp                   00327B RLA    
+ldeaxi                    003282 RLA    booleq                    00329F RLA    
+_memcpy                   0032C5 RLA    memcpy_upwards            0032C8 RLA    
+memcpy_getparams          0032EE RLA    _memmove                  003301 RLA    
+_memset                   003359 RLA    tosmula0                  0033AE RLA    
+tosumula0                 0033AE RLA    popa                      0033E8 RLA    
+popptr1                   0033F4 RLA    pusha                     003406 RLA    
+push0                     003418 RLA    pusha0                    00341A RLA    
+pushax                    00341C RLA    pushwidx                  003434 RLA    
+pushw0sp                  003441 RLA    pushwysp                  003443 RLA    
+staspidx                  00345D RLA    staxspidx                 003473 RLA    
+_strcpy                   00348E RLA    _strlen                   0034AD RLA    
+tossubax                  0034C5 RLA    tosudiva0                 0034D8 RLA    
+tosudivax                 0034DA RLA    udiv16                    0034E9 RLA    
+tosumoda0                 003527 RLA    tosxora0                  003538 RLA    
+zerobss                   00354A RLA    _font48                   003A92 RLA    
+_font48lo                 003D92 RLA    __DESTRUCTOR_TABLE__      004138 RLA    
+__BSS_RUN__               0041CD RLA    __ONCE_RUN__              0041CD RLA    
+initlib                   0041CD RLA    __CONSTRUCTOR_TABLE__     0041F3 RLA    
+__BSS_SIZE__              0043E2 REA    cursor                    0085AE RLA    
+__MAIN_SIZE__             00C7F3 REA    __HIMEM__                 00D000 REA    
 BSOUT                     00FFD2 RLA    
 
 
@@ -314,24 +318,24 @@ __DESTRUCTOR_COUNT__ ([linker generated]):
 __DESTRUCTOR_TABLE__ ([linker generated]):
     condes.o                  runtime/condes.s(19)
 __EXEHDR__ (exehdr.o):
-    [linker generated]        c64-soft80.cfg(6)
+    [linker generated]        /usr/share/cc65/cfg/c64.cfg(6)
 __HEADER_LAST__ ([linker generated]):
-    [linker generated]        c64-soft80.cfg(14)
-    [linker generated]        c64-soft80.cfg(14)
+    [linker generated]        /usr/share/cc65/cfg/c64.cfg(14)
+    [linker generated]        /usr/share/cc65/cfg/c64.cfg(14)
 __HIMEM__ ([linker generated]):
-    [linker generated]        c64-soft80.cfg(15)
-    [linker generated]        c64-soft80.cfg(14)
+    [linker generated]        /usr/share/cc65/cfg/c64.cfg(15)
+    [linker generated]        /usr/share/cc65/cfg/c64.cfg(14)
 __LOADADDR__ (loadaddr.o):
-    [linker generated]        c64-soft80.cfg(5)
+    [linker generated]        /usr/share/cc65/cfg/c64.cfg(5)
 __MAIN_SIZE__ ([linker generated]):
     crt0.o                    c64/crt0.s(11)
 __MAIN_START__ ([linker generated]):
     crt0.o                    c64/crt0.s(11)
 __ONCE_RUN__ ([linker generated]):
-    [linker generated]        c64-soft80.cfg(15)
-    [linker generated]        c64-soft80.cfg(15)
+    [linker generated]        /usr/share/cc65/cfg/c64.cfg(15)
+    [linker generated]        /usr/share/cc65/cfg/c64.cfg(15)
 __STACKSIZE__ ([linker generated]):
-    [linker generated]        c64-soft80.cfg(15)
+    [linker generated]        /usr/share/cc65/cfg/c64.cfg(15)
 __STARTUP__ (crt0.o):
     main.o                    build/main.s(13)
 _acia_init_hw (serial.o):
@@ -340,6 +344,8 @@ _ascii_to_petscii (text.o):
     main.o                    build/main.s(36)
 _ascii_to_petscii_str (text.o):
     main.o                    build/main.s(37)
+_ascii_to_screen (text.o):
+    display.o                 build/display.s(34)
 _cgetc (cgetc.o):
     main.o                    build/main.s(17)
 _chat_append_ascii (display.o):
@@ -349,29 +355,31 @@ _chat_append_ascii_char (display.o):
 _chat_append_petscii (display.o):
     main.o                    build/main.s(43)
 _chat_area_clear_screen (display.o):
-    main.o                    build/main.s(49)
+    main.o                    build/main.s(50)
 _chat_clear (display.o):
-    main.o                    build/main.s(45)
+    main.o                    build/main.s(46)
 _chat_finish (display.o):
     main.o                    build/main.s(44)
+_chat_freeze (display.o):
+    main.o                    build/main.s(45)
 _chat_redraw (display.o):
-    main.o                    build/main.s(47)
-_chat_redraw_stream (display.o):
     main.o                    build/main.s(48)
+_chat_redraw_stream (display.o):
+    main.o                    build/main.s(49)
 _chat_scroll (display.o):
-    main.o                    build/main.s(46)
+    main.o                    build/main.s(47)
 _chat_start (display.o):
     main.o                    build/main.s(40)
 _editor_clear (editor.o):
-    main.o                    build/main.s(52)
-_editor_init (editor.o):
-    main.o                    build/main.s(51)
-_editor_key (editor.o):
     main.o                    build/main.s(53)
-_editor_len (editor.o):
-    main.o                    build/main.s(55)
-_editor_text (editor.o):
+_editor_init (editor.o):
+    main.o                    build/main.s(52)
+_editor_key (editor.o):
     main.o                    build/main.s(54)
+_editor_len (editor.o):
+    main.o                    build/main.s(56)
+_editor_text (editor.o):
+    main.o                    build/main.s(55)
 _font48 (font48.o):
     soft80.o                  src/soft80.s(19)
 _font48lo (font48.o):
@@ -391,7 +399,7 @@ _memset (memset.o):
     display.o                 build/display.s(14)
 _petscii_to_ascii (text.o):
     protocol.o                build/protocol.s(32)
-    display.o                 build/display.s(32)
+    display.o                 build/display.s(33)
 _proto_fill_payload (protocol.o):
     main.o                    build/main.s(26)
 _proto_get_length (protocol.o):
@@ -432,12 +440,6 @@ _serial_read_block (serial.o):
     protocol.o                build/protocol.s(29)
 _serial_write (serial.o):
     protocol.o                build/protocol.s(30)
-_soft80_init (soft80.o):
-    display.o                 build/display.s(33)
-_soft80_row (soft80.o):
-    display.o                 build/display.s(34)
-_soft80_span (soft80.o):
-    display.o                 build/display.s(35)
 _strcpy (strcpy.o):
     main.o                    build/main.s(14)
 _strlen (strlen.o):
@@ -449,7 +451,7 @@ _ui_blit_span (display.o):
 _ui_cell_from_petscii (display.o):
     editor.o                  build/editor.s(22)
 _ui_draw_row (display.o):
-    main.o                    build/main.s(50)
+    main.o                    build/main.s(51)
 _ui_init (display.o):
     main.o                    build/main.s(38)
 _ui_status (display.o):
@@ -457,8 +459,8 @@ _ui_status (display.o):
 addeq0sp (addeqsp.o):
     text.o                    build/text.s(257)
     text.o                    build/text.s(257)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
 addysp (addysp.o):
     incsp6.o                  runtime/incsp6.s(8)
     incsp5.o                  runtime/incsp5.s(8)
@@ -469,8 +471,8 @@ addysp1 (addysp.o):
     sub.o                     runtime/sub.s(8)
 booleq (makebool.o):
     protocol.o                build/protocol.s(897)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
 callmain (callmain.o):
     crt0.o                    c64/crt0.s(9)
 cursor (_cursor.o):
@@ -478,14 +480,16 @@ cursor (_cursor.o):
 decax1 (decax1.o):
     editor.o                  build/editor.s(599)
     editor.o                  build/editor.s(599)
-    display.o                 build/display.s(1256)
+    display.o                 build/display.s(1483)
+decax5 (decax5.o):
+    display.o                 build/display.s(1483)
 decaxy (decaxy.o):
     text.o                    build/text.s(257)
     text.o                    build/text.s(257)
     text.o                    build/text.s(257)
     protocol.o                build/protocol.s(897)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
 donelib (condes.o):
     crt0.o                    c64/crt0.s(8)
 incax1 (incax1.o):
@@ -493,17 +497,17 @@ incax1 (incax1.o):
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
     editor.o                  build/editor.s(599)
 incax4 (incaxy.o):
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
 incax8 (incax8.o):
-    main.o                    build/main.s(2055)
+    main.o                    build/main.s(2061)
 incaxy (incaxy.o):
     incax8.o                  runtime/incax8.s(8)
     text.o                    build/text.s(257)
@@ -511,23 +515,25 @@ incaxy (incaxy.o):
     protocol.o                build/protocol.s(897)
     editor.o                  build/editor.s(599)
     editor.o                  build/editor.s(599)
-    display.o                 build/display.s(1256)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
 incsp1 (incsp1.o):
     text.o                    build/text.s(257)
     text.o                    build/text.s(257)
     text.o                    build/text.s(257)
     text.o                    build/text.s(257)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
     editor.o                  build/editor.s(599)
     editor.o                  build/editor.s(599)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
 incsp2 (incsp2.o):
     staxspi.o                 runtime/staxspi.s(9)
     staspidx.o                runtime/staspidx.s(8)
@@ -539,22 +545,22 @@ incsp2 (incsp2.o):
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
     editor.o                  build/editor.s(599)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
 incsp3 (incsp3.o):
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
 incsp4 (incsp4.o):
-    display.o                 build/display.s(1256)
+    display.o                 build/display.s(1483)
 incsp5 (incsp5.o):
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
 incsp6 (incsp6.o):
     protocol.o                build/protocol.s(897)
 initlib (condes.o):
@@ -568,9 +574,9 @@ ldax0sp (ldaxsp.o):
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
-    main.o                    build/main.s(2055)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
+    main.o                    build/main.s(2061)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
 ldaxi (ldaxi.o):
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
@@ -589,9 +595,9 @@ ldaxysp (ldaxsp.o):
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
-    display.o                 build/display.s(1256)
+    display.o                 build/display.s(1483)
 ldeaxi (ldeaxi.o):
-    main.o                    build/main.s(2055)
+    main.o                    build/main.s(2061)
 memcpy_getparams (memcpy.o):
     memmove.o                 common/memmove.s(12)
 memcpy_upwards (memcpy.o):
@@ -606,13 +612,13 @@ popax (incsp2.o):
     soft80.o                  src/soft80.s(20)
     serial.o                  src/serial.s(29)
 popptr1 (popptr1.o):
-    udiv.o                    runtime/udiv.s(9)
     umod.o                    runtime/umod.s(8)
+    udiv.o                    runtime/udiv.s(9)
     mul8.o                    runtime/mul8.s(9)
     memcpy.o                  common/memcpy.s(14)
 ptr1 (zeropage.o):
-    udiv.o                    runtime/udiv.s(10)
     zerobss.o                 common/zerobss.s(9)
+    udiv.o                    runtime/udiv.s(10)
     strcpy.o                  common/strcpy.s(9)
     staxspi.o                 runtime/staxspi.s(10)
     staspidx.o                runtime/staspidx.s(9)
@@ -644,8 +650,8 @@ ptr3 (zeropage.o):
     memcpy.o                  common/memcpy.s(15)
     soft80.o                  src/soft80.s(21)
 ptr4 (zeropage.o):
-    udiv.o                    runtime/udiv.s(10)
     umod.o                    runtime/umod.s(9)
+    udiv.o                    runtime/udiv.s(10)
     mul8.o                    runtime/mul8.s(10)
     soft80.o                  src/soft80.s(21)
 push0 (pushax.o):
@@ -655,7 +661,7 @@ push0 (pushax.o):
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
-    main.o                    build/main.s(2055)
+    main.o                    build/main.s(2061)
 pusha (pusha.o):
     text.o                    build/text.s(257)
     text.o                    build/text.s(257)
@@ -671,47 +677,52 @@ pusha (pusha.o):
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
     editor.o                  build/editor.s(599)
     editor.o                  build/editor.s(599)
     editor.o                  build/editor.s(599)
     editor.o                  build/editor.s(599)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
 pusha0 (pushax.o):
     protocol.o                build/protocol.s(897)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
     editor.o                  build/editor.s(599)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
 pushax (pushax.o):
     callmain.o                runtime/callmain.s(11)
     pushw.o                   runtime/pushw.s(8)
@@ -727,36 +738,40 @@ pushax (pushax.o):
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
     editor.o                  build/editor.s(599)
     editor.o                  build/editor.s(599)
     editor.o                  build/editor.s(599)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
 pushw0sp (pushwsp.o):
     text.o                    build/text.s(257)
     text.o                    build/text.s(257)
@@ -765,9 +780,8 @@ pushwidx (pushw.o):
     protocol.o                build/protocol.s(897)
 pushwysp (pushwsp.o):
     protocol.o                build/protocol.s(897)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
 regsave (zeropage.o):
     protocol.o                build/protocol.s(10)
     main.o                    build/main.s(10)
@@ -797,8 +811,8 @@ sp (zeropage.o):
     editor.o                  build/editor.s(10)
     display.o                 build/display.s(10)
 sreg (zeropage.o):
-    udiv.o                    runtime/udiv.s(10)
     umod.o                    runtime/umod.s(9)
+    udiv.o                    runtime/udiv.s(10)
     ldeaxi.o                  runtime/ldeaxi.s(8)
     icmp.o                    runtime/icmp.s(9)
     protocol.o                build/protocol.s(10)
@@ -807,10 +821,10 @@ staspidx (staspidx.o):
     text.o                    build/text.s(257)
     text.o                    build/text.s(257)
     protocol.o                build/protocol.s(897)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
 staxspidx (staxspi.o):
     protocol.o                build/protocol.s(897)
     protocol.o                build/protocol.s(897)
@@ -832,28 +846,36 @@ tmp4 (zeropage.o):
     soft80.o                  src/soft80.s(21)
 tosaddax (add.o):
     protocol.o                build/protocol.s(897)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
 tosicmp (icmp.o):
     protocol.o                build/protocol.s(897)
     editor.o                  build/editor.s(599)
-    display.o                 build/display.s(1256)
+    display.o                 build/display.s(1483)
 tosmula0 (mul8.o):
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    main.o                    build/main.s(2055)
-    display.o                 build/display.s(1256)
-    display.o                 build/display.s(1256)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    main.o                    build/main.s(2061)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
 tossubax (sub.o):
     protocol.o                build/protocol.s(897)
+tosudiva0 (udiv.o):
+    display.o                 build/display.s(1483)
+tosudivax (udiv.o):
+    display.o                 build/display.s(1483)
 tosumoda0 (umod.o):
-    display.o                 build/display.s(1256)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
 tosumula0 (mul8.o):
     editor.o                  build/editor.s(599)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
+    display.o                 build/display.s(1483)
 tosxora0 (xor.o):
     protocol.o                build/protocol.s(897)
 udiv16 (udiv.o):
