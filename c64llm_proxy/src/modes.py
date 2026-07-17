@@ -5,12 +5,44 @@ greeting that is streamed to the C64 when the mode starts. Modes are
 selected from the C64 with slash commands (/adventure, /char, /chat).
 """
 
+import base64
 import json
 import logging
+import struct
+import zlib
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def _png_card_json(path: Path) -> Optional[Dict]:
+    """Extract a SillyTavern card from a PNG's chara/ccv3 text chunk."""
+    data = path.read_bytes()
+    if data[:8] != b'\x89PNG\r\n\x1a\n':
+        return None
+    found = {}
+    pos = 8
+    while pos + 12 <= len(data):
+        (length,) = struct.unpack('>I', data[pos:pos + 4])
+        ctype = data[pos + 4:pos + 8]
+        payload = data[pos + 8:pos + 8 + length]
+        if ctype == b'tEXt':
+            key, _, val = payload.partition(b'\x00')
+            if key in (b'chara', b'ccv3'):
+                found.setdefault(key, val)
+        elif ctype == b'zTXt':
+            key, _, rest = payload.partition(b'\x00')
+            if key in (b'chara', b'ccv3') and rest[:1] == b'\x00':
+                try:
+                    found.setdefault(key, zlib.decompress(rest[1:]))
+                except zlib.error:
+                    pass
+        pos += 12 + length
+    raw = found.get(b'chara') or found.get(b'ccv3')
+    if raw is None:
+        return None
+    return json.loads(base64.b64decode(raw))
 
 
 # --- prompts ----------------------------------------------------------
@@ -118,8 +150,14 @@ class CharacterCard:
 
     @classmethod
     def load(cls, path: Path, user_name: str = 'You') -> 'CharacterCard':
-        with open(path, 'r', encoding='utf-8') as f:
-            raw = json.load(f)
+        path = Path(path)
+        if path.suffix.lower() == '.png':
+            raw = _png_card_json(path)
+            if raw is None:
+                raise ValueError(f'{path.name}: no character chunk in PNG')
+        else:
+            with open(path, 'r', encoding='utf-8') as f:
+                raw = json.load(f)
         # v2/v3 cards wrap the fields in "data"; v1 is flat
         data = raw.get('data', raw)
         return cls(data, user_name)
@@ -193,11 +231,12 @@ def find_cards(cards_dir: Path) -> List[Tuple[str, Path]]:
     results = []
     if not cards_dir.is_dir():
         return results
-    for path in sorted(cards_dir.glob('*.json')):
+    paths = sorted(list(cards_dir.glob('*.json')) + list(cards_dir.glob('*.png')))
+    for path in paths:
         try:
             card = CharacterCard.load(path)
             if card.data.get('name'):
                 results.append((card.name, path))
-        except (OSError, ValueError, json.JSONDecodeError) as e:
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as e:
             logger.warning(f"Skipping card {path.name}: {e}")
     return results

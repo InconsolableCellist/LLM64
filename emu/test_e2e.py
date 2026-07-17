@@ -169,6 +169,8 @@ def main():
                 'OPENAI_API_KEY': 'mock-key',
                 'OPENAI_API_BASE': f'http://127.0.0.1:{mock_port}/v1',
                 'OPENAI_MODEL': 'mock',
+                # deterministic card set regardless of the user's cards/
+                'C64LLM_CARDS_DIR': str(REPO / 'emu' / 'fixtures'),
             })
             print(f"mock LLM on :{mock_port}")
 

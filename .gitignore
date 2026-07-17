@@ -9,3 +9,4 @@ __pycache__/
 # Runtime data
 c64llm_proxy/data/
 emu/artifacts/
+c64llm_proxy/proxy-live.log

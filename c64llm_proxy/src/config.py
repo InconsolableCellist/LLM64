@@ -78,7 +78,8 @@ class Config:
         # --- interaction modes -----------------------------------------
         modes = config.get('modes', {})
         self.user_name = modes.get('user_name', 'You')
-        self.cards_dir = modes.get('cards_dir', './cards')
+        self.cards_dir = os.getenv('C64LLM_CARDS_DIR',
+                                   modes.get('cards_dir', './cards'))
 
         # Gemma's recommended sampling (matches the llama-server preset):
         # temperature 1.0, top-k 64, top-p 0.95. Only keys present are sent;
