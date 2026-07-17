@@ -51,10 +51,15 @@ NMI_VECTOR = $0318
 rx_head:        .res 1          ; write index (IRQ handler)
 rx_tail:        .res 1          ; read index (main program)
 connected:      .res 1
-old_irq:        .res 2
-old_nmi:        .res 2
 vectors_saved:  .res 1
 rx_buffer:      .res 256        ; ring buffer (8-bit indices wrap naturally)
+
+        .data
+; Chain to the previous handlers via patched absolute JMPs. An indirect
+; "jmp (vector)" would hit the 6502 page-boundary bug if the vector byte
+; ever landed at $xxFF (ld65 warned; it depends on link layout).
+irq_chain:      jmp $0000       ; operand patched in acia_init_hw
+nmi_chain:      jmp $0000
 
         .code
 
@@ -97,18 +102,18 @@ _acia_init_hw:
 
         sei
         lda IRQ_VECTOR
-        sta old_irq
+        sta irq_chain+1
         lda IRQ_VECTOR+1
-        sta old_irq+1
+        sta irq_chain+2
         lda #<acia_irq_entry
         sta IRQ_VECTOR
         lda #>acia_irq_entry
         sta IRQ_VECTOR+1
 
         lda NMI_VECTOR
-        sta old_nmi
+        sta nmi_chain+1
         lda NMI_VECTOR+1
-        sta old_nmi+1
+        sta nmi_chain+2
         lda #<acia_nmi_entry
         sta NMI_VECTOR
         lda #>acia_nmi_entry
@@ -138,11 +143,11 @@ _acia_init_hw:
 ;---------------------------------------
 acia_irq_entry:
         jsr acia_drain_rx
-        jmp (old_irq)
+        jmp irq_chain
 
 acia_nmi_entry:
         jsr acia_drain_rx
-        jmp (old_nmi)
+        jmp nmi_chain
 
 acia_drain_rx:
         lda ACIA_STATUS         ; reading clears the ACIA IRQ flag
