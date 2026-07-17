@@ -32,7 +32,8 @@ class MockHandler(BaseHTTPRequestHandler):
         if self.path.rstrip('/').endswith('/models'):
             body = json.dumps({
                 'object': 'list',
-                'data': [{'id': 'mock', 'object': 'model'}],
+                'data': [{'id': 'mock', 'object': 'model'},
+                         {'id': 'mock-large', 'object': 'model'}],
             }).encode()
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')

@@ -233,7 +233,7 @@ void ui_status(const char* msg) {
 static void draw_frame(void) {
     uint8_t i;
     uint8_t* sep = SCREEN + SEPARATOR_ROW * SCREEN_WIDTH;
-    ui_draw_row(0, " C64 LLM   F1send F2new F3stop F5conv F7", COLOR_WHITE, 1);
+    ui_draw_row(0, " C64 LLM        F1=menu      Return=send", COLOR_WHITE, 1);
     for (i = 0; i < SCREEN_WIDTH; ++i) sep[i] = 0x40;  /* horizontal bar */
     memset(COLORS + SEPARATOR_ROW * SCREEN_WIDTH, COLOR_GRAY1, SCREEN_WIDTH);
 }

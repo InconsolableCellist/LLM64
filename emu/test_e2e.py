@@ -28,7 +28,7 @@ from vice_monitor import ViceMonitor, ViceMonitorError
 
 REPO = Path(__file__).resolve().parent.parent
 PROXY_DIR = REPO / 'c64llm_proxy'
-PROXY_PORT = 6400
+PROXY_PORT = 6400  # default; override with --proxy-port
 TCPSER_PORT = 25232
 
 
@@ -126,6 +126,8 @@ def main():
     parser.add_argument('--prg', default=str(REPO / 'c64_client/build/c64llm.prg'))
     parser.add_argument('--timeout', type=float, default=90.0)
     parser.add_argument('--baud', type=int, default=9600)
+    parser.add_argument('--proxy-port', type=int, default=PROXY_PORT,
+                        help='TCP port for the test proxy (use a free one if a live proxy runs on 6400)')
     parser.add_argument('--live', action='store_true',
                         help='Use the real API from config.toml instead of the mock')
     parser.add_argument('--expect', default='mock llm',
@@ -146,8 +148,10 @@ def main():
 
     if not Path(args.prg).exists():
         sys.exit(f"PRG not found: {args.prg} (build it first)")
-    if port_in_use(PROXY_PORT):
-        sys.exit(f"Port {PROXY_PORT} already in use - is another proxy running?")
+    proxy_port = args.proxy_port
+    if port_in_use(proxy_port):
+        sys.exit(f"Port {proxy_port} already in use - is another proxy "
+                 f"running? (use --proxy-port to pick a free one)")
 
     stack = Stack(artifacts)
     status = 1
@@ -171,11 +175,11 @@ def main():
         # 2. Proxy
         stack.start('proxy', [
             proxy_python(), '-m', 'src.main',
-            '--host', '127.0.0.1', '--port', str(PROXY_PORT), '-v'],
+            '--host', '127.0.0.1', '--port', str(proxy_port), '-v'],
             cwd=str(PROXY_DIR), env=env)
-        if not wait_for_port(PROXY_PORT):
+        if not wait_for_port(proxy_port):
             raise AssertionError('proxy did not start (see artifacts/proxy.log)')
-        print(f"proxy on :{PROXY_PORT}")
+        print(f"proxy on :{proxy_port}")
 
         # 3. tcpser (hayes mode only): VICE connects to it via ip232, and it
         #    answers AT commands / dials the proxy like the Ultimate's modem.
@@ -189,7 +193,7 @@ def main():
             print(f"tcpser on :{TCPSER_PORT}")
             rsdev = [f'-rsdev1', f'127.0.0.1:{TCPSER_PORT}', '-rsdev1ip232']
         else:
-            rsdev = ['-rsdev1', f'127.0.0.1:{PROXY_PORT}', '+rsdev1ip232']
+            rsdev = ['-rsdev1', f'127.0.0.1:{proxy_port}', '+rsdev1ip232']
 
         # 4. VICE. No warp in hayes mode: the client's AT-response timeouts
         # are cycle-based, but tcpser answers in wall-clock time, so a warped
@@ -285,8 +289,20 @@ def main():
                     raise AssertionError(f'F4 lost the content\n{paged}')
                 print('  PASS: F4 paged up')
                 monitor.keyboard_feed_petscii(b'\x8b')  # F6: page down
-                final = wait_for_screen(monitor, r'number\s+60', 15,
-                                        artifacts, f'{tag}-pagedown')
+                wait_for_screen(monitor, r'number\s+60', 15,
+                                artifacts, f'{tag}-pagedown')
+
+                # F1 menu -> M -> model browser -> select second model
+                monitor.keyboard_feed_petscii(b'\x85')  # F1
+                wait_for_screen(monitor, r'select model', 15,
+                                artifacts, f'{tag}-menu')
+                monitor.keyboard_feed('m')
+                wait_for_screen(monitor, r'mock-large', 15,
+                                artifacts, f'{tag}-models')
+                monitor.keyboard_feed_petscii(b'\x11')  # cursor down
+                monitor.keyboard_feed('\r')
+                final = wait_for_screen(monitor, r'model: mock-large', 15,
+                                        artifacts, f'{tag}-modelset')
         else:
             # Scripted debug session runs in warp faster than we can poll,
             # so assert on the durable end state: the client parks on

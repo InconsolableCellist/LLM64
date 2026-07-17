@@ -96,6 +96,8 @@ typedef enum {
 #define MSG_LOAD_CONVERSATION   0x34  /* '4' - was 0x04 */
 #define MSG_NEW_CONVERSATION    0x35  /* '5' - was 0x05 */
 #define MSG_PING                0x36  /* '6' - was 0x06 */
+#define MSG_LIST_MODELS         0x37  /* '7' */
+#define MSG_SET_MODEL           0x38  /* '8' */
 #define MSG_ACK                 0x40  /* '@' - was 0x10 */
 #define MSG_NAK                 0x41  /* 'A' - was 0x11 */
 #define MSG_CHAT_CHUNK          0x50  /* 'P' - was 0x20 */
@@ -104,6 +106,7 @@ typedef enum {
 #define MSG_CONVERSATION_LIST   0x53  /* 'S' - was 0x23 */
 #define MSG_CONVERSATION_DATA   0x54  /* 'T' - was 0x24 */
 #define MSG_STATUS              0x55  /* 'U' - was 0x25 */
+#define MSG_MODEL_LIST          0x56  /* 'V' */
 
 /* Pseudo message type returned by proto_process_byte on checksum failure
    (not a wire value - chosen outside the protocol's type range) */

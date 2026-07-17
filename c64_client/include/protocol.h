@@ -63,6 +63,7 @@ void proto_send_message(uint8_t msg_type, const uint8_t* payload, uint16_t lengt
 /**
  * Helper functions for common messages
  */
+void proto_send_text(uint8_t msg_type, const char* petscii_text);
 void proto_send_ack(void);
 void proto_send_nak(void);
 void proto_send_ping(void);

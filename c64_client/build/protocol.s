@@ -17,6 +17,7 @@
 	.export		_proto_get_payload
 	.export		_proto_get_length
 	.export		_proto_send_message
+	.export		_proto_send_text
 	.export		_proto_send_ack
 	.export		_proto_send_nak
 	.export		_proto_send_ping
@@ -140,10 +141,10 @@ L006E:
 	jeq     L005D
 	cmp     #$04
 	jeq     L0066
-	jmp     L00F9
+	jmp     L00FD
 L0030:	lda     (sp,x)
 	cmp     #$42
-	jne     L00F9
+	jne     L00FD
 	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
@@ -213,9 +214,9 @@ L003E:	tay
 	sbc     #$00
 	lda     #$00
 	tax
-	bcs     L00FB
+	bcs     L00FF
 	jmp     incsp3
-L00FB:	lda     L002A
+L00FF:	lda     L002A
 	ldy     #$20
 	jsr     decaxy
 	sta     L0044
@@ -247,10 +248,10 @@ L00FB:	lda     L002A
 	ldy     #$04
 	jsr     ldaxidx
 	cpx     #$00
-	bne     L00FA
+	bne     L00FE
 	cmp     #$00
 	beq     L004F
-L00FA:	ldy     #$02
+L00FE:	ldy     #$02
 	jsr     ldaxysp
 	ldy     #$04
 	jsr     pushwidx
@@ -392,7 +393,7 @@ L006C:	ldy     #$02
 	lda     #$FE
 	jmp     incsp3
 L002E:	ldx     #$00
-L00F9:	txa
+L00FD:	txa
 	jmp     incsp3
 
 .endproc
@@ -457,11 +458,11 @@ L007E:	jsr     ldax0sp
 	cmp     #$00
 	lda     L007C+1
 	sbc     #$01
-	bcc     L00FD
+	bcc     L0101
 	lda     #$FF
-	jmp     L00FE
-L00FD:	lda     L007C
-L00FE:	jsr     _serial_read_block
+	jmp     L0102
+L0101:	lda     L007C
+L0102:	jsr     _serial_read_block
 	sta     L007D
 	lda     L007D
 	beq     L007B
@@ -471,9 +472,9 @@ L00FE:	jsr     _serial_read_block
 	jsr     ldaxidx
 	clc
 	adc     L007D
-	bcc     L00FC
+	bcc     L0100
 	inx
-L00FC:	ldy     #$05
+L0100:	ldy     #$05
 	jsr     staxspidx
 L0080:	jsr     ldax0sp
 	ldy     #$04
@@ -624,63 +625,12 @@ L00AC:	ldy     #$04
 .endproc
 
 ; ---------------------------------------------------------------
-; void __near__ proto_send_ack (void)
+; void __near__ proto_send_text (unsigned char, __near__ const unsigned char *)
 ; ---------------------------------------------------------------
 
 .segment	"CODE"
 
-.proc	_proto_send_ack: near
-
-.segment	"CODE"
-
-	lda     #$40
-	jsr     pusha
-	jsr     push0
-	jmp     _proto_send_message
-
-.endproc
-
-; ---------------------------------------------------------------
-; void __near__ proto_send_nak (void)
-; ---------------------------------------------------------------
-
-.segment	"CODE"
-
-.proc	_proto_send_nak: near
-
-.segment	"CODE"
-
-	lda     #$41
-	jsr     pusha
-	jsr     push0
-	jmp     _proto_send_message
-
-.endproc
-
-; ---------------------------------------------------------------
-; void __near__ proto_send_ping (void)
-; ---------------------------------------------------------------
-
-.segment	"CODE"
-
-.proc	_proto_send_ping: near
-
-.segment	"CODE"
-
-	lda     #$36
-	jsr     pusha
-	jsr     push0
-	jmp     _proto_send_message
-
-.endproc
-
-; ---------------------------------------------------------------
-; void __near__ proto_send_chat (__near__ const unsigned char *)
-; ---------------------------------------------------------------
-
-.segment	"CODE"
-
-.proc	_proto_send_chat: near
+.proc	_proto_send_text: near
 
 .segment	"BSS"
 
@@ -744,7 +694,8 @@ L00D5:	lda     #<(L00D3)
 	lda     #$00
 	tay
 	sta     (ptr1),y
-	lda     #$31
+	ldy     #$02
+	lda     (sp),y
 	jsr     pusha
 	lda     #<(L00D3)
 	ldx     #>(L00D3)
@@ -753,6 +704,77 @@ L00D5:	lda     #<(L00D3)
 	ldx     L00CE+1
 	jsr     incax1
 	jsr     _proto_send_message
+	jmp     incsp3
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ proto_send_ack (void)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_proto_send_ack: near
+
+.segment	"CODE"
+
+	lda     #$40
+	jsr     pusha
+	jsr     push0
+	jmp     _proto_send_message
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ proto_send_nak (void)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_proto_send_nak: near
+
+.segment	"CODE"
+
+	lda     #$41
+	jsr     pusha
+	jsr     push0
+	jmp     _proto_send_message
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ proto_send_ping (void)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_proto_send_ping: near
+
+.segment	"CODE"
+
+	lda     #$36
+	jsr     pusha
+	jsr     push0
+	jmp     _proto_send_message
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ proto_send_chat (__near__ const unsigned char *)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_proto_send_chat: near
+
+.segment	"CODE"
+
+	jsr     pushax
+	lda     #$31
+	jsr     pusha
+	ldy     #$02
+	jsr     ldaxysp
+	jsr     _proto_send_text
 	jmp     incsp2
 
 .endproc

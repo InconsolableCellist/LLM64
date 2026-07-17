@@ -1,0 +1,16 @@
+2026-07-17 03:13:41 - __main__ - INFO - ============================================================
+2026-07-17 03:13:41 - __main__ - INFO - C64 LLM Proxy Server v0.1.0
+2026-07-17 03:13:41 - __main__ - INFO - ============================================================
+2026-07-17 03:13:41 - __main__ - INFO - API Endpoint: https://mlboy.tail99c274.ts.net:5000/v1
+2026-07-17 03:13:41 - __main__ - INFO - Model: gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 03:13:41 - __main__ - INFO - Data Directory: ./data
+2026-07-17 03:13:41 - __main__ - INFO - Starting server on 0.0.0.0:6400
+2026-07-17 03:13:41 - __main__ - INFO - Press Ctrl+C to stop
+2026-07-17 03:13:41 - __main__ - INFO - ============================================================
+2026-07-17 03:13:41 - src.tcp_server - INFO - Server listening on 0.0.0.0:6400
+2026-07-17 03:13:41 - src.tcp_server - INFO - Waiting for C64 clients...
+2026-07-17 03:14:11 - Client-1 - INFO - Client connected from ('192.168.1.64', 52435)
+2026-07-17 03:14:14 - src.protocol - INFO - Received: PING (length=0)
+2026-07-17 03:14:14 - src.protocol - INFO - Received: NEW_CONVERSATION (length=0)
+2026-07-17 03:14:14 - src.protocol - INFO - New conversation request
+2026-07-17 03:14:14 - ConversationManager-1 - INFO - Started new conversation: 1784279654

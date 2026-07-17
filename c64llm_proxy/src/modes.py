@@ -31,6 +31,8 @@ ADVENTURE_PROMPT = (
     "INVENTORY, EXAMINE) as well as free-form actions. If the player tries "
     "something impossible, respond in-world with wit. Let actions have real "
     "consequences, including failure and death (offer to restart). "
+    "Write in normal mixed-case prose; never write whole sentences or "
+    "headers in all capitals. "
     + C64_STYLE_RULES
 )
 

@@ -20,6 +20,8 @@ class MessageType(IntEnum):
     LOAD_CONVERSATION = 0x34  # '4' - was 0x04
     NEW_CONVERSATION = 0x35  # '5' - was 0x05
     PING = 0x36  # '6' - was 0x06
+    LIST_MODELS = 0x37  # '7'
+    SET_MODEL = 0x38  # '8'
     ACK = 0x40  # '@' - was 0x10
     NAK = 0x41  # 'A' - was 0x11
 
@@ -30,6 +32,7 @@ class MessageType(IntEnum):
     CONVERSATION_LIST = 0x53  # 'S' - was 0x23
     CONVERSATION_DATA = 0x54  # 'T' - was 0x24
     STATUS = 0x55  # 'U' - was 0x25
+    MODEL_LIST = 0x56  # 'V'
 
 
 # Common Unicode punctuation -> ASCII approximations, applied before the
@@ -64,6 +67,7 @@ class ProtocolHandler:
         self.api_client = api_client
         self.config = api_client.config
         self.mode = Mode(self.config)
+        self.model_override: Optional[str] = None
         self.logger = logging.getLogger(__name__)
 
         # Parser state
@@ -167,6 +171,10 @@ class ProtocolHandler:
                 await self.handle_new_conversation()
             elif msg_type == MessageType.PING:
                 await self.send_ack()
+            elif msg_type == MessageType.LIST_MODELS:
+                await self.handle_list_models()
+            elif msg_type == MessageType.SET_MODEL:
+                await self.handle_set_model()
             elif msg_type == MessageType.ACK:
                 self.logger.debug("ACK received")
             else:
@@ -255,6 +263,7 @@ class ProtocolHandler:
                 "/adventure [theme] - text adventure\n"
                 "/chars - list character cards\n"
                 "/char <name> - roleplay with a card\n"
+                "/models - list models, /model <name> - switch\n"
                 "/mode - show current mode")
 
         elif cmd == 'mode':
@@ -285,9 +294,73 @@ class ProtocolHandler:
         elif cmd == 'char':
             await self._start_roleplay(arg)
 
+        elif cmd == 'models':
+            try:
+                names = await self.api_client.list_models()
+            except Exception as e:
+                names = []
+            if names:
+                await self._send_canned(
+                    "Models:\n" + "\n".join(f"- {n}" for n in names)
+                    + "\nSwitch with: /model <name>")
+            else:
+                await self._send_canned("Could not fetch the model list.")
+
+        elif cmd == 'model':
+            if arg:
+                await self._set_model(arg)
+                await self._send_canned("Model switched.")
+            else:
+                current = self.model_override or self.config.model
+                await self._send_canned(f"Current model: {current}")
+
         else:
             await self._send_canned(
                 f"Unknown command: /{cmd} (try /help)")
+
+    async def handle_list_models(self):
+        """Send the server's model list to the C64 (MODEL_LIST frames)."""
+        await self.send_ack()
+        try:
+            names = await self.api_client.list_models()
+        except Exception as e:
+            self.logger.error(f"Model list failed: {e}")
+            names = []
+
+        chunk_size = 8
+        if not names:
+            await self.send_message(MessageType.MODEL_LIST, bytes([0, 0]))
+            return
+        for i in range(0, len(names), chunk_size):
+            chunk = names[i:i + chunk_size]
+            more = 1 if (i + chunk_size) < len(names) else 0
+            payload = bytearray([len(chunk), more])
+            for name in chunk:
+                payload.extend(name[:36].encode('ascii', errors='replace'))
+                payload.append(0x00)
+            await self.send_message(MessageType.MODEL_LIST, bytes(payload))
+            await asyncio.sleep(0.05)
+
+    async def handle_set_model(self):
+        name = self.payload.rstrip(b'\x00').decode('ascii', errors='replace')
+        await self.send_ack()
+        await self._set_model(name)
+
+    async def _set_model(self, query: str):
+        """Resolve a (possibly truncated) model name and switch to it."""
+        try:
+            names = await self.api_client.list_models()
+        except Exception:
+            names = []
+        match = query
+        q = query.lower()
+        for name in names:
+            if name.lower().startswith(q) or q in name.lower():
+                match = name
+                break
+        self.model_override = match
+        self.logger.info(f"Model -> {match}")
+        await self.send_status(f"Model: {match[:32]}")
 
     def _switch_mode(self, mode):
         self.mode = mode
@@ -377,7 +450,8 @@ class ProtocolHandler:
             async for kind, chunk in self.api_client.stream_chat(
                 messages,
                 system_prompt=self.mode.system_prompt(),
-                sampling=self.mode.sampling()
+                sampling=self.mode.sampling(),
+                model=self.model_override
             ):
                 if kind == 'reasoning':
                     if not thinking_notified:

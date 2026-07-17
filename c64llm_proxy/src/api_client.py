@@ -26,9 +26,16 @@ class APIClient:
             headers={'Authorization': f'Bearer {self.api_key}'}
         )
 
+    async def list_models(self) -> List[str]:
+        """Model ids reported by the server"""
+        resp = await self.client.get(f"{self.base_url}/models")
+        resp.raise_for_status()
+        return [m['id'] for m in resp.json().get('data', [])]
+
     async def stream_chat(self, messages: List[Dict],
                           system_prompt: str = None,
-                          sampling: Dict = None) -> AsyncIterator[str]:
+                          sampling: Dict = None,
+                          model: str = None) -> AsyncIterator[str]:
         """Stream chat completion from API.
 
         system_prompt overrides the configured one (None = use config's).
@@ -42,7 +49,7 @@ class APIClient:
             messages = [{'role': 'system', 'content': prompt}] + messages
 
         payload = {
-            'model': self.model,
+            'model': model or self.model,
             'messages': messages,
             'stream': True,
             'temperature': self.temperature,

@@ -180,8 +180,8 @@ void proto_send_ping(void) {
     proto_send_message(MSG_PING, NULL, 0);
 }
 
-/* Helper: Send chat message (converts PETSCII text to ASCII for the wire) */
-void proto_send_chat(const char* text) {
+/* Send a message whose payload is PETSCII text, converted to ASCII */
+void proto_send_text(uint8_t msg_type, const char* text) {
     uint16_t len = strlen(text);
     uint16_t i;
     uint8_t buffer[256];  /* Temporary buffer */
@@ -191,7 +191,12 @@ void proto_send_chat(const char* text) {
     }
     buffer[len] = 0;
 
-    proto_send_message(MSG_CHAT_REQUEST, buffer, len + 1);
+    proto_send_message(msg_type, buffer, len + 1);
+}
+
+/* Helper: Send chat message (converts PETSCII text to ASCII for the wire) */
+void proto_send_chat(const char* text) {
+    proto_send_text(MSG_CHAT_REQUEST, text);
 }
 
 /* Helper: Send new conversation */
