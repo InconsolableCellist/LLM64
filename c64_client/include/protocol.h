@@ -38,6 +38,14 @@ void proto_init(ProtoContext* ctx, uint8_t* payload_buffer, uint16_t buffer_size
 uint8_t proto_process_byte(ProtoContext* ctx, uint8_t byte);
 
 /**
+ * Fast path for streaming: while proto_in_payload(), call
+ * proto_fill_payload() to bulk-copy from the serial ring buffer instead
+ * of feeding proto_process_byte one byte at a time.
+ */
+uint8_t proto_in_payload(ProtoContext* ctx);
+void proto_fill_payload(ProtoContext* ctx);
+
+/**
  * Get last received message payload
  */
 uint8_t* proto_get_payload(ProtoContext* ctx);

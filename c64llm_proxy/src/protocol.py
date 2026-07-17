@@ -323,17 +323,38 @@ class ProtocolHandler:
             await self._send_canned(
                 f"You are now talking to {card.name}.")
 
+    # The C64 spends ~0.7ms of CPU per received byte (protocol parsing +
+    # rendering) against a 1.04ms/byte wire rate at 9600 baud, and its RX
+    # ring is 256 bytes. Send small frames, paced slightly below the wire
+    # rate, so sustained streams can never outrun it - LLM APIs emit
+    # arbitrarily large chunks, which is exactly what corrupted long
+    # responses before.
+    # Pacing must leave real headroom below the wire rate: a frame of n
+    # payload bytes occupies (n+6)*1.04ms of 9600-baud wire time, and the
+    # C64 needs idle gaps to drain hiccup backlog. These values hold the
+    # link at ~80% duty (~700 chars/s - far faster than reading speed).
+    CHUNK_TEXT_MAX = 60
+    CHUNK_PACE_BASE = 0.008       # covers the 6-byte frame header + margin
+    CHUNK_PACE_PER_BYTE = 0.0013  # vs 1.04ms/byte wire time
+
+    async def _send_text_chunk(self, seq: int, piece: bytes) -> int:
+        """Send one CHAT_CHUNK frame and pace; returns next seq."""
+        payload = bytearray()
+        payload.append(seq)
+        payload.extend(piece)
+        payload.append(0x00)
+        await self.send_message(MessageType.CHAT_CHUNK, bytes(payload))
+        await asyncio.sleep(self.CHUNK_PACE_BASE
+                            + len(piece) * self.CHUNK_PACE_PER_BYTE)
+        return (seq + 1) % 256
+
     async def _send_canned(self, text: str):
         """Stream local text to the C64 as a normal reply (no API call)."""
         seq = 0
-        for i in range(0, len(text), 60):
-            payload = bytearray()
-            payload.append(seq)
-            payload.extend(text[i:i + 60].encode('ascii', errors='replace'))
-            payload.append(0x00)
-            await self.send_message(MessageType.CHAT_CHUNK, bytes(payload))
-            seq = (seq + 1) % 256
-            await asyncio.sleep(0.02)
+        data = text.encode('ascii', errors='replace')
+        for i in range(0, len(data), self.CHUNK_TEXT_MAX):
+            seq = await self._send_text_chunk(
+                seq, data[i:i + self.CHUNK_TEXT_MAX])
         await self.send_message(MessageType.CHAT_DONE,
                                 struct.pack('<BH', seq, len(text)))
 
@@ -366,19 +387,13 @@ class ProtocolHandler:
                 if chunk:
                     full_response += chunk
 
-                    # Send chunk to C64
-                    payload = bytearray()
-                    payload.append(seq)
-                    ascii_chunk = chunk.translate(UNICODE_TO_ASCII)
-                    payload.extend(ascii_chunk.encode('ascii', errors='replace'))
-                    payload.append(0x00)  # Null terminator
-
-                    await self.send_message(MessageType.CHAT_CHUNK, bytes(payload))
-
-                    seq = (seq + 1) % 256
-
-                    # Brief pacing so the C64's RX ring buffer never backs up
-                    await asyncio.sleep(0.02)
+                    # Split into small paced frames regardless of the size
+                    # the API chose to emit (see CHUNK_TEXT_MAX comment)
+                    data = chunk.translate(UNICODE_TO_ASCII).encode(
+                        'ascii', errors='replace')
+                    for i in range(0, len(data), self.CHUNK_TEXT_MAX):
+                        seq = await self._send_text_chunk(
+                            seq, data[i:i + self.CHUNK_TEXT_MAX])
 
             # Send completion
             payload = struct.pack('<BH', seq, len(full_response))

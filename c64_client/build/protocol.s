@@ -12,6 +12,8 @@
 	.macpack	longbranch
 	.export		_proto_init
 	.export		_proto_process_byte
+	.export		_proto_in_payload
+	.export		_proto_fill_payload
 	.export		_proto_get_payload
 	.export		_proto_get_length
 	.export		_proto_send_message
@@ -23,6 +25,7 @@
 	.export		_proto_send_list_conversations
 	.export		_proto_send_cancel
 	.export		_proto_calc_crc
+	.import		_serial_read_block
 	.import		_serial_write
 	.import		_serial_flush
 	.import		_petscii_to_ascii
@@ -137,10 +140,10 @@ L006E:
 	jeq     L005D
 	cmp     #$04
 	jeq     L0066
-	jmp     L00DE
+	jmp     L00F9
 L0030:	lda     (sp,x)
 	cmp     #$42
-	jne     L00DE
+	jne     L00F9
 	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
@@ -210,9 +213,9 @@ L003E:	tay
 	sbc     #$00
 	lda     #$00
 	tax
-	bcs     L00E0
+	bcs     L00FB
 	jmp     incsp3
-L00E0:	lda     L002A
+L00FB:	lda     L002A
 	ldy     #$20
 	jsr     decaxy
 	sta     L0044
@@ -244,10 +247,10 @@ L00E0:	lda     L002A
 	ldy     #$04
 	jsr     ldaxidx
 	cpx     #$00
-	bne     L00DF
+	bne     L00FA
 	cmp     #$00
 	beq     L004F
-L00DF:	ldy     #$02
+L00FA:	ldy     #$02
 	jsr     ldaxysp
 	ldy     #$04
 	jsr     pushwidx
@@ -389,8 +392,113 @@ L006C:	ldy     #$02
 	lda     #$FE
 	jmp     incsp3
 L002E:	ldx     #$00
-L00DE:	txa
+L00F9:	txa
 	jmp     incsp3
+
+.endproc
+
+; ---------------------------------------------------------------
+; unsigned char __near__ proto_in_payload (__near__ struct $anon-struct-0001 *)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_proto_in_payload: near
+
+.segment	"CODE"
+
+	jsr     pushax
+	jsr     ldax0sp
+	jsr     ldaxi
+	cpx     #$00
+	bne     L007A
+	cmp     #$03
+L007A:	jsr     booleq
+	jmp     incsp2
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ proto_fill_payload (__near__ struct $anon-struct-0001 *)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_proto_fill_payload: near
+
+.segment	"BSS"
+
+L007C:
+	.res	2,$00
+L007D:
+	.res	1,$00
+
+.segment	"CODE"
+
+	jsr     pushax
+	jmp     L0080
+L007E:	jsr     ldax0sp
+	ldy     #$08
+	jsr     ldaxidx
+	sta     sreg
+	stx     sreg+1
+	jsr     ldax0sp
+	ldy     #$06
+	jsr     ldaxidx
+	clc
+	adc     sreg
+	pha
+	txa
+	adc     sreg+1
+	tax
+	pla
+	jsr     pushax
+	lda     L007C
+	cmp     #$00
+	lda     L007C+1
+	sbc     #$01
+	bcc     L00FD
+	lda     #$FF
+	jmp     L00FE
+L00FD:	lda     L007C
+L00FE:	jsr     _serial_read_block
+	sta     L007D
+	lda     L007D
+	beq     L007B
+	jsr     ldax0sp
+	jsr     pushax
+	ldy     #$06
+	jsr     ldaxidx
+	clc
+	adc     L007D
+	bcc     L00FC
+	inx
+L00FC:	ldy     #$05
+	jsr     staxspidx
+L0080:	jsr     ldax0sp
+	ldy     #$04
+	jsr     pushwidx
+	ldy     #$03
+	jsr     ldaxysp
+	ldy     #$06
+	jsr     ldaxidx
+	jsr     tossubax
+	sta     L007C
+	stx     L007C+1
+	cpx     #$00
+	bne     L007E
+	cmp     #$00
+	bne     L007E
+	jsr     ldax0sp
+	sta     ptr1
+	stx     ptr1+1
+	lda     #$04
+	ldy     #$00
+	sta     (ptr1),y
+	iny
+	lda     #$00
+	sta     (ptr1),y
+L007B:	jmp     incsp2
 
 .endproc
 
@@ -440,13 +548,13 @@ L00DE:	txa
 
 .segment	"BSS"
 
-L007D:
+L0098:
 	.res	1,$00
-L007E:
+L0099:
 	.res	2,$00
-L007F:
+L009A:
 	.res	1,$00
-L0080:
+L009B:
 	.res	1,$00
 
 .segment	"CODE"
@@ -457,50 +565,50 @@ L0080:
 	ldx     #$00
 	ldy     #$20
 	jsr     incaxy
-	sta     L007F
+	sta     L009A
 	ldy     #$01
 	lda     (sp),y
 	ldx     #$00
 	ldy     #$20
 	jsr     incaxy
-	sta     L0080
+	sta     L009B
 	lda     #$42
 	jsr     _serial_write
 	ldy     #$04
 	lda     (sp),y
 	jsr     _serial_write
-	lda     L007F
+	lda     L009A
 	jsr     _serial_write
-	lda     L0080
+	lda     L009B
 	jsr     _serial_write
 	lda     #$00
-	sta     L007E
-	sta     L007E+1
-L0090:	lda     L007E
+	sta     L0099
+	sta     L0099+1
+L00AB:	lda     L0099
 	ldy     #$00
 	cmp     (sp),y
-	lda     L007E+1
+	lda     L0099+1
 	iny
 	sbc     (sp),y
-	bcs     L0091
+	bcs     L00AC
 	ldy     #$03
 	jsr     ldaxysp
 	clc
-	adc     L007E
+	adc     L0099
 	sta     ptr1
 	txa
-	adc     L007E+1
+	adc     L0099+1
 	sta     ptr1+1
 	ldy     #$00
 	lda     (ptr1),y
 	jsr     _serial_write
-	lda     L007E
-	ldx     L007E+1
+	lda     L0099
+	ldx     L0099+1
 	jsr     incax1
-	sta     L007E
-	stx     L007E+1
-	jmp     L0090
-L0091:	ldy     #$04
+	sta     L0099
+	stx     L0099+1
+	jmp     L00AB
+L00AC:	ldy     #$04
 	lda     (sp),y
 	jsr     pusha
 	ldy     #$04
@@ -508,7 +616,7 @@ L0091:	ldy     #$04
 	ldy     #$06
 	jsr     ldaxysp
 	jsr     _proto_calc_crc
-	sta     L007D
+	sta     L0098
 	jsr     _serial_write
 	jsr     _serial_flush
 	jmp     incsp5
@@ -576,11 +684,11 @@ L0091:	ldy     #$04
 
 .segment	"BSS"
 
-L00B3:
+L00CE:
 	.res	2,$00
-L00B6:
+L00D1:
 	.res	2,$00
-L00B8:
+L00D3:
 	.res	256,$00
 
 .segment	"CODE"
@@ -588,61 +696,61 @@ L00B8:
 	jsr     pushax
 	jsr     ldax0sp
 	jsr     _strlen
-	sta     L00B3
-	stx     L00B3+1
+	sta     L00CE
+	stx     L00CE+1
 	lda     #$00
-	sta     L00B6
-	sta     L00B6+1
-L00B9:	lda     L00B6
-	cmp     L00B3
-	lda     L00B6+1
-	sbc     L00B3+1
-	bcs     L00BA
-	lda     #<(L00B8)
+	sta     L00D1
+	sta     L00D1+1
+L00D4:	lda     L00D1
+	cmp     L00CE
+	lda     L00D1+1
+	sbc     L00CE+1
+	bcs     L00D5
+	lda     #<(L00D3)
 	clc
-	adc     L00B6
+	adc     L00D1
 	tay
-	lda     #>(L00B8)
-	adc     L00B6+1
+	lda     #>(L00D3)
+	adc     L00D1+1
 	tax
 	tya
 	jsr     pushax
 	ldy     #$03
 	jsr     ldaxysp
 	clc
-	adc     L00B6
+	adc     L00D1
 	sta     ptr1
 	txa
-	adc     L00B6+1
+	adc     L00D1+1
 	sta     ptr1+1
 	ldy     #$00
 	lda     (ptr1),y
 	jsr     _petscii_to_ascii
 	ldy     #$00
 	jsr     staspidx
-	lda     L00B6
-	ldx     L00B6+1
+	lda     L00D1
+	ldx     L00D1+1
 	jsr     incax1
-	sta     L00B6
-	stx     L00B6+1
-	jmp     L00B9
-L00BA:	lda     #<(L00B8)
+	sta     L00D1
+	stx     L00D1+1
+	jmp     L00D4
+L00D5:	lda     #<(L00D3)
 	clc
-	adc     L00B3
+	adc     L00CE
 	sta     ptr1
-	lda     #>(L00B8)
-	adc     L00B3+1
+	lda     #>(L00D3)
+	adc     L00CE+1
 	sta     ptr1+1
 	lda     #$00
 	tay
 	sta     (ptr1),y
 	lda     #$31
 	jsr     pusha
-	lda     #<(L00B8)
-	ldx     #>(L00B8)
+	lda     #<(L00D3)
+	ldx     #>(L00D3)
 	jsr     pushax
-	lda     L00B3
-	ldx     L00B3+1
+	lda     L00CE
+	ldx     L00CE+1
 	jsr     incax1
 	jsr     _proto_send_message
 	jmp     incsp2

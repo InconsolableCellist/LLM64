@@ -569,9 +569,18 @@ int main(void) {
         uint8_t cx = 0, cy = 21;  /* chunk text area: rows 21-23 */
 
         while (!done && timeout < 1800) {  /* 30 second timeout */
-            if (serial_available()) {
-                uint8_t byte = serial_read();
-                uint8_t msg_type = proto_process_byte(&proto, byte);
+            /* Drain EVERY buffered byte before pausing: at 9600 baud a
+               byte arrives every ~1ms and one pass of the idle delay
+               below costs more than that - delaying per byte loses data */
+            while (serial_available() && !done) {
+                uint8_t byte;
+                uint8_t msg_type;
+                if (proto_in_payload(&proto)) {
+                    proto_fill_payload(&proto);  /* bulk path */
+                    continue;
+                }
+                byte = serial_read();
+                msg_type = proto_process_byte(&proto, byte);
 
                 if (msg_type == MSG_STATUS) {
                     /* Status message (arrives as ASCII) */
@@ -626,6 +635,12 @@ int main(void) {
         debug_hex((uint8_t)chunk_count);
         cputs(" CRC fails: ");
         debug_hex(crc_fails);
+        debug_row++;
+        gotoxy(0, debug_row);
+        cputs("Ring drops: ");
+        debug_hex(serial_overflows());
+        cputs(" HW overruns: ");
+        debug_hex(serial_overruns());
         debug_row++;
 
         if (!done) {

@@ -14,6 +14,7 @@
         .export _serial_is_connected
         .export _serial_available
         .export _serial_read
+        .export _serial_read_block
         .export _serial_write
         .export _serial_can_write
         .export _serial_flush
@@ -21,9 +22,14 @@
         .export _acia_send_at_command
         .export _acia_get_status
         .export _serial_rx_count
+        .export _serial_overflows
+        .export _serial_overruns
 
         .import popa, popax
+        .import _kb_scan
         .importzp ptr1, ptr2, tmp1, tmp2
+
+CIA1_ICR = $DC0D
 
 ; ACIA registers
 ACIA_DATA    = $DE00
@@ -52,14 +58,15 @@ rx_head:        .res 1          ; write index (IRQ handler)
 rx_tail:        .res 1          ; read index (main program)
 connected:      .res 1
 vectors_saved:  .res 1
+overflows:      .res 1          ; ring-full drops (consumer too slow)
+overruns:       .res 1          ; ACIA overrun flags seen (IRQ too late)
 rx_buffer:      .res 256        ; ring buffer (8-bit indices wrap naturally)
 
         .data
-; Chain to the previous handlers via patched absolute JMPs. An indirect
-; "jmp (vector)" would hit the 6502 page-boundary bug if the vector byte
-; ever landed at $xxFF (ld65 warned; it depends on link layout).
-irq_chain:      jmp $0000       ; operand patched in acia_init_hw
-nmi_chain:      jmp $0000
+; Chain to the previous NMI handler via a patched absolute JMP. An
+; indirect "jmp (vector)" would hit the 6502 page-boundary bug if the
+; vector byte ever landed at $xxFF.
+nmi_chain:      jmp $0000       ; operand patched in acia_init_hw
 
         .code
 
@@ -101,10 +108,6 @@ _acia_init_hw:
         bne @vectors_done
 
         sei
-        lda IRQ_VECTOR
-        sta irq_chain+1
-        lda IRQ_VECTOR+1
-        sta irq_chain+2
         lda #<acia_irq_entry
         sta IRQ_VECTOR
         lda #>acia_irq_entry
@@ -137,31 +140,84 @@ _acia_init_hw:
         rts
 
 ;---------------------------------------
-; Interrupt entry points.
-; Drain every byte the ACIA has (usually one), then chain to the
-; previous handler so KERNAL housekeeping still runs.
+; IRQ entry (via $0314; the KERNAL stub already saved A/X/Y).
+;
+; The KERNAL service routine is NEVER chained: at 9600 baud a byte
+; arrives every ~1000 cycles and the KERNAL's keyboard scan costs about
+; that much, so chaining it per byte saturates the CPU and drops frames.
+; ACIA bytes take the ~50 cycle fast path below; CIA1 timer ticks (60Hz)
+; run our own matrix scanner (keyboard.s) instead of the KERNAL's.
 ;---------------------------------------
 acia_irq_entry:
-        jsr acia_drain_rx
-        jmp irq_chain
-
-acia_nmi_entry:
-        jsr acia_drain_rx
-        jmp nmi_chain
-
-acia_drain_rx:
-        lda ACIA_STATUS         ; reading clears the ACIA IRQ flag
+        lda ACIA_STATUS         ; bit7 = this ACIA caused the interrupt
+        bpl @not_acia
+@drain: tax                     ; keep status
+        and #$04                ; overrun flag: a byte was lost in hardware
+        beq @no_ovr
+        inc overruns
+@no_ovr:
+        txa
         and #ACIA_SR_RDRF
-        beq @done
+        beq @exit
         lda ACIA_DATA
         ldx rx_head
         sta rx_buffer,x
         inx
         cpx rx_tail             ; full? drop newest rather than corrupt ring
-        beq @done
+        beq @full
         stx rx_head
-@done:
-        rts
+        lda ACIA_STATUS         ; another byte already waiting?
+        jmp @drain
+@full:
+        inc overflows
+
+@not_acia:
+        lda CIA1_ICR            ; read acks ALL CIA1 int flags
+        and #$01                ; timer A (the 60Hz system tick)?
+        beq @exit
+        jsr _kb_scan
+
+@exit:
+        pla                     ; unwind the KERNAL stub's saves
+        tay
+        pla
+        tax
+        pla
+        rti
+
+;---------------------------------------
+; NMI entry (via $0318; registers NOT yet saved at this point - the
+; KERNAL stub that saves them runs after the vector). Real SwiftLink
+; cartridges commonly raise NMI, so drain here too; anything that is
+; not ours (RESTORE key) chains to the KERNAL with registers intact.
+;---------------------------------------
+acia_nmi_entry:
+        pha
+        txa
+        pha
+        lda ACIA_STATUS
+        bpl @chain              ; not the ACIA: RESTORE etc.
+@drain: and #ACIA_SR_RDRF
+        beq @ours
+        lda ACIA_DATA
+        ldx rx_head
+        sta rx_buffer,x
+        inx
+        cpx rx_tail
+        beq @ours
+        stx rx_head
+        lda ACIA_STATUS
+        jmp @drain
+@ours:
+        pla
+        tax
+        pla
+        rti
+@chain:
+        pla
+        tax
+        pla
+        jmp nmi_chain
 
 ;---------------------------------------
 ; uint8_t serial_available(void)
@@ -203,6 +259,42 @@ _serial_rx_count:
         lda rx_head
         sec
         sbc rx_tail
+        ldx #0
+        rts
+
+;---------------------------------------
+; uint8_t serial_read_block(uint8_t* dest, uint8_t max)
+; Bulk-copy up to max buffered bytes into dest; returns count copied.
+; ~20 cycles/byte vs ~200+ for a serial_read() call per byte - needed to
+; keep up with sustained 9600 baud (1042 cycles/byte budget).
+;---------------------------------------
+_serial_read_block:
+        sta tmp1                ; max
+        jsr popax               ; dest
+        sta ptr1
+        stx ptr1+1
+        ldy #0
+@loop:  cpy tmp1
+        bcs @done
+        ldx rx_tail
+        cpx rx_head
+        beq @done               ; ring empty
+        lda rx_buffer,x
+        sta (ptr1),y
+        inc rx_tail
+        iny
+        bne @loop
+@done:  tya
+        ldx #0
+        rts
+
+_serial_overflows:
+        lda overflows
+        ldx #0
+        rts
+
+_serial_overruns:
+        lda overruns
         ldx #0
         rts
 

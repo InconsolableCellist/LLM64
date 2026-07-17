@@ -100,6 +100,28 @@ uint8_t proto_process_byte(ProtoContext* ctx, uint8_t byte) {
     return 0;  /* No complete message yet */
 }
 
+/* Fast path: is the parser mid-payload? (bulk fill applies) */
+uint8_t proto_in_payload(ProtoContext* ctx) {
+    return ctx->state == PROTO_READING_PAYLOAD;
+}
+
+/* Bulk-fill the payload from the serial ring buffer. Byte-at-a-time
+   processing costs ~1ms/byte through the C call chain, which loses a
+   race against the 1.04ms/byte wire rate; this path is ~10x faster.
+   CRC is verified as usual when the trailing CRC byte arrives. */
+void proto_fill_payload(ProtoContext* ctx) {
+    uint16_t remaining;
+    uint8_t n;
+
+    while ((remaining = ctx->msg_length - ctx->bytes_read) > 0) {
+        n = serial_read_block(ctx->payload_buf + ctx->bytes_read,
+                              remaining > 255 ? 255 : (uint8_t)remaining);
+        if (n == 0) return;  /* ring drained; resume on next pump */
+        ctx->bytes_read += n;
+    }
+    ctx->state = PROTO_VALIDATING_CRC;
+}
+
 /* Get payload pointer */
 uint8_t* proto_get_payload(ProtoContext* ctx) {
     return ctx->payload_buf;

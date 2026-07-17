@@ -41,6 +41,10 @@ void chat_scroll(int8_t lines_up);
 
 void chat_redraw(void);
 
+/* Cheap redraw for use per streamed chunk: repaints only the in-progress
+   line unless a full line was committed since the last redraw. */
+void chat_redraw_stream(void);
+
 /* Modal overlays (conversation list, help) draw over the chat area;
    call chat_redraw() to restore. Helper to blank the area: */
 void chat_area_clear_screen(void);

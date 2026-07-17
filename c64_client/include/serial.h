@@ -45,10 +45,10 @@ uint8_t serial_available(void);
 uint8_t serial_read(void);
 
 /**
- * Read multiple bytes
- * Returns count actually read
+ * Bulk-copy up to max buffered bytes into dest (non-blocking).
+ * Returns count copied. ~10x faster per byte than serial_read().
  */
-uint16_t serial_read_buffer(uint8_t* dest, uint16_t max_len);
+uint8_t serial_read_block(uint8_t* dest, uint8_t max);
 
 /**
  * Non-blocking write (returns 0 if buffer full)
@@ -75,6 +75,10 @@ void serial_flush(void);
  * Bytes currently waiting in the RX ring buffer
  */
 uint8_t serial_rx_count(void);
+
+/* Diagnostics: ring-full drops / ACIA hardware overruns since init */
+uint8_t serial_overflows(void);
+uint8_t serial_overruns(void);
 
 /* Internal functions (implemented in ASM) */
 void __fastcall__ acia_init_hw(void);

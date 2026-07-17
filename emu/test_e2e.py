@@ -95,6 +95,9 @@ def proxy_python():
     return str(venv) if venv.exists() else sys.executable
 
 
+POLL_INTERVAL = float(os.environ.get('E2E_POLL_INTERVAL', '0.5'))
+
+
 def wait_for_screen(monitor, pattern, timeout, artifacts, label):
     """Poll screen RAM until regex `pattern` matches (case-insensitive)."""
     regex = re.compile(pattern, re.IGNORECASE)
@@ -105,12 +108,12 @@ def wait_for_screen(monitor, pattern, timeout, artifacts, label):
             last_screen = monitor.screen_text()
         except ViceMonitorError as e:
             print(f"  monitor hiccup: {e}")
-            time.sleep(0.5)
+            time.sleep(POLL_INTERVAL)
             continue
         if regex.search(last_screen):
             print(f"  PASS: found /{pattern}/ ({label})")
             return last_screen
-        time.sleep(0.5)
+        time.sleep(POLL_INTERVAL)
     (artifacts / f'fail-{label}.txt').write_text(last_screen)
     raise AssertionError(
         f"timeout ({timeout}s) waiting for /{pattern}/ ({label}).\n"
@@ -127,6 +130,12 @@ def main():
                         help='Use the real API from config.toml instead of the mock')
     parser.add_argument('--expect', default='mock llm',
                         help='Text that must appear on the final screen')
+    parser.add_argument('--assert-all-chunks', action='store_true',
+                        help='Assert every chunk of the mock LONGTEST '
+                             'response arrived intact')
+    parser.add_argument('--no-warp', action='store_true',
+                        help='Run the emulator at real C64 speed (exposes '
+                             'wall-clock timing issues that warp hides)')
     parser.add_argument('--tui', action='store_true',
                         help='Drive the interactive TUI via keyboard injection '
                              'instead of asserting the scripted debug session')
@@ -186,7 +195,7 @@ def main():
         # are cycle-based, but tcpser answers in wall-clock time, so a warped
         # C64 gives up long before the modem replies.
         mon_port = find_free_port()
-        speed = [] if args.mode == 'hayes' else ['-warp']
+        speed = [] if (args.mode == 'hayes' or args.no_warp) else ['-warp']
         stack.start('vice', [
             'x64sc', '-default', *speed, '-sounddev', 'dummy',
             '+confirmonexit',
@@ -270,6 +279,14 @@ def main():
                                         artifacts, f'{tag}-content')
                 wait_for_screen(monitor, r'crc fails: 00', 10,
                                 artifacts, f'{tag}-crc')
+                if args.assert_all_chunks:
+                    import mock_llm
+                    n = ((len(mock_llm.LONG_RESPONSE)
+                          + mock_llm.CHUNK_SIZE - 1)
+                         // mock_llm.CHUNK_SIZE)
+                    pat = f'chunks: {n >> 8:02x} {n & 0xff:02x}'
+                    wait_for_screen(monitor, re.escape(pat), 10,
+                                    artifacts, f'{tag}-allchunks')
 
         (artifacts / f'{args.mode}-final.txt').write_text(final)
         print(f"\n--- final screen ---\n{final}\n--------------------")

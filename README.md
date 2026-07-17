@@ -24,7 +24,11 @@ end-to-end by automated tests running in VICE.
   responses, 120-char input editor with Emacs bindings, conversation
   browser, help overlay
 - **Interrupt-driven serial**: 6551 ACIA driver with an IRQ/NMI RX ring
-  buffer — no dropped bytes at 9600 baud while the screen updates
+  buffer and a ~50-cycle per-byte fast path — verified zero data loss on
+  multi-KB streams at real C64 speed (`make test-emu-long-rt`)
+- **Custom keyboard driver**: replaces the KERNAL scanner; registers every
+  key pressed in a frame (rollover to the matrix's physical limit) with
+  ghost-blocking, verified with real X11 keystrokes (`make test-emu-matrix`)
 - **Python proxy**: async TCP server, OpenAI SSE streaming, Open
   WebUI-style conversation persistence, ASCII sanitization, C64-aware
   system prompt

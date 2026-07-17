@@ -277,7 +277,7 @@ static void handle_message(uint8_t msg_type) {
                 ui_status("Receiving... (F3 to cancel)");
             }
             chat_append_ascii((char*)(p + 1));  /* skip sequence byte */
-            chat_redraw();
+            chat_redraw_stream();
             break;
         }
         case MSG_CHAT_DONE:
@@ -319,7 +319,12 @@ static void handle_message(uint8_t msg_type) {
 
 static void pump_serial(void) {
     while (serial_available()) {
-        uint8_t msg = proto_process_byte(&proto, serial_read());
+        uint8_t msg;
+        if (proto_in_payload(&proto)) {
+            proto_fill_payload(&proto);  /* bulk path keeps up with 9600 */
+            continue;
+        }
+        msg = proto_process_byte(&proto, serial_read());
         if (msg && msg != PROTO_CRC_FAIL) {
             handle_message(msg);
         }

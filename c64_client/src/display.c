@@ -28,6 +28,7 @@ static uint8_t wbuf[SCREEN_WIDTH];
 static uint8_t wlen;
 
 static uint8_t view_scroll;  /* 0 = pinned to bottom */
+static uint8_t lines_dirty;  /* a line committed since last full redraw */
 
 /* Role colors */
 static const uint8_t role_colors[3] = {
@@ -47,6 +48,7 @@ static void commit_line(void) {
     ++line_head;
     if (line_head >= MAX_LINES) line_head = 0;
     if (line_count < MAX_LINES) ++line_count;
+    lines_dirty = 1;
     cur_reset();
 }
 
@@ -164,6 +166,31 @@ void chat_redraw(void) {
         dst += SCREEN_WIDTH;
         cdst += SCREEN_WIDTH;
     }
+}
+
+void chat_redraw_stream(void) {
+    /* Streaming fast path: a full 19-row redraw costs ~15ms, longer than
+       a chunk's wire time, so during a stream only repaint the row of
+       the line under construction unless a line was committed. */
+    int16_t total, first;
+    uint8_t row;
+    uint8_t* dst;
+
+    if (lines_dirty || view_scroll) {
+        lines_dirty = 0;
+        chat_redraw();
+        return;
+    }
+    total = line_count + 1;  /* the partial line */
+    first = total - CHAT_HEIGHT;
+    if (first < 0) first = 0;
+    row = CHAT_START_ROW + (uint8_t)(line_count - first);
+    dst = SCREEN + (uint16_t)row * SCREEN_WIDTH;
+    memcpy(dst, cur, SCREEN_WIDTH);
+    if (wlen && cur_len + wlen <= SCREEN_WIDTH) {
+        memcpy(dst + cur_len, wbuf, wlen);
+    }
+    memset(COLORS + (uint16_t)row * SCREEN_WIDTH, cur_color, SCREEN_WIDTH);
 }
 
 void chat_area_clear_screen(void) {

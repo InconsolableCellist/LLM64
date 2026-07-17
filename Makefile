@@ -39,11 +39,24 @@ test-emu-long:
 	$(MAKE) -C c64_client CONNECT=direct DEBUG_CLIENT=1 TEST_MESSAGE=LONGTEST
 	$(PYTHON) emu/test_e2e.py --mode direct --expect "streaming test" --timeout 180
 
+# Same, at real C64 speed with every-chunk-arrived assertion: catches
+# IRQ saturation / dropped frames that warp mode hides
+test-emu-long-rt:
+	$(MAKE) -C c64_client clean
+	$(MAKE) -C c64_client CONNECT=direct DEBUG_CLIENT=1 TEST_MESSAGE=LONGTEST
+	$(PYTHON) emu/test_e2e.py --mode direct --no-warp --expect "streaming test" --assert-all-chunks --timeout 200
+
 # Interactive TUI driven end-to-end via emulated keyboard input
 test-emu-tui: client-tui-direct
 	$(PYTHON) emu/test_e2e.py --mode direct --tui
 
-test-all: test-emu test-emu-long test-emu-hayes test-emu-tui
+# Real X11 keystrokes through the emulated keyboard matrix (exercises
+# the custom scanner + n-key rollover). Needs a desktop session and
+# steals focus, so not part of test-all.
+test-emu-matrix: client-tui-direct
+	$(PYTHON) emu/test_matrix.py
+
+test-all: test-emu test-emu-long test-emu-long-rt test-emu-hayes test-emu-tui
 
 # Interactive TUI session against the real API from c64llm_proxy/config.toml
 run-live: client-tui-direct
