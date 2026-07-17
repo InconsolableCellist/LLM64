@@ -62,11 +62,11 @@ _pending_ack:
 
 .segment	"RODATA"
 
-L0096:
+L009C:
 	.byte	$20,$C3,$4F,$4E,$56,$45,$52,$53,$41,$54,$49,$4F,$4E,$53,$20,$28
 	.byte	$52,$45,$54,$55,$52,$4E,$3D,$4C,$4F,$41,$44,$2C,$20,$46,$35,$3D
 	.byte	$43,$4C,$4F,$53,$45,$29,$00
-L01BA:
+L01C0:
 	.byte	$C2,$55,$53,$59,$20,$2D,$20,$57,$41,$49,$54,$20,$4F,$52,$20,$50
 	.byte	$52,$45,$53,$53,$20,$C6,$33,$20,$54,$4F,$20,$43,$41,$4E,$43,$45
 	.byte	$4C,$2E,$00
@@ -74,72 +74,75 @@ L004B:
 	.byte	$20,$20,$C6,$35,$20,$20,$20,$20,$20,$20,$20,$20,$20,$43,$4F,$4E
 	.byte	$56,$45,$52,$53,$41,$54,$49,$4F,$4E,$20,$42,$52,$4F,$57,$53,$45
 	.byte	$52,$00
-L0235:
+L0245:
 	.byte	$CE,$4F,$20,$53,$45,$52,$56,$45,$52,$20,$52,$45,$53,$50,$4F,$4E
 	.byte	$53,$45,$21,$20,$C3,$48,$45,$43,$4B,$20,$50,$52,$4F,$58,$59,$2E
 	.byte	$00
-L005D:
+L0063:
 	.byte	$20,$20,$43,$54,$52,$4C,$2D,$41,$2F,$45,$20,$20,$20,$53,$54,$41
 	.byte	$52,$54,$2F,$45,$4E,$44,$20,$4F,$46,$20,$49,$4E,$50,$55,$54,$00
-L0244:
+L0057:
+	.byte	$20,$20,$C6,$34,$20,$2F,$20,$C6,$36,$20,$20,$20,$20,$50,$41,$47
+	.byte	$45,$20,$43,$48,$41,$54,$20,$55,$50,$2F,$44,$4F,$57,$4E,$00
+L0254:
 	.byte	$C3,$4F,$4E,$4E,$45,$43,$54,$45,$44,$20,$54,$4F,$20,$31,$39,$32
 	.byte	$2E,$31,$36,$38,$2E,$31,$2E,$33,$39,$3A,$36,$34,$30,$30,$00
 L003F:
 	.byte	$20,$20,$C6,$32,$20,$20,$20,$20,$20,$20,$20,$20,$20,$4E,$45,$57
 	.byte	$20,$43,$4F,$4E,$56,$45,$52,$53,$41,$54,$49,$4F,$4E,$00
-L007B:
+L0081:
 	.byte	$20,$20,$2F,$41,$44,$56,$45,$4E,$54,$55,$52,$45,$20,$5B,$54,$48
 	.byte	$45,$4D,$45,$5D,$20,$20,$2F,$43,$48,$41,$52,$53,$00
-L0075:
+L007B:
 	.byte	$20,$20,$4D,$4F,$44,$45,$53,$20,$28,$54,$59,$50,$45,$20,$41,$53
 	.byte	$20,$41,$20,$4D,$45,$53,$53,$41,$47,$45,$29,$3A,$00
-L01D5:
+L01DB:
 	.byte	$D3,$54,$41,$52,$54,$49,$4E,$47,$20,$4E,$45,$57,$20,$43,$4F,$4E
 	.byte	$56,$45,$52,$53,$41,$54,$49,$4F,$4E,$2E,$2E,$2E,$00
-L0081:
+L0087:
 	.byte	$20,$20,$2F,$43,$48,$41,$52,$20,$3C,$4E,$41,$4D,$45,$3E,$20,$20
 	.byte	$2F,$43,$48,$41,$54,$20,$20,$2F,$48,$45,$4C,$50,$00
-L0168:
+L016E:
 	.byte	$D2,$45,$43,$45,$49,$56,$49,$4E,$47,$2E,$2E,$2E,$20,$28,$C6,$33
 	.byte	$20,$54,$4F,$20,$43,$41,$4E,$43,$45,$4C,$29,$00
-L014D:
+L0153:
 	.byte	$C3,$4F,$4E,$56,$45,$52,$53,$41,$54,$49,$4F,$4E,$20,$4C,$4F,$41
 	.byte	$44,$45,$44,$2E,$20,$D2,$45,$41,$44,$59,$2E,$00
-L0087:
+L008D:
 	.byte	$20,$20,$53,$45,$52,$56,$45,$52,$3A,$20,$31,$39,$32,$2E,$31,$36
 	.byte	$38,$2E,$31,$2E,$33,$39,$3A,$36,$34,$30,$30,$00
-L0188:
+L018E:
 	.byte	$C5,$52,$52,$4F,$52,$20,$46,$52,$4F,$4D,$20,$53,$45,$52,$56,$45
 	.byte	$52,$2E,$20,$D2,$45,$41,$44,$59,$2E,$00
 L0039:
 	.byte	$20,$20,$C6,$31,$2F,$D2,$45,$54,$55,$52,$4E,$20,$20,$53,$45,$4E
 	.byte	$44,$20,$4D,$45,$53,$53,$41,$47,$45,$00
-L024D:
+L025D:
 	.byte	$D2,$45,$41,$44,$59,$2E,$20,$D4,$59,$50,$45,$20,$59,$4F,$55,$52
 	.byte	$20,$4D,$45,$53,$53,$41,$47,$45,$2E,$00
 L0045:
 	.byte	$20,$20,$C6,$33,$20,$20,$20,$20,$20,$20,$20,$20,$20,$43,$41,$4E
 	.byte	$43,$45,$4C,$20,$52,$45,$50,$4C,$59,$00
-L0176	:=	L024D+0
-L006F:
+L017C	:=	L025D+0
+L0075:
 	.byte	$20,$20,$43,$4C,$52,$2F,$48,$4F,$4D,$45,$20,$20,$20,$43,$4C,$45
 	.byte	$41,$52,$20,$49,$4E,$50,$55,$54,$00
-L0069:
+L006F:
 	.byte	$20,$20,$43,$54,$52,$4C,$2D,$44,$20,$20,$20,$20,$20,$44,$45,$4C
 	.byte	$45,$54,$45,$20,$43,$48,$41,$52,$00
-L0063:
+L0069:
 	.byte	$20,$20,$43,$54,$52,$4C,$2D,$4B,$20,$20,$20,$20,$20,$4B,$49,$4C
 	.byte	$4C,$20,$54,$4F,$20,$45,$4E,$44,$00
-L008D:
+L0093:
 	.byte	$20,$20,$50,$52,$45,$53,$53,$20,$41,$4E,$59,$20,$4B,$45,$59,$20
 	.byte	$54,$4F,$20,$43,$4C,$4F,$53,$45,$00
-L0057:
+L005D:
 	.byte	$20,$20,$43,$52,$53,$52,$20,$55,$50,$2F,$44,$4E,$20,$53,$43,$52
 	.byte	$4F,$4C,$4C,$20,$43,$48,$41,$54,$00
-L0190:
+L0196:
 	.byte	$CE,$45,$57,$20,$43,$4F,$4E,$56,$45,$52,$53,$41,$54,$49,$4F,$4E
 	.byte	$2E,$20,$D2,$45,$41,$44,$59,$2E,$00
-L00CE:
+L00D4:
 	.byte	$CC,$4F,$41,$44,$49,$4E,$47,$20,$43,$4F,$4E,$56,$45,$52,$53,$41
 	.byte	$54,$49,$4F,$4E,$2E,$2E,$2E,$00
 L0033:
@@ -148,28 +151,28 @@ L0033:
 L0051:
 	.byte	$20,$20,$C6,$37,$20,$20,$20,$20,$20,$20,$20,$20,$20,$54,$48,$49
 	.byte	$53,$20,$48,$45,$4C,$50,$00
-L022E:
+L023E:
 	.byte	$C3,$4F,$4E,$54,$41,$43,$54,$49,$4E,$47,$20,$53,$45,$52,$56,$45
 	.byte	$52,$2E,$2E,$2E,$00
-L022A:
+L023A:
 	.byte	$C9,$4E,$49,$54,$49,$41,$4C,$49,$5A,$49,$4E,$47,$20,$C1,$C3,$C9
 	.byte	$C1,$2E,$2E,$2E,$00
-L0196:
+L019C:
 	.byte	$C3,$41,$4E,$43,$45,$4C,$4C,$45,$44,$2E,$20,$D2,$45,$41,$44,$59
 	.byte	$2E,$00
-L00A6:
+L00AC:
 	.byte	$20,$20,$28,$4E,$4F,$4E,$45,$20,$46,$4F,$55,$4E,$44,$29,$00
-L01DE:
+L01E4:
 	.byte	$C3,$41,$4E,$43,$45,$4C,$4C,$49,$4E,$47,$2E,$2E,$2E,$00
-L009E:
+L00A4:
 	.byte	$20,$20,$4C,$4F,$41,$44,$49,$4E,$47,$2E,$2E,$2E,$00
-L01CC:
+L01D2:
 	.byte	$D3,$45,$4E,$44,$49,$4E,$47,$2E,$2E,$2E,$00
-L0180:
+L0186:
 	.byte	$45,$52,$52,$4F,$52,$3A,$20,$00
-L01C1:
+L01C7:
 	.byte	$3E,$20,$00
-L013B	:=	L01C1+0
+L0141	:=	L01C7+0
 
 .segment	"BSS"
 
@@ -196,35 +199,35 @@ _conv_loading:
 
 .segment	"BSS"
 
-L01A6:
+L01AC:
 	.res	1,$00
 
 .segment	"CODE"
 
-	jmp     L01B0
-L01A2:	lda     #<(_proto)
+	jmp     L01B6
+L01A8:	lda     #<(_proto)
 	ldx     #>(_proto)
 	jsr     _proto_in_payload
 	tax
-	beq     L01A7
+	beq     L01AD
 	lda     #<(_proto)
 	ldx     #>(_proto)
 	jsr     _proto_fill_payload
-	jmp     L01B0
-L01A7:	lda     #<(_proto)
+	jmp     L01B6
+L01AD:	lda     #<(_proto)
 	ldx     #>(_proto)
 	jsr     pushax
 	jsr     _serial_read
 	jsr     _proto_process_byte
-	sta     L01A6
-	lda     L01A6
-	beq     L01B0
+	sta     L01AC
+	lda     L01AC
+	beq     L01B6
 	cmp     #$FE
-	beq     L01B0
+	beq     L01B6
 	jsr     _handle_message
-L01B0:	jsr     _serial_available
+L01B6:	jsr     _serial_available
 	tax
-	bne     L01A2
+	bne     L01A8
 	rts
 
 .endproc
@@ -272,11 +275,11 @@ L001F:	jsr     _serial_available
 	tax
 	bne     L001B
 	sta     L0011
-L025A:	lda     L0011
+L026A:	lda     L0011
 	cmp     #$C8
 	bcs     L0014
 	inc     L0011
-	jmp     L025A
+	jmp     L026A
 L0014:	inc     L0010
 	bne     L0012
 	inc     L0010+1
@@ -354,7 +357,7 @@ L0013:	ldx     #$00
 	jsr     pusha
 	lda     #$00
 	jsr     _ui_draw_row
-	lda     #$0A
+	lda     #$09
 	jsr     pusha
 	lda     #<(L0057)
 	ldx     #>(L0057)
@@ -363,7 +366,7 @@ L0013:	ldx     #$00
 	jsr     pusha
 	lda     #$00
 	jsr     _ui_draw_row
-	lda     #$0B
+	lda     #$0A
 	jsr     pusha
 	lda     #<(L005D)
 	ldx     #>(L005D)
@@ -372,7 +375,7 @@ L0013:	ldx     #$00
 	jsr     pusha
 	lda     #$00
 	jsr     _ui_draw_row
-	lda     #$0C
+	lda     #$0B
 	jsr     pusha
 	lda     #<(L0063)
 	ldx     #>(L0063)
@@ -381,7 +384,7 @@ L0013:	ldx     #$00
 	jsr     pusha
 	lda     #$00
 	jsr     _ui_draw_row
-	lda     #$0D
+	lda     #$0C
 	jsr     pusha
 	lda     #<(L0069)
 	ldx     #>(L0069)
@@ -390,7 +393,7 @@ L0013:	ldx     #$00
 	jsr     pusha
 	lda     #$00
 	jsr     _ui_draw_row
-	lda     #$0E
+	lda     #$0D
 	jsr     pusha
 	lda     #<(L006F)
 	ldx     #>(L006F)
@@ -399,25 +402,25 @@ L0013:	ldx     #$00
 	jsr     pusha
 	lda     #$00
 	jsr     _ui_draw_row
-	lda     #$0F
+	lda     #$0E
 	jsr     pusha
 	lda     #<(L0075)
 	ldx     #>(L0075)
+	jsr     pushax
+	lda     #$03
+	jsr     pusha
+	lda     #$00
+	jsr     _ui_draw_row
+	lda     #$0F
+	jsr     pusha
+	lda     #<(L007B)
+	ldx     #>(L007B)
 	jsr     pushax
 	lda     #$01
 	jsr     pusha
 	lda     #$00
 	jsr     _ui_draw_row
 	lda     #$10
-	jsr     pusha
-	lda     #<(L007B)
-	ldx     #>(L007B)
-	jsr     pushax
-	lda     #$03
-	jsr     pusha
-	lda     #$00
-	jsr     _ui_draw_row
-	lda     #$11
 	jsr     pusha
 	lda     #<(L0081)
 	ldx     #>(L0081)
@@ -426,10 +429,19 @@ L0013:	ldx     #$00
 	jsr     pusha
 	lda     #$00
 	jsr     _ui_draw_row
-	lda     #$12
+	lda     #$11
 	jsr     pusha
 	lda     #<(L0087)
 	ldx     #>(L0087)
+	jsr     pushax
+	lda     #$03
+	jsr     pusha
+	lda     #$00
+	jsr     _ui_draw_row
+	lda     #$12
+	jsr     pusha
+	lda     #<(L008D)
+	ldx     #>(L008D)
 	jsr     pushax
 	lda     #$0C
 	jsr     pusha
@@ -437,8 +449,8 @@ L0013:	ldx     #$00
 	jsr     _ui_draw_row
 	lda     #$13
 	jsr     pusha
-	lda     #<(L008D)
-	ldx     #>(L008D)
+	lda     #<(L0093)
+	ldx     #>(L0093)
 	jsr     pushax
 	lda     #$01
 	jsr     pusha
@@ -457,7 +469,7 @@ L0013:	ldx     #$00
 
 .segment	"BSS"
 
-L0092:
+L0098:
 	.res	1,$00
 
 .segment	"CODE"
@@ -465,44 +477,44 @@ L0092:
 	jsr     _chat_area_clear_screen
 	lda     #$01
 	jsr     pusha
-	lda     #<(L0096)
-	ldx     #>(L0096)
+	lda     #<(L009C)
+	ldx     #>(L009C)
 	jsr     pushax
 	lda     #$01
 	jsr     pusha
 	lda     #$00
 	jsr     _ui_draw_row
 	lda     _conv_loading
-	beq     L009A
+	beq     L00A0
 	lda     #$03
 	jsr     pusha
-	lda     #<(L009E)
-	ldx     #>(L009E)
+	lda     #<(L00A4)
+	ldx     #>(L00A4)
 	jsr     pushax
 	lda     #$0C
 	jsr     pusha
 	lda     #$00
 	jmp     _ui_draw_row
-L009A:	lda     _conv_count
-	bne     L025C
+L00A0:	lda     _conv_count
+	bne     L026C
 	lda     #$03
 	jsr     pusha
-	lda     #<(L00A6)
-	ldx     #>(L00A6)
+	lda     #<(L00AC)
+	ldx     #>(L00AC)
 	jsr     pushax
 	lda     #$0C
 	jsr     pusha
 	lda     #$00
 	jmp     _ui_draw_row
-L025C:	lda     #$00
-	sta     L0092
-L025D:	lda     L0092
+L026C:	lda     #$00
+	sta     L0098
+L026D:	lda     L0098
 	cmp     _conv_count
-	bcs     L00AB
+	bcs     L00B1
 	clc
 	adc     #$02
 	jsr     pusha
-	lda     L0092
+	lda     L0098
 	jsr     pusha0
 	lda     #$29
 	jsr     tosmula0
@@ -518,12 +530,12 @@ L025D:	lda     L0092
 	lda     #$03
 	jsr     pusha
 	lda     _conv_sel
-	cmp     L0092
+	cmp     L0098
 	jsr     booleq
 	jsr     _ui_draw_row
-	inc     L0092
-	jmp     L025D
-L00AB:	rts
+	inc     L0098
+	jmp     L026D
+L00B1:	rts
 
 .endproc
 
@@ -575,7 +587,7 @@ L00AB:	rts
 
 .segment	"BSS"
 
-L00C8:
+L00CE:
 	.res	4,$00
 
 .segment	"CODE"
@@ -592,21 +604,21 @@ L00C8:
 	tax
 	tya
 	jsr     ldeaxi
-	sta     L00C8
-	stx     L00C8+1
+	sta     L00CE
+	stx     L00CE+1
 	ldy     sreg
-	sty     L00C8+2
+	sty     L00CE+2
 	ldy     sreg+1
-	sty     L00C8+3
+	sty     L00CE+3
 	jsr     _conv_close
 	jsr     _chat_clear
-	lda     #<(L00CE)
-	ldx     #>(L00CE)
+	lda     #<(L00D4)
+	ldx     #>(L00D4)
 	jsr     _ui_status
 	lda     #$34
 	jsr     pusha
-	lda     #<(L00C8)
-	ldx     #>(L00C8)
+	lda     #<(L00CE)
+	ldx     #>(L00CE)
 	jsr     pushax
 	ldx     #$00
 	lda     #$04
@@ -624,21 +636,21 @@ L00C8:
 
 .segment	"BSS"
 
-L00D5:
-	.res	2,$00
-L00D8:
-	.res	2,$00
 L00DB:
-	.res	1,$00
+	.res	2,$00
 L00DE:
-	.res	1,$00
+	.res	2,$00
 L00E1:
-	.res	2,$00
-L00E3:
 	.res	1,$00
-L00EE:
+L00E4:
+	.res	1,$00
+L00E7:
 	.res	2,$00
-L00F1:
+L00E9:
+	.res	1,$00
+L00F4:
+	.res	2,$00
+L00F7:
 	.res	1,$00
 
 .segment	"CODE"
@@ -646,66 +658,66 @@ L00F1:
 	lda     #<(_proto)
 	ldx     #>(_proto)
 	jsr     _proto_get_payload
-	sta     L00D5
-	stx     L00D5+1
+	sta     L00DB
+	stx     L00DB+1
 	lda     #<(_proto)
 	ldx     #>(_proto)
 	jsr     _proto_get_length
-	sta     L00D8
-	stx     L00D8+1
-	lda     L00D5+1
+	sta     L00DE
+	stx     L00DE+1
+	lda     L00DB+1
 	sta     ptr1+1
-	lda     L00D5
+	lda     L00DB
 	sta     ptr1
 	ldy     #$00
 	lda     (ptr1),y
-	sta     L00DB
-	lda     L00D5+1
+	sta     L00E1
+	lda     L00DB+1
 	sta     ptr1+1
-	lda     L00D5
+	lda     L00DB
 	sta     ptr1
 	iny
 	lda     (ptr1),y
-	sta     L00DE
+	sta     L00E4
 	ldx     #$00
 	lda     #$02
-	sta     L00E1
-	stx     L00E1+1
-	stx     L00E3
-L0262:	lda     L00E3
-	cmp     L00DB
-	jcs     L00E5
+	sta     L00E7
+	stx     L00E7+1
+	stx     L00E9
+L0272:	lda     L00E9
+	cmp     L00E1
+	jcs     L00EB
 	lda     _conv_count
 	cmp     #$11
-	jcs     L00E5
-	lda     L00E1
-	ldx     L00E1+1
+	jcs     L00EB
+	lda     L00E7
+	ldx     L00E7+1
 	jsr     incax8
-	cmp     L00D8
+	cmp     L00DE
 	txa
-	sbc     L00D8+1
-	jcs     L00E5
+	sbc     L00DE+1
+	jcs     L00EB
 	lda     _conv_count
 	jsr     pusha0
 	lda     #$29
 	jsr     tosmula0
 	clc
 	adc     #<(_convs)
-	sta     L00EE
+	sta     L00F4
 	txa
 	adc     #>(_convs)
-	sta     L00EE+1
+	sta     L00F4+1
 	lda     #$00
-	sta     L00F1
-	lda     L00EE
-	ldx     L00EE+1
+	sta     L00F7
+	lda     L00F4
+	ldx     L00F4+1
 	jsr     pushax
-	lda     L00D5
+	lda     L00DB
 	clc
-	adc     L00E1
+	adc     L00E7
 	pha
-	lda     L00D5+1
-	adc     L00E1+1
+	lda     L00DB+1
+	adc     L00E7+1
 	tax
 	pla
 	jsr     pushax
@@ -714,34 +726,34 @@ L0262:	lda     L00E3
 	jsr     _memcpy
 	lda     #$08
 	clc
-	adc     L00E1
-	sta     L00E1
-	bcc     L00FC
-	inc     L00E1+1
-	jmp     L00FC
-L00FA:	lda     L00EE
-	ldx     L00EE+1
+	adc     L00E7
+	sta     L00E7
+	bcc     L0102
+	inc     L00E7+1
+	jmp     L0102
+L0100:	lda     L00F4
+	ldx     L00F4+1
 	jsr     incax4
 	sta     ptr1
 	stx     ptr1+1
-	lda     L00F1
-	inc     L00F1
+	lda     L00F7
+	inc     L00F7
 	clc
 	adc     ptr1
 	ldx     ptr1+1
-	bcc     L025F
+	bcc     L026F
 	inx
-L025F:	jsr     pushax
-	lda     L00D5
-	ldx     L00D5+1
+L026F:	jsr     pushax
+	lda     L00DB
+	ldx     L00DB+1
 	jsr     pushax
-	lda     L00E1
-	ldx     L00E1+1
+	lda     L00E7
+	ldx     L00E7+1
 	sta     regsave
 	stx     regsave+1
 	jsr     incax1
-	sta     L00E1
-	stx     L00E1+1
+	sta     L00E7
+	stx     L00E7+1
 	lda     regsave
 	ldx     regsave+1
 	jsr     tosaddax
@@ -752,50 +764,50 @@ L025F:	jsr     pushax
 	jsr     _ascii_to_petscii
 	ldy     #$00
 	jsr     staspidx
-L00FC:	lda     L00E1
-	cmp     L00D8
-	lda     L00E1+1
-	sbc     L00D8+1
-	bcs     L0261
-	lda     L00D5
+L0102:	lda     L00E7
+	cmp     L00DE
+	lda     L00E7+1
+	sbc     L00DE+1
+	bcs     L0271
+	lda     L00DB
 	clc
-	adc     L00E1
+	adc     L00E7
 	sta     ptr1
-	lda     L00D5+1
-	adc     L00E1+1
+	lda     L00DB+1
+	adc     L00E7+1
 	sta     ptr1+1
 	ldy     #$00
 	lda     (ptr1),y
-	beq     L0261
-	lda     L00F1
+	beq     L0271
+	lda     L00F7
 	cmp     #$24
-	bcc     L00FA
-L0261:	lda     L00EE
-	ldx     L00EE+1
+	bcc     L0100
+L0271:	lda     L00F4
+	ldx     L00F4+1
 	jsr     incax4
 	clc
-	adc     L00F1
-	bcc     L025E
+	adc     L00F7
+	bcc     L026E
 	inx
-L025E:	sta     ptr1
+L026E:	sta     ptr1
 	stx     ptr1+1
 	lda     #$00
 	tay
 	sta     (ptr1),y
-	inc     L00E1
-	bne     L010B
-	inc     L00E1+1
-L010B:	inc     _conv_count
-	inc     L00E3
-	jmp     L0262
-L00E5:	lda     L00DE
-	beq     L026A
+	inc     L00E7
+	bne     L0111
+	inc     L00E7+1
+L0111:	inc     _conv_count
+	inc     L00E9
+	jmp     L0272
+L00EB:	lda     L00E4
+	beq     L027A
 	lda     _conv_count
 	cmp     #$11
-	bcc     L0269
+	bcc     L0279
 	lda     #$00
-L026A:	sta     _conv_loading
-L0269:	lda     _modal
+L027A:	sta     _conv_loading
+L0279:	lda     _modal
 	cmp     #$01
 	jeq     _conv_draw
 	rts
@@ -812,19 +824,19 @@ L0269:	lda     _modal
 
 .segment	"BSS"
 
-L0116:
-	.res	2,$00
-L0119:
-	.res	2,$00
 L011C:
-	.res	1,$00
-L011F:
-	.res	1,$00
-L0122:
 	.res	2,$00
-L0124:
+L011F:
+	.res	2,$00
+L0122:
 	.res	1,$00
-L012F:
+L0125:
+	.res	1,$00
+L0128:
+	.res	2,$00
+L012A:
+	.res	1,$00
+L0135:
 	.res	1,$00
 
 .segment	"CODE"
@@ -832,50 +844,50 @@ L012F:
 	lda     #<(_proto)
 	ldx     #>(_proto)
 	jsr     _proto_get_payload
-	sta     L0116
-	stx     L0116+1
+	sta     L011C
+	stx     L011C+1
 	lda     #<(_proto)
 	ldx     #>(_proto)
 	jsr     _proto_get_length
-	sta     L0119
-	stx     L0119+1
-	lda     L0116+1
+	sta     L011F
+	stx     L011F+1
+	lda     L011C+1
 	sta     ptr1+1
-	lda     L0116
+	lda     L011C
 	sta     ptr1
 	ldy     #$00
 	lda     (ptr1),y
-	sta     L011C
-	lda     L0116+1
+	sta     L0122
+	lda     L011C+1
 	sta     ptr1+1
-	lda     L0116
+	lda     L011C
 	sta     ptr1
 	iny
 	lda     (ptr1),y
-	sta     L011F
+	sta     L0125
 	ldx     #$00
 	lda     #$02
-	sta     L0122
-	stx     L0122+1
-	stx     L0124
-L026D:	lda     L0124
-	cmp     L011C
-	jcs     L0126
-	lda     L0122
-	cmp     L0119
-	lda     L0122+1
-	sbc     L0119+1
-	jcs     L0126
-	lda     L0116
-	ldx     L0116+1
+	sta     L0128
+	stx     L0128+1
+	stx     L012A
+L027D:	lda     L012A
+	cmp     L0122
+	jcs     L012C
+	lda     L0128
+	cmp     L011F
+	lda     L0128+1
+	sbc     L011F+1
+	jcs     L012C
+	lda     L011C
+	ldx     L011C+1
 	jsr     pushax
-	lda     L0122
-	ldx     L0122+1
+	lda     L0128
+	ldx     L0128+1
 	sta     regsave
 	stx     regsave+1
 	jsr     incax1
-	sta     L0122
-	stx     L0122+1
+	sta     L0128
+	stx     L0128+1
 	lda     regsave
 	ldx     regsave+1
 	jsr     tosaddax
@@ -883,27 +895,27 @@ L026D:	lda     L0124
 	stx     ptr1+1
 	ldy     #$00
 	lda     (ptr1),y
-	sta     L012F
-	lda     L012F
-	beq     L0270
+	sta     L0135
+	lda     L0135
+	beq     L0280
 	lda     #$01
-L0270:	jsr     _chat_start
-	lda     L012F
-	bne     L013F
-	lda     #<(L013B)
-	ldx     #>(L013B)
+L0280:	jsr     _chat_start
+	lda     L0135
+	bne     L0145
+	lda     #<(L0141)
+	ldx     #>(L0141)
 	jsr     _chat_append_petscii
-	jmp     L013F
-L013D:	lda     L0116
-	ldx     L0116+1
+	jmp     L0145
+L0143:	lda     L011C
+	ldx     L011C+1
 	jsr     pushax
-	lda     L0122
-	ldx     L0122+1
+	lda     L0128
+	ldx     L0128+1
 	sta     regsave
 	stx     regsave+1
 	jsr     incax1
-	sta     L0122
-	stx     L0122+1
+	sta     L0128
+	stx     L0128+1
 	lda     regsave
 	ldx     regsave+1
 	jsr     tosaddax
@@ -912,33 +924,33 @@ L013D:	lda     L0116
 	ldy     #$00
 	lda     (ptr1),y
 	jsr     _chat_append_ascii_char
-L013F:	lda     L0122
-	cmp     L0119
-	lda     L0122+1
-	sbc     L0119+1
-	bcs     L026C
-	lda     L0116
+L0145:	lda     L0128
+	cmp     L011F
+	lda     L0128+1
+	sbc     L011F+1
+	bcs     L027C
+	lda     L011C
 	clc
-	adc     L0122
+	adc     L0128
 	sta     ptr1
-	lda     L0116+1
-	adc     L0122+1
+	lda     L011C+1
+	adc     L0128+1
 	sta     ptr1+1
 	ldy     #$00
 	lda     (ptr1),y
-	bne     L013D
-L026C:	inc     L0122
-	bne     L0148
-	inc     L0122+1
-L0148:	jsr     _chat_finish
-	inc     L0124
-	jmp     L026D
-L0126:	lda     L011F
-	bne     L014A
-	lda     #<(L014D)
-	ldx     #>(L014D)
+	bne     L0143
+L027C:	inc     L0128
+	bne     L014E
+	inc     L0128+1
+L014E:	jsr     _chat_finish
+	inc     L012A
+	jmp     L027D
+L012C:	lda     L0125
+	bne     L0150
+	lda     #<(L0153)
+	ldx     #>(L0153)
 	jmp     _ui_status
-L014A:	rts
+L0150:	rts
 
 .endproc
 
@@ -952,11 +964,11 @@ L014A:	rts
 
 .segment	"BSS"
 
-L0155:
+L015B:
 	.res	2,$00
-L015E:
+L0164:
 	.res	2,$00
-L017A:
+L0180:
 	.res	2,$00
 
 .segment	"CODE"
@@ -965,101 +977,101 @@ L017A:
 	ldy     #$00
 	lda     (sp),y
 	cmp     #$40
-	jeq     L0274
+	jeq     L0284
 	cmp     #$50
-	beq     L015D
+	beq     L0163
 	cmp     #$51
-	beq     L0273
+	beq     L0283
 	cmp     #$52
-	jeq     L0179
+	jeq     L017F
 	cmp     #$53
-	jeq     L019B
+	jeq     L01A1
 	cmp     #$54
-	jeq     L019E
+	jeq     L01A4
 	cmp     #$55
-	beq     L0277
+	beq     L0287
 	jmp     incsp1
-L0277:	lda     #<(_proto)
+L0287:	lda     #<(_proto)
 	ldx     #>(_proto)
 	jsr     _proto_get_payload
-	sta     L0155
-	stx     L0155+1
+	sta     L015B
+	stx     L015B+1
 	jsr     _ascii_to_petscii_str
-	lda     L0155
-	ldx     L0155+1
+	lda     L015B
+	ldx     L015B+1
 	jsr     _ui_status
 	jmp     incsp1
-L015D:	lda     #<(_proto)
+L0163:	lda     #<(_proto)
 	ldx     #>(_proto)
 	jsr     _proto_get_payload
-	sta     L015E
-	stx     L015E+1
+	sta     L0164
+	stx     L0164+1
 	lda     _state
 	cmp     #$02
-	beq     L0161
+	beq     L0167
 	lda     #$02
 	sta     _state
 	lda     #$01
 	jsr     _chat_start
-	lda     #<(L0168)
-	ldx     #>(L0168)
+	lda     #<(L016E)
+	ldx     #>(L016E)
 	jsr     _ui_status
-L0161:	lda     L015E
-	ldx     L015E+1
+L0167:	lda     L0164
+	ldx     L0164+1
 	jsr     incax1
 	jsr     _chat_append_ascii
 	jsr     _chat_redraw_stream
 	jmp     incsp1
-L0273:	lda     _state
-	beq     L0152
+L0283:	lda     _state
+	beq     L0158
 	jsr     _chat_finish
 	lda     #$00
 	sta     _state
-	lda     #<(L0176)
-	ldx     #>(L0176)
+	lda     #<(L017C)
+	ldx     #>(L017C)
 	jsr     _ui_status
 	jmp     incsp1
-L0179:	lda     #<(_proto)
+L017F:	lda     #<(_proto)
 	ldx     #>(_proto)
 	jsr     _proto_get_payload
-	sta     L017A
-	stx     L017A+1
+	sta     L0180
+	stx     L0180+1
 	lda     #$02
 	jsr     _chat_start
-	lda     #<(L0180)
-	ldx     #>(L0180)
+	lda     #<(L0186)
+	ldx     #>(L0186)
 	jsr     _chat_append_petscii
-	lda     L017A
-	ldx     L017A+1
+	lda     L0180
+	ldx     L0180+1
 	jsr     _chat_append_ascii
 	jsr     _chat_finish
 	lda     #$00
 	sta     _state
-	lda     #<(L0188)
-	ldx     #>(L0188)
+	lda     #<(L018E)
+	ldx     #>(L018E)
 	jsr     _ui_status
 	jmp     incsp1
-L0274:	lda     _pending_ack
+L0284:	lda     _pending_ack
 	cmp     #$01
-	bne     L0275
+	bne     L0285
 	jsr     _chat_clear
-	lda     #<(L0190)
-	ldx     #>(L0190)
-	jmp     L0272
-L0275:	lda     _pending_ack
-	cmp     #$02
-	bne     L0276
 	lda     #<(L0196)
 	ldx     #>(L0196)
-L0272:	jsr     _ui_status
-L0276:	lda     #$00
+	jmp     L0282
+L0285:	lda     _pending_ack
+	cmp     #$02
+	bne     L0286
+	lda     #<(L019C)
+	ldx     #>(L019C)
+L0282:	jsr     _ui_status
+L0286:	lda     #$00
 	sta     _pending_ack
 	jmp     incsp1
-L019B:	jsr     _conv_list_frame
+L01A1:	jsr     _conv_list_frame
 	jmp     incsp1
-L019E:	jsr     _conv_data_frame
+L01A4:	jsr     _conv_data_frame
 	jmp     incsp1
-L0152:	jmp     incsp1
+L0158:	jmp     incsp1
 
 .endproc
 
@@ -1074,17 +1086,17 @@ L0152:	jmp     incsp1
 .segment	"CODE"
 
 	lda     _state
-	beq     L01B7
-	lda     #<(L01BA)
-	ldx     #>(L01BA)
+	beq     L01BD
+	lda     #<(L01C0)
+	ldx     #>(L01C0)
 	jmp     _ui_status
-L01B7:	jsr     _editor_len
+L01BD:	jsr     _editor_len
 	cmp     #$00
-	beq     L01B6
+	beq     L01BC
 	lda     #$00
 	jsr     _chat_start
-	lda     #<(L01C1)
-	ldx     #>(L01C1)
+	lda     #<(L01C7)
+	ldx     #>(L01C7)
 	jsr     _chat_append_petscii
 	jsr     _editor_text
 	jsr     _chat_append_petscii
@@ -1094,10 +1106,10 @@ L01B7:	jsr     _editor_len
 	jsr     _editor_clear
 	lda     #$01
 	sta     _state
-	lda     #<(L01CC)
-	ldx     #>(L01CC)
+	lda     #<(L01D2)
+	ldx     #>(L01D2)
 	jmp     _ui_status
-L01B6:	rts
+L01BC:	rts
 
 .endproc
 
@@ -1112,14 +1124,14 @@ L01B6:	rts
 .segment	"CODE"
 
 	lda     _state
-	bne     L01CE
+	bne     L01D4
 	lda     #$01
 	sta     _pending_ack
 	jsr     _proto_send_new_conversation
-	lda     #<(L01D5)
-	ldx     #>(L01D5)
+	lda     #<(L01DB)
+	ldx     #>(L01DB)
 	jmp     _ui_status
-L01CE:	rts
+L01D4:	rts
 
 .endproc
 
@@ -1134,14 +1146,14 @@ L01CE:	rts
 .segment	"CODE"
 
 	lda     _state
-	beq     L01D7
+	beq     L01DD
 	lda     #$02
 	sta     _pending_ack
 	jsr     _proto_send_cancel
-	lda     #<(L01DE)
-	ldx     #>(L01DE)
+	lda     #<(L01E4)
+	ldx     #>(L01E4)
 	jmp     _ui_status
-L01D7:	rts
+L01DD:	rts
 
 .endproc
 
@@ -1158,88 +1170,100 @@ L01D7:	rts
 	jsr     pusha
 	lda     _modal
 	cmp     #$02
-	bne     L0278
+	bne     L0288
 	lda     #$00
 	sta     _modal
 	jsr     _chat_redraw
 	jmp     incsp1
-L0278:	lda     _modal
+L0288:	lda     _modal
 	cmp     #$01
-	bne     L01E6
+	bne     L01EC
 	ldx     #$00
 	lda     (sp,x)
 	cmp     #$03
-	beq     L01FD
+	beq     L0203
 	cmp     #$0D
-	beq     L01F8
+	beq     L01FE
 	cmp     #$11
-	beq     L0279
+	beq     L0289
 	cmp     #$87
-	beq     L01FD
+	beq     L0203
 	cmp     #$91
-	beq     L027C
+	beq     L028C
 	jmp     incsp1
-L027C:	lda     _conv_sel
-	bne     L027D
+L028C:	lda     _conv_sel
+	bne     L028D
 	jmp     incsp1
-L027D:	dec     _conv_sel
+L028D:	dec     _conv_sel
 	jsr     _conv_draw
 	jmp     incsp1
-L0279:	lda     _conv_sel
+L0289:	lda     _conv_sel
 	jsr     incax1
 	cmp     _conv_count
 	txa
 	sbc     #$00
-	bcs     L0203
-	inc     _conv_sel
+	bcc     L028E
+	jmp     incsp1
+L028E:	inc     _conv_sel
 	jsr     _conv_draw
 	jmp     incsp1
-L01F8:	lda     _conv_count
-	beq     L0203
-	jsr     _conv_load_selected
+L01FE:	lda     _conv_count
+	bne     L028F
 	jmp     incsp1
-L01FD:	jsr     _conv_close
+L028F:	jsr     _conv_load_selected
 	jmp     incsp1
-L01E6:	ldy     #$00
+L0203:	jsr     _conv_close
+	jmp     incsp1
+L01EC:	ldy     #$00
 	lda     (sp),y
 	cmp     #$0D
-	beq     L0205
+	beq     L020B
 	cmp     #$11
-	beq     L021C
+	beq     L0222
 	cmp     #$85
-	beq     L0205
+	beq     L020B
 	cmp     #$86
-	beq     L020D
+	beq     L0213
 	cmp     #$87
-	beq     L027A
+	beq     L028A
 	cmp     #$88
-	beq     L0215
+	beq     L021B
 	cmp     #$89
-	beq     L020A
+	beq     L0210
+	cmp     #$8A
+	beq     L0226
+	cmp     #$8B
+	beq     L022B
 	cmp     #$91
-	beq     L0218
-	jmp     L027B
-L0205:	jsr     _send_message
+	beq     L021E
+	jmp     L028B
+L020B:	jsr     _send_message
 	jmp     incsp1
-L020A:	jsr     _new_conversation
+L0210:	jsr     _new_conversation
 	jmp     incsp1
-L020D:	jsr     _cancel_stream
+L0213:	jsr     _cancel_stream
 	jmp     incsp1
-L027A:	lda     _state
-	bne     L0203
+L028A:	lda     _state
+	bne     L0209
 	jsr     _conv_open
 	jmp     incsp1
-L0215:	jsr     _help_open
+L021B:	jsr     _help_open
 	jmp     incsp1
-L0218:	lda     #$01
+L021E:	lda     #$01
 	jsr     _chat_scroll
 	jmp     incsp1
-L021C:	lda     #$FF
+L0222:	lda     #$FF
 	jsr     _chat_scroll
 	jmp     incsp1
-L027B:	lda     (sp),y
+L0226:	lda     #$12
+	jsr     _chat_scroll
+	jmp     incsp1
+L022B:	lda     #$EE
+	jsr     _chat_scroll
+	jmp     incsp1
+L028B:	lda     (sp),y
 	jsr     _editor_key
-L0203:	jmp     incsp1
+L0209:	jmp     incsp1
 
 .endproc
 
@@ -1264,52 +1288,52 @@ L0203:	jmp     incsp1
 	jsr     _proto_init
 	jsr     _ui_init
 	jsr     _editor_init
-	lda     #<(L022A)
-	ldx     #>(L022A)
+	lda     #<(L023A)
+	ldx     #>(L023A)
 	jsr     _ui_status
 	jsr     _acia_init_hw
-	lda     #<(L022E)
-	ldx     #>(L022E)
+	lda     #<(L023E)
+	ldx     #>(L023E)
 	jsr     _ui_status
 	jsr     _proto_send_ping
 	ldx     #$1F
 	lda     #$40
 	jsr     _wait_for_ack
 	tax
-	bne     L0238
-	lda     #<(L0235)
-	ldx     #>(L0235)
+	bne     L0248
+	lda     #<(L0245)
+	ldx     #>(L0245)
 	jsr     _ui_status
-L023A:	jsr     _kbhit
+L024A:	jsr     _kbhit
 	tax
-	beq     L023A
+	beq     L024A
 	jsr     _cgetc
-	jmp     L023A
-L0238:	jsr     _proto_send_new_conversation
+	jmp     L024A
+L0248:	jsr     _proto_send_new_conversation
 	ldx     #$0F
 	lda     #$A0
 	jsr     _wait_for_ack
 	lda     #$02
 	jsr     _chat_start
-	lda     #<(L0244)
-	ldx     #>(L0244)
+	lda     #<(L0254)
+	ldx     #>(L0254)
 	jsr     _chat_append_petscii
 	jsr     _chat_finish
-	jmp     L0249
-L0247:	jsr     _cgetc
-L0249:	jsr     _kbhit
+	jmp     L0259
+L0257:	jsr     _cgetc
+L0259:	jsr     _kbhit
 	tax
-	bne     L0247
-	lda     #<(L024D)
-	ldx     #>(L024D)
+	bne     L0257
+	lda     #<(L025D)
+	ldx     #>(L025D)
 	jsr     _ui_status
-L0252:	jsr     _pump_serial
+L0262:	jsr     _pump_serial
 	jsr     _kbhit
 	tax
-	beq     L0252
+	beq     L0262
 	jsr     _cgetc
 	jsr     _handle_key
-	jmp     L0252
+	jmp     L0262
 
 .endproc
 

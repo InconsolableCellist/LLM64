@@ -266,8 +266,27 @@ def main():
 
                 # Roleplay sampling params reach the API (mock echoes them)
                 monitor.keyboard_feed('paramtest\r')
-                final = wait_for_screen(monitor, r'temp 1\.0 topk 64', 60,
-                                        artifacts, f'{tag}-sampling')
+                wait_for_screen(monitor, r'temp 1\.0 topk 64', 60,
+                                artifacts, f'{tag}-sampling')
+
+                # Page up/down (F4/F6) through a long response
+                monitor.keyboard_feed('longtest\r')
+                wait_for_screen(monitor, r'number\s+60', 120,
+                                artifacts, f'{tag}-longdone')
+                wait_for_screen(monitor, r'ready\. type your message', 30,
+                                artifacts, f'{tag}-longready')
+                monitor.keyboard_feed_petscii(b'\x8a')  # F4: page up
+                time.sleep(1)
+                paged = monitor.screen_text()
+                if re.search(r'number\s+60', paged, re.IGNORECASE):
+                    raise AssertionError('F4 did not page up (tail still '
+                                         f'visible)\n{paged}')
+                if not re.search(r'sentence number', paged, re.IGNORECASE):
+                    raise AssertionError(f'F4 lost the content\n{paged}')
+                print('  PASS: F4 paged up')
+                monitor.keyboard_feed_petscii(b'\x8b')  # F6: page down
+                final = wait_for_screen(monitor, r'number\s+60', 15,
+                                        artifacts, f'{tag}-pagedown')
         else:
             # Scripted debug session runs in warp faster than we can poll,
             # so assert on the durable end state: the client parks on

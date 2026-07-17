@@ -166,6 +166,16 @@ void chat_redraw(void) {
         dst += SCREEN_WIDTH;
         cdst += SCREEN_WIDTH;
     }
+
+    /* Scrolled into history: reverse "v" marker, bottom-right */
+    if (view_scroll) {
+        uint8_t* m = SCREEN + (CHAT_START_ROW + CHAT_HEIGHT) * SCREEN_WIDTH - 3;
+        m[0] = 0x20 | 0x80;
+        m[1] = 0x16 | 0x80;  /* 'v' */
+        m[2] = 0x20 | 0x80;
+        memset(COLORS + (CHAT_START_ROW + CHAT_HEIGHT) * SCREEN_WIDTH - 3,
+               COLOR_WHITE, 3);
+    }
 }
 
 void chat_redraw_stream(void) {

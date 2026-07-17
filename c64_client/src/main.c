@@ -29,7 +29,12 @@
 #endif
 
 #define KEY_F2 137
+#define KEY_F4 138
+#define KEY_F6 139
 #define KEY_STOP 3
+
+/* Page size for F4/F6: one line of overlap for reading continuity */
+#define PAGE_LINES (CHAT_HEIGHT - 1)
 
 /* App state */
 #define ST_IDLE      0
@@ -153,6 +158,7 @@ static void help_open(void) {
     ui_draw_row(6,  "  F3         cancel reply", COLOR_CYAN, 0);
     ui_draw_row(7,  "  F5         conversation browser", COLOR_CYAN, 0);
     ui_draw_row(8,  "  F7         this help", COLOR_CYAN, 0);
+    ui_draw_row(9,  "  F4 / F6    page chat up/down", COLOR_CYAN, 0);
     ui_draw_row(10, "  crsr up/dn scroll chat", COLOR_CYAN, 0);
     ui_draw_row(11, "  ctrl-a/e   start/end of input", COLOR_CYAN, 0);
     ui_draw_row(12, "  ctrl-k     kill to end", COLOR_CYAN, 0);
@@ -414,6 +420,12 @@ static void handle_key(uint8_t k) {
             break;
         case KEY_CRSR_DOWN:
             chat_scroll(-1);
+            break;
+        case KEY_F4:
+            chat_scroll(PAGE_LINES);
+            break;
+        case KEY_F6:
+            chat_scroll(-PAGE_LINES);
             break;
         default:
             editor_key(k);
