@@ -325,6 +325,22 @@ def main():
                 wait_ready(monitor, args.timeout, artifacts,
                            f'{tag}-longinput-done')
 
+                # Music toggle: F1 menu, S cycles off->tune1->tune2->off
+                monitor.keyboard_feed_petscii(b'\x85')
+                wait_for_screen(monitor, r'S  music \(off\)', 15,
+                                artifacts, f'{tag}-menu-music')
+                monitor.keyboard_feed('s')
+                wait_for_screen(monitor, r'music: dungeon depths', 15,
+                                artifacts, f'{tag}-music-on')
+                monitor.keyboard_feed_petscii(b'\x85')
+                monitor.keyboard_feed('s')
+                wait_for_screen(monitor, r'music: northward road', 15,
+                                artifacts, f'{tag}-music-2')
+                monitor.keyboard_feed_petscii(b'\x85')
+                monitor.keyboard_feed('s')
+                wait_for_screen(monitor, r'music off', 15,
+                                artifacts, f'{tag}-music-off')
+
                 # F1 menu -> M -> model browser -> select second model
                 monitor.keyboard_feed_petscii(b'\x85')  # F1
                 wait_for_screen(monitor, r'select model', 15,

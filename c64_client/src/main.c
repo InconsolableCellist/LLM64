@@ -21,6 +21,10 @@
 #include "ui.h"
 #include "editor.h"
 
+/* music.s */
+void music_next(void);
+extern uint8_t music_state;
+
 #ifndef SERVER_IP
 #define SERVER_IP   "192.168.1.39"
 #endif
@@ -195,7 +199,14 @@ static void menu_open(void) {
     ui_draw_row(8,  "  R  list characters", COLOR_CYAN, 0);
     ui_draw_row(9,  "  X  cancel reply", COLOR_CYAN, 0);
     ui_draw_row(10, "  H  help", COLOR_CYAN, 0);
-    ui_draw_row(12, "  F1 or stop: close", COLOR_GRAY2, 0);
+    if (music_state == 0) {
+        ui_draw_row(11, "  S  music (off)", COLOR_CYAN, 0);
+    } else if (music_state == 1) {
+        ui_draw_row(11, "  S  music: dungeon depths", COLOR_CYAN, 0);
+    } else {
+        ui_draw_row(11, "  S  music: northward road", COLOR_CYAN, 0);
+    }
+    ui_draw_row(13, "  F1 or stop: close", COLOR_GRAY2, 0);
 }
 
 /* --- modal: model browser --------------------------------------------- */
@@ -514,6 +525,16 @@ static void handle_key(uint8_t k) {
             case 'a': send_command("/adventure"); break;
             case 'r': send_command("/chars"); break;
             case 'x': cancel_stream(); break;
+            case 's':
+                music_next();
+                if (music_state == 0) {
+                    ui_status("Music off.");
+                } else if (music_state == 1) {
+                    ui_status("Music: Dungeon Depths");
+                } else {
+                    ui_status("Music: Northward Road");
+                }
+                break;
             case 'h': help_open(); break;
             default: break;  /* F1/STOP/anything else: just close */
         }

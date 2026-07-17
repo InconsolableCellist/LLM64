@@ -28,6 +28,7 @@
 
         .import popa, popax
         .import _kb_scan
+        .import _music_play
         .importzp ptr1, ptr2, tmp1, tmp2
 
 CIA1_ICR = $DC0D
@@ -249,6 +250,7 @@ acia_irq_entry:
         and #$01                ; timer A (the 60Hz system tick)?
         beq @exit
         jsr _kb_scan
+        jsr _music_play
 
 @exit:
         pla                     ; unwind the KERNAL stub's saves
