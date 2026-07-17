@@ -89,24 +89,24 @@ typedef enum {
     ROLE_SYSTEM = 2
 } MessageRole;
 
-/* Protocol message types */
-#define MSG_CHAT_REQUEST        0x01
-#define MSG_CANCEL_REQUEST      0x02
-#define MSG_LIST_CONVERSATIONS  0x03
-#define MSG_LOAD_CONVERSATION   0x04
-#define MSG_NEW_CONVERSATION    0x05
-#define MSG_PING                0x06
-#define MSG_ACK                 0x10
-#define MSG_NAK                 0x11
-#define MSG_CHAT_CHUNK          0x20
-#define MSG_CHAT_DONE           0x21
-#define MSG_CHAT_ERROR          0x22
-#define MSG_CONVERSATION_LIST   0x23
-#define MSG_CONVERSATION_DATA   0x24
-#define MSG_STATUS              0x25
+/* Protocol message types - using printable ASCII to avoid tcpser/IP232 corruption */
+#define MSG_CHAT_REQUEST        0x31  /* '1' - was 0x01 */
+#define MSG_CANCEL_REQUEST      0x32  /* '2' - was 0x02 */
+#define MSG_LIST_CONVERSATIONS  0x33  /* '3' - was 0x03 */
+#define MSG_LOAD_CONVERSATION   0x34  /* '4' - was 0x04 */
+#define MSG_NEW_CONVERSATION    0x35  /* '5' - was 0x05 */
+#define MSG_PING                0x36  /* '6' - was 0x06 */
+#define MSG_ACK                 0x40  /* '@' - was 0x10 */
+#define MSG_NAK                 0x41  /* 'A' - was 0x11 */
+#define MSG_CHAT_CHUNK          0x50  /* 'P' - was 0x20 */
+#define MSG_CHAT_DONE           0x51  /* 'Q' - was 0x21 */
+#define MSG_CHAT_ERROR          0x52  /* 'R' - was 0x22 */
+#define MSG_CONVERSATION_LIST   0x53  /* 'S' - was 0x23 */
+#define MSG_CONVERSATION_DATA   0x54  /* 'T' - was 0x24 */
+#define MSG_STATUS              0x55  /* 'U' - was 0x25 */
 
 /* Protocol constants */
-#define SYNC_BYTE       0xC6
+#define SYNC_BYTE       0x42  /* 'B' - safe ASCII byte (was 0xC6, corrupted by VICE IP232) */
 #define MAX_PAYLOAD     512
 
 /* Function keys (PETSCII codes) */

@@ -52,8 +52,10 @@ uint8_t proto_process_byte(ProtoContext* ctx, uint8_t byte) {
         case PROTO_READING_LENGTH:
             length_bytes[ctx->bytes_read++] = byte;
             if (ctx->bytes_read >= 2) {
-                /* Little-endian 16-bit length */
-                ctx->msg_length = length_bytes[0] | (length_bytes[1] << 8);
+                /* Decode length bytes (subtract 0x20 offset) and combine little-endian */
+                uint8_t len_lo = length_bytes[0] - 0x20;
+                uint8_t len_hi = length_bytes[1] - 0x20;
+                ctx->msg_length = len_lo | (len_hi << 8);
                 ctx->bytes_read = 0;
 
                 if (ctx->msg_length > 0) {
@@ -110,6 +112,11 @@ uint16_t proto_get_length(ProtoContext* ctx) {
 void proto_send_message(uint8_t msg_type, const uint8_t* payload, uint16_t length) {
     uint8_t crc;
     uint16_t i;
+    uint8_t len_lo, len_hi;
+
+    /* Encode length bytes to avoid NUL (add 0x20 to shift into printable range) */
+    len_lo = (length & 0xFF) + 0x20;
+    len_hi = ((length >> 8) & 0xFF) + 0x20;
 
     /* Send SYNC byte */
     serial_write(SYNC_BYTE);
@@ -117,16 +124,16 @@ void proto_send_message(uint8_t msg_type, const uint8_t* payload, uint16_t lengt
     /* Send type */
     serial_write(msg_type);
 
-    /* Send length (little-endian) */
-    serial_write(length & 0xFF);
-    serial_write((length >> 8) & 0xFF);
+    /* Send encoded length (little-endian) */
+    serial_write(len_lo);
+    serial_write(len_hi);
 
     /* Send payload */
     for (i = 0; i < length; i++) {
         serial_write(payload[i]);
     }
 
-    /* Calculate and send CRC */
+    /* Calculate and send CRC (using original length, not encoded) */
     crc = proto_calc_crc(msg_type, length, payload);
     serial_write(crc);
 

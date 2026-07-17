@@ -8,24 +8,24 @@ import logging
 
 
 class MessageType(IntEnum):
-    """Message type codes"""
+    """Message type codes - using printable ASCII to avoid tcpser/IP232 corruption"""
     # C64 -> Server
-    CHAT_REQUEST = 0x01
-    CANCEL_REQUEST = 0x02
-    LIST_CONVERSATIONS = 0x03
-    LOAD_CONVERSATION = 0x04
-    NEW_CONVERSATION = 0x05
-    PING = 0x06
-    ACK = 0x10
-    NAK = 0x11
+    CHAT_REQUEST = 0x31  # '1' - was 0x01
+    CANCEL_REQUEST = 0x32  # '2' - was 0x02
+    LIST_CONVERSATIONS = 0x33  # '3' - was 0x03
+    LOAD_CONVERSATION = 0x34  # '4' - was 0x04
+    NEW_CONVERSATION = 0x35  # '5' - was 0x05
+    PING = 0x36  # '6' - was 0x06
+    ACK = 0x40  # '@' - was 0x10
+    NAK = 0x41  # 'A' - was 0x11
 
     # Server -> C64
-    CHAT_CHUNK = 0x20
-    CHAT_DONE = 0x21
-    CHAT_ERROR = 0x22
-    CONVERSATION_LIST = 0x23
-    CONVERSATION_DATA = 0x24
-    STATUS = 0x25
+    CHAT_CHUNK = 0x50  # 'P' - was 0x20
+    CHAT_DONE = 0x51  # 'Q' - was 0x21
+    CHAT_ERROR = 0x52  # 'R' - was 0x22
+    CONVERSATION_LIST = 0x53  # 'S' - was 0x23
+    CONVERSATION_DATA = 0x54  # 'T' - was 0x24
+    STATUS = 0x55  # 'U' - was 0x25
 
 
 class ProtocolState(IntEnum):
@@ -40,7 +40,7 @@ class ProtocolState(IntEnum):
 class ProtocolHandler:
     """Handles protocol message encoding/decoding"""
 
-    SYNC_BYTE = 0xC6
+    SYNC_BYTE = 0x42  # 'B' - safe ASCII byte (was 0xC6, corrupted by VICE IP232/Telnet encoding)
     MAX_PAYLOAD = 2048
 
     def __init__(self, conv_manager, api_client):
@@ -83,8 +83,10 @@ class ProtocolHandler:
         elif self.state == ProtocolState.READING_LENGTH:
             self.length_bytes.append(byte)
             if len(self.length_bytes) >= 2:
-                # Little-endian 16-bit length
-                self.msg_length = self.length_bytes[0] | (self.length_bytes[1] << 8)
+                # Decode length bytes (subtract 0x20 offset) and combine little-endian
+                len_lo = (self.length_bytes[0] - 0x20) & 0xFF
+                len_hi = (self.length_bytes[1] - 0x20) & 0xFF
+                self.msg_length = len_lo | (len_hi << 8)
                 self.payload = bytearray()
                 self.logger.debug(f"Message length: {self.msg_length}")
 
@@ -169,8 +171,9 @@ class ProtocolHandler:
         frame = bytearray()
         frame.append(self.SYNC_BYTE)
         frame.append(msg_type)
-        frame.append(len(payload) & 0xFF)
-        frame.append((len(payload) >> 8) & 0xFF)
+        # Encode length bytes (add 0x20 to avoid NUL bytes for IP232/Telnet compatibility)
+        frame.append((len(payload) & 0xFF) + 0x20)
+        frame.append(((len(payload) >> 8) & 0xFF) + 0x20)
         frame.extend(payload)
 
         # Calculate and append CRC

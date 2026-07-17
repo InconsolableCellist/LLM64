@@ -112,7 +112,11 @@ L002A:
 	.res	2,$00
 L002B:
 	.res	1,$00
-L006A:
+L0044:
+	.res	1,$00
+L0047:
+	.res	1,$00
+L006E:
 	.res	1,$00
 
 .segment	"CODE"
@@ -130,13 +134,13 @@ L006A:
 	cmp     #$02
 	beq     L003E
 	cmp     #$03
-	jeq     L0059
+	jeq     L005D
 	cmp     #$04
-	jeq     L0062
-	jmp     L00C8
+	jeq     L0066
+	jmp     L00D4
 L0030:	lda     (sp,x)
-	cmp     #$C6
-	jne     L00C8
+	cmp     #$42
+	jne     L00D4
 	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
@@ -146,7 +150,7 @@ L0030:	lda     (sp,x)
 	sta     (ptr1),y
 	iny
 	lda     #$00
-	jmp     L00CA
+	jmp     L00D6
 L0036:	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
@@ -170,7 +174,7 @@ L0036:	ldy     #$02
 	stx     ptr1+1
 	lda     #$00
 	ldy     #$05
-	jmp     L00D3
+	jmp     L00DF
 L003E:	tay
 	jsr     ldaxysp
 	jsr     pushax
@@ -200,17 +204,25 @@ L003E:	tay
 	sbc     #$00
 	lda     #$00
 	tax
-	bcs     L00D4
+	bcs     L00E0
 	jmp     incsp3
-L00D4:	ldy     #$02
+L00E0:	lda     L002A
+	ldy     #$20
+	jsr     decaxy
+	sta     L0044
+	ldx     #$00
+	lda     L002A+1
+	jsr     decaxy
+	sta     L0047
+	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
 	stx     ptr1+1
-	lda     L002A
+	lda     L0044
 	ldy     #$03
 	sta     (ptr1),y
 	iny
-	lda     L002A+1
+	lda     L0047
 	sta     (ptr1),y
 	ldy     #$02
 	jsr     ldaxysp
@@ -226,10 +238,10 @@ L00D4:	ldy     #$02
 	ldy     #$04
 	jsr     ldaxidx
 	cpx     #$00
-	bne     L00C9
+	bne     L00D5
 	cmp     #$00
-	beq     L004B
-L00C9:	ldy     #$02
+	beq     L004F
+L00D5:	ldy     #$02
 	jsr     ldaxysp
 	ldy     #$04
 	jsr     pushwidx
@@ -238,9 +250,9 @@ L00C9:	ldy     #$02
 	ldy     #$0A
 	jsr     ldaxidx
 	jsr     tosicmp
-	bcc     L004E
-	jne     L0068
-L004E:	ldy     #$02
+	bcc     L0052
+	jne     L006C
+L0052:	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
 	stx     ptr1+1
@@ -249,8 +261,8 @@ L004E:	ldy     #$02
 	sta     (ptr1),y
 	iny
 	lda     #$00
-	jmp     L00CA
-L004B:	ldy     #$02
+	jmp     L00D6
+L004F:	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
 	stx     ptr1+1
@@ -259,8 +271,8 @@ L004B:	ldy     #$02
 	sta     (ptr1),y
 	iny
 	lda     #$00
-	jmp     L00CA
-L0059:	ldy     #$02
+	jmp     L00D6
+L005D:	ldy     #$02
 	jsr     ldaxysp
 	ldy     #$08
 	jsr     pushwidx
@@ -301,8 +313,8 @@ L0059:	ldy     #$02
 	sta     (ptr1),y
 	iny
 	lda     #$00
-	jmp     L00CA
-L0062:	ldy     #$02
+	jmp     L00D6
+L0066:	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
 	stx     ptr1+1
@@ -322,14 +334,14 @@ L0062:	ldy     #$02
 	ldy     #$00
 	lda     (sp),y
 	cmp     L002B
-	bne     L0068
+	bne     L006C
 	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
 	stx     ptr1+1
 	ldy     #$02
 	lda     (ptr1),y
-	sta     L006A
+	sta     L006E
 	jsr     ldaxysp
 	sta     ptr1
 	stx     ptr1+1
@@ -339,19 +351,19 @@ L0062:	ldy     #$02
 	iny
 	sta     (ptr1),y
 	tax
-	lda     L006A
+	lda     L006E
 	jmp     incsp3
-L0068:	ldy     #$02
+L006C:	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
 	stx     ptr1+1
 	lda     #$00
 	tay
-L00D3:	sta     (ptr1),y
+L00DF:	sta     (ptr1),y
 	iny
-L00CA:	sta     (ptr1),y
+L00D6:	sta     (ptr1),y
 L002E:	ldx     #$00
-L00C8:	txa
+L00D4:	txa
 	jmp     incsp3
 
 .endproc
@@ -402,53 +414,67 @@ L00C8:	txa
 
 .segment	"BSS"
 
-L0078:
+L007C:
 	.res	1,$00
-L0079:
+L007D:
 	.res	2,$00
+L007E:
+	.res	1,$00
+L007F:
+	.res	1,$00
 
 .segment	"CODE"
 
 	jsr     pushax
-	lda     #$C6
+	ldy     #$00
+	lda     (sp),y
+	ldx     #$00
+	ldy     #$20
+	jsr     incaxy
+	sta     L007E
+	ldy     #$01
+	lda     (sp),y
+	ldx     #$00
+	ldy     #$20
+	jsr     incaxy
+	sta     L007F
+	lda     #$42
 	jsr     _serial_write
 	ldy     #$04
 	lda     (sp),y
 	jsr     _serial_write
-	ldy     #$00
-	lda     (sp),y
+	lda     L007E
 	jsr     _serial_write
-	ldy     #$01
-	lda     (sp),y
+	lda     L007F
 	jsr     _serial_write
 	lda     #$00
-	sta     L0079
-	sta     L0079+1
-L0083:	lda     L0079
+	sta     L007D
+	sta     L007D+1
+L008F:	lda     L007D
 	ldy     #$00
 	cmp     (sp),y
-	lda     L0079+1
+	lda     L007D+1
 	iny
 	sbc     (sp),y
-	bcs     L0084
+	bcs     L0090
 	ldy     #$03
 	jsr     ldaxysp
 	clc
-	adc     L0079
+	adc     L007D
 	sta     ptr1
 	txa
-	adc     L0079+1
+	adc     L007D+1
 	sta     ptr1+1
 	ldy     #$00
 	lda     (ptr1),y
 	jsr     _serial_write
-	lda     L0079
-	ldx     L0079+1
+	lda     L007D
+	ldx     L007D+1
 	jsr     incax1
-	sta     L0079
-	stx     L0079+1
-	jmp     L0083
-L0084:	ldy     #$04
+	sta     L007D
+	stx     L007D+1
+	jmp     L008F
+L0090:	ldy     #$04
 	lda     (sp),y
 	jsr     pusha
 	ldy     #$04
@@ -456,7 +482,7 @@ L0084:	ldy     #$04
 	ldy     #$06
 	jsr     ldaxysp
 	jsr     _proto_calc_crc
-	sta     L0078
+	sta     L007C
 	jsr     _serial_write
 	jsr     _serial_flush
 	jmp     incsp5
@@ -473,7 +499,7 @@ L0084:	ldy     #$04
 
 .segment	"CODE"
 
-	lda     #$10
+	lda     #$40
 	jsr     pusha
 	jsr     push0
 	jmp     _proto_send_message
@@ -490,7 +516,7 @@ L0084:	ldy     #$04
 
 .segment	"CODE"
 
-	lda     #$11
+	lda     #$41
 	jsr     pusha
 	jsr     push0
 	jmp     _proto_send_message
@@ -507,7 +533,7 @@ L0084:	ldy     #$04
 
 .segment	"CODE"
 
-	lda     #$06
+	lda     #$36
 	jsr     pusha
 	jsr     push0
 	jmp     _proto_send_message
@@ -524,9 +550,9 @@ L0084:	ldy     #$04
 
 .segment	"BSS"
 
-L00A6:
+L00B2:
 	.res	2,$00
-L00AA:
+L00B6:
 	.res	256,$00
 
 .segment	"CODE"
@@ -534,33 +560,33 @@ L00AA:
 	jsr     pushax
 	jsr     ldax0sp
 	jsr     _strlen
-	sta     L00A6
-	stx     L00A6+1
-	lda     #<(L00AA)
-	ldx     #>(L00AA)
+	sta     L00B2
+	stx     L00B2+1
+	lda     #<(L00B6)
+	ldx     #>(L00B6)
 	jsr     pushax
 	ldy     #$05
 	jsr     pushwysp
-	lda     L00A6
-	ldx     L00A6+1
+	lda     L00B2
+	ldx     L00B2+1
 	jsr     _memcpy
-	lda     #<(L00AA)
+	lda     #<(L00B6)
 	clc
-	adc     L00A6
+	adc     L00B2
 	sta     ptr1
-	lda     #>(L00AA)
-	adc     L00A6+1
+	lda     #>(L00B6)
+	adc     L00B2+1
 	sta     ptr1+1
 	lda     #$00
 	tay
 	sta     (ptr1),y
-	lda     #$01
+	lda     #$31
 	jsr     pusha
-	lda     #<(L00AA)
-	ldx     #>(L00AA)
+	lda     #<(L00B6)
+	ldx     #>(L00B6)
 	jsr     pushax
-	lda     L00A6
-	ldx     L00A6+1
+	lda     L00B2
+	ldx     L00B2+1
 	jsr     incax1
 	jsr     _proto_send_message
 	jmp     incsp2
@@ -577,7 +603,7 @@ L00AA:
 
 .segment	"CODE"
 
-	lda     #$05
+	lda     #$35
 	jsr     pusha
 	jsr     push0
 	jmp     _proto_send_message
@@ -594,7 +620,7 @@ L00AA:
 
 .segment	"CODE"
 
-	lda     #$03
+	lda     #$33
 	jsr     pusha
 	jsr     push0
 	jmp     _proto_send_message
@@ -611,7 +637,7 @@ L00AA:
 
 .segment	"CODE"
 
-	lda     #$02
+	lda     #$32
 	jsr     pusha
 	jsr     push0
 	jmp     _proto_send_message

@@ -63,11 +63,26 @@ run: $(PRG)
 		echo "VICE emulator (x64sc) not found"; \
 	fi
 
+# Upload to C64 via FTP
+C64_IP = 192.168.1.64
+C64_PATH = /Temp
+
+upload: $(PRG)
+	@echo "Uploading $(PRG) to C64 at $(C64_IP)..."
+	@curl -T $(PRG) ftp://$(C64_IP)$(C64_PATH)/$(TARGET).prg --user anonymous: || \
+		(echo "Upload failed! Make sure C64 FTP server is running at $(C64_IP)" && exit 1)
+	@echo "Upload complete: ftp://$(C64_IP)$(C64_PATH)/$(TARGET).prg"
+
+# Build and upload in one step
+deploy: clean all upload
+	@echo "Build and deployment complete!"
+
 # Show info
 info:
 	@echo "Target: $(TARGET)"
 	@echo "C sources: $(C_SOURCES)"
 	@echo "ASM sources: $(ASM_SOURCES)"
 	@echo "Objects: $(OBJECTS)"
+	@echo "C64 FTP: ftp://$(C64_IP)$(C64_PATH)/"
 
-.PHONY: all clean run info
+.PHONY: all clean run upload deploy info

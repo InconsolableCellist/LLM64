@@ -20,10 +20,16 @@
 	.import		_textcolor
 	.import		_bgcolor
 	.import		_bordercolor
-	.import		_serial_init
+	.import		_strcat
+	.import		_strcpy
 	.import		_serial_disconnect
 	.import		_serial_available
 	.import		_serial_read
+	.import		_serial_write
+	.import		_serial_can_write
+	.import		_serial_flush
+	.import		_acia_init_hw
+	.import		_acia_get_status
 	.import		_proto_init
 	.import		_proto_process_byte
 	.import		_proto_get_payload
@@ -33,70 +39,212 @@
 	.export		_proto
 	.export		_payload_buffer
 	.export		_show_status
+	.export		_debug_print
+	.export		_debug_hex
 	.export		_init_screen
+	.export		_send_at_debug
+	.export		_response_contains
 	.export		_wait_for_message
 	.export		_main
 
+.segment	"DATA"
+
+_debug_row:
+	.byte	$03
+
 .segment	"RODATA"
 
-L0061:
-	.byte	$C5,$D2,$D2,$CF,$D2,$3A,$20,$C6,$41,$49,$4C,$45,$44,$20,$54,$4F
-	.byte	$20,$49,$4E,$49,$54,$49,$41,$4C,$49,$5A,$45,$20,$C1,$C3,$C9,$C1
-	.byte	$21,$00
-L0109:
+L015A:
+	.byte	$C1,$C3,$C9,$C1,$20,$49,$4E,$49,$54,$49,$41,$4C,$49,$5A,$45,$44
+	.byte	$20,$41,$54,$20,$24,$C4,$C5,$30,$30,$20,$28,$39,$36,$30,$30,$20
+	.byte	$42,$41,$55,$44,$29,$00
+L0237:
+	.byte	$D5,$4E,$45,$58,$50,$45,$43,$54,$45,$44,$20,$52,$45,$53,$50,$4F
+	.byte	$4E,$53,$45,$2C,$20,$43,$4F,$4E,$54,$49,$4E,$55,$49,$4E,$47,$2E
+	.byte	$2E,$2E,$00
+L0054:
+	.byte	$C3,$36,$34,$20,$CC,$CC,$CD,$20,$C3,$CC,$C9,$C5,$CE,$D4,$20,$56
+	.byte	$30,$2E,$31,$20,$2D,$20,$C4,$C5,$C2,$D5,$C7,$20,$CD,$CF,$C4,$C5
+	.byte	$00
+L03F5:
 	.byte	$D4,$45,$53,$54,$20,$43,$4F,$4D,$50,$4C,$45,$54,$45,$21,$20,$D0
 	.byte	$52,$45,$53,$53,$20,$41,$4E,$59,$20,$4B,$45,$59,$2E,$2E,$2E,$00
-L0097:
+L01E3:
+	.byte	$C7,$4F,$54,$20,$CF,$CB,$2C,$20,$57,$41,$49,$54,$49,$4E,$47,$20
+	.byte	$46,$4F,$52,$20,$C3,$CF,$CE,$CE,$C5,$C3,$D4,$2E,$2E,$2E,$00
+L0383:
 	.byte	$D4,$49,$4D,$45,$4F,$55,$54,$20,$43,$52,$45,$41,$54,$49,$4E,$47
 	.byte	$20,$43,$4F,$4E,$56,$45,$52,$53,$41,$54,$49,$4F,$4E,$00
-L00FC:
+L0154:
+	.byte	$C9,$4E,$49,$54,$49,$41,$4C,$49,$5A,$49,$4E,$47,$20,$C1,$C3,$C9
+	.byte	$C1,$20,$48,$41,$52,$44,$57,$41,$52,$45,$2E,$2E,$2E,$00
+L03E8:
 	.byte	$D4,$49,$4D,$45,$4F,$55,$54,$20,$57,$41,$49,$54,$49,$4E,$47,$20
 	.byte	$46,$4F,$52,$20,$52,$45,$53,$50,$4F,$4E,$53,$45,$00
-L008B:
+L0377:
 	.byte	$C3,$52,$45,$41,$54,$49,$4E,$47,$20,$4E,$45,$57,$20,$43,$4F,$4E
 	.byte	$56,$45,$52,$53,$41,$54,$49,$4F,$4E,$2E,$2E,$2E,$00
-L0118:
+L0211:
+	.byte	$C5,$D2,$D2,$CF,$D2,$3A,$20,$CE,$4F,$20,$C3,$CF,$CE,$CE,$C5,$C3
+	.byte	$D4,$20,$52,$45,$43,$45,$49,$56,$45,$44,$21,$00
+L0404:
 	.byte	$0D,$0D,$D0,$52,$45,$53,$53,$20,$41,$4E,$59,$20,$4B,$45,$59,$20
 	.byte	$54,$4F,$20,$45,$58,$49,$54,$2E,$2E,$2E,$00
-L007E:
+L02CB:
+	.byte	$D7,$41,$49,$54,$49,$4E,$47,$20,$46,$4F,$52,$20,$D0,$CF,$CE,$C7
+	.byte	$20,$28,$C1,$C3,$CB,$29,$2E,$2E,$2E,$00
+L022C:
+	.byte	$C5,$D2,$D2,$CF,$D2,$3A,$20,$CE,$4F,$20,$4D,$4F,$44,$45,$4D,$20
+	.byte	$52,$45,$53,$50,$4F,$4E,$53,$45,$21,$00
+L0225:
+	.byte	$C5,$D2,$D2,$CF,$D2,$3A,$20,$C3,$4F,$4E,$4E,$45,$43,$54,$49,$4F
+	.byte	$4E,$20,$46,$41,$49,$4C,$45,$44,$21,$00
+L023C:
+	.byte	$C4,$52,$41,$49,$4E,$49,$4E,$47,$20,$4D,$4F,$44,$45,$4D,$20,$42
+	.byte	$55,$46,$46,$45,$52,$2E,$2E,$2E,$00
+L036A:
 	.byte	$D4,$49,$4D,$45,$4F,$55,$54,$20,$57,$41,$49,$54,$49,$4E,$47,$20
 	.byte	$46,$4F,$52,$20,$D0,$CF,$CE,$C7,$00
-L007A:
-	.byte	$D0,$CF,$CE,$C7,$21,$20,$D3,$45,$52,$56,$45,$52,$20,$52,$45,$53
-	.byte	$50,$4F,$4E,$44,$45,$44,$21,$00
-L0065:
-	.byte	$C3,$4F,$4E,$4E,$45,$43,$54,$49,$4F,$4E,$20,$45,$53,$54,$41,$42
-	.byte	$4C,$49,$53,$48,$45,$44,$21,$00
-L00A4:
+L0390:
 	.byte	$D3,$45,$4E,$44,$49,$4E,$47,$20,$54,$45,$53,$54,$20,$4D,$45,$53
 	.byte	$53,$41,$47,$45,$2E,$2E,$2E,$00
-L0057:
-	.byte	$C3,$4F,$4E,$4E,$45,$43,$54,$49,$4E,$47,$20,$54,$4F,$20,$53,$45
-	.byte	$52,$56,$45,$52,$2E,$2E,$2E,$00
-L00AE:
+L01B2:
+	.byte	$D3,$45,$54,$54,$49,$4E,$47,$20,$56,$45,$52,$42,$4F,$53,$45,$20
+	.byte	$4D,$4F,$44,$45,$2E,$2E,$2E,$00
+L032C:
+	.byte	$D0,$CF,$CE,$C7,$21,$20,$D3,$45,$52,$56,$45,$52,$20,$52,$45,$53
+	.byte	$50,$4F,$4E,$44,$45,$44,$21,$00
+L039A:
 	.byte	$D4,$49,$4D,$45,$4F,$55,$54,$20,$57,$41,$49,$54,$49,$4E,$47,$20
 	.byte	$46,$4F,$52,$20,$C1,$C3,$CB,$00
-L00B1:
-	.byte	$D2,$45,$43,$45,$49,$56,$49,$4E,$47,$20,$52,$45,$53,$50,$4F,$4E
-	.byte	$53,$45,$2E,$2E,$2E,$00
-L0093:
+L02AA:
+	.byte	$C3,$4F,$4E,$4E,$45,$43,$54,$49,$4F,$4E,$20,$45,$53,$54,$41,$42
+	.byte	$4C,$49,$53,$48,$45,$44,$21,$00
+L037F:
 	.byte	$C3,$4F,$4E,$56,$45,$52,$53,$41,$54,$49,$4F,$4E,$20,$43,$52,$45
 	.byte	$41,$54,$45,$44,$21,$00
-L002B:
-	.byte	$C3,$36,$34,$20,$CC,$CC,$CD,$20,$C3,$CC,$C9,$C5,$CE,$D4,$20,$56
-	.byte	$30,$2E,$31,$00
-L00E1:
+L039D:
+	.byte	$D2,$45,$43,$45,$49,$56,$49,$4E,$47,$20,$52,$45,$53,$50,$4F,$4E
+	.byte	$53,$45,$2E,$2E,$2E,$00
+L02BB:
+	.byte	$D3,$45,$4E,$44,$49,$4E,$47,$20,$D0,$C9,$CE,$C7,$20,$4D,$45,$53
+	.byte	$53,$41,$47,$45,$00
+L0196:
+	.byte	$D3,$54,$41,$54,$55,$53,$20,$41,$46,$54,$45,$52,$20,$44,$45,$4C
+	.byte	$41,$59,$3A,$20,$00
+L0335:
+	.byte	$D4,$49,$4D,$45,$4F,$55,$54,$21,$20,$D2,$D8,$20,$42,$59,$54,$45
+	.byte	$53,$3A,$20,$00
+L0231:
+	.byte	$C3,$48,$45,$43,$4B,$20,$C1,$C3,$C9,$C1,$20,$41,$54,$20,$24,$C4
+	.byte	$C5,$30,$30,$00
+L03CD:
 	.byte	$D2,$45,$53,$50,$4F,$4E,$53,$45,$20,$43,$4F,$4D,$50,$4C,$45,$54
 	.byte	$45,$21,$00
-L005B:
-	.byte	$52,$41,$53,$50,$42,$45,$52,$52,$59,$50,$49,$2E,$4C,$4F,$43,$41
-	.byte	$4C,$00
-L0072:
-	.byte	$D3,$45,$4E,$44,$49,$4E,$47,$20,$D0,$C9,$CE,$C7,$2E,$2E,$2E,$00
-L002E:
-	.byte	$C9,$4E,$49,$54,$49,$41,$4C,$49,$5A,$49,$4E,$47,$2E,$2E,$2E,$00
-L00A7:
+L01A0:
+	.byte	$D2,$45,$53,$45,$54,$54,$49,$4E,$47,$20,$4D,$4F,$44,$45,$4D,$2E
+	.byte	$2E,$2E,$00
+L0070:
+	.byte	$2D,$2D,$2D,$20,$CD,$CF,$C4,$C5,$CD,$20,$C9,$2F,$CF,$20,$2D,$2D
+	.byte	$2D,$00
+L01A9:
+	.byte	$C4,$49,$53,$41,$42,$4C,$49,$4E,$47,$20,$45,$43,$48,$4F,$2E,$2E
+	.byte	$2E,$00
+L01CB:
+	.byte	$C4,$49,$41,$4C,$49,$4E,$47,$20,$53,$45,$52,$56,$45,$52,$2E,$2E
+	.byte	$2E,$00
+L01D8	:=	L0211+10
+L0215	:=	L0211+10
+L0306:
+	.byte	$C7,$4F,$54,$20,$C1,$C3,$CB,$20,$28,$D0,$CF,$CE,$C7,$29,$21,$00
+L0393:
 	.byte	$C8,$45,$4C,$4C,$4F,$20,$46,$52,$4F,$4D,$20,$C3,$36,$34,$21,$00
+L0073:
+	.byte	$C9,$4E,$49,$54,$49,$41,$4C,$49,$5A,$49,$4E,$47,$2E,$2E,$2E,$00
+L02B6:
+	.byte	$D3,$45,$4E,$44,$49,$4E,$47,$20,$D0,$C9,$CE,$C7,$2E,$2E,$2E,$00
+L030F:
+	.byte	$C7,$4F,$54,$20,$4D,$53,$47,$20,$54,$59,$50,$45,$3A,$20,$00
+L0164:
+	.byte	$C1,$C3,$C9,$C1,$20,$D3,$54,$41,$54,$55,$53,$3A,$20,$00
+L0108:
+	.byte	$28,$4E,$4F,$20,$52,$45,$53,$50,$4F,$4E,$53,$45,$29,$00
+L0068:
+	.byte	$20,$40,$20,$39,$36,$30,$30,$20,$42,$41,$55,$44,$00
+L005F:
+	.byte	$31,$39,$32,$2E,$31,$36,$38,$2E,$31,$2E,$33,$39,$00
+L0316:
+	.byte	$28,$D0,$C9,$CE,$C7,$2D,$45,$43,$48,$4F,$21,$29,$00
+L01C0	:=	L005F+0
+L021B:
+	.byte	$CE,$CF,$20,$C3,$C1,$D2,$D2,$C9,$C5,$D2,$00
+L02E5:
+	.byte	$D2,$D8,$20,$42,$59,$54,$45,$3A,$20,$00
+L0272:
+	.byte	$C4,$52,$41,$49,$4E,$45,$44,$20,$00
+L005C:
+	.byte	$D3,$45,$52,$56,$45,$52,$3A,$20,$00
+L01D5:
+	.byte	$C3,$CF,$CE,$CE,$C5,$C3,$D4,$00
+L0257:
+	.byte	$C4,$52,$41,$49,$4E,$3A,$20,$00
+L020E	:=	L01D5+0
+L02A6:
+	.byte	$20,$42,$59,$54,$45,$53,$00
+L031C:
+	.byte	$28,$CE,$C1,$CB,$29,$00
+L021E:
+	.byte	$C5,$D2,$D2,$CF,$D2,$00
+L0304:
+	.byte	$D0,$D2,$CF,$D4,$CF,$00
+L0173:
+	.byte	$D4,$C4,$D2,$C5,$20,$00
+L02C9	:=	L0304+0
+L02B9	:=	L0304+0
+L016E:
+	.byte	$D2,$C4,$D2,$C6,$20,$00
+L0101:
+	.byte	$D2,$D8,$3C,$20,$00
+L01C8:
+	.byte	$36,$34,$30,$30,$00
+L01BC:
+	.byte	$C1,$D4,$C4,$D4,$00
+L0221:
+	.byte	$C2,$D5,$D3,$D9,$00
+L01E1:
+	.byte	$C9,$CE,$C6,$CF,$00
+L01B5:
+	.byte	$C1,$D4,$D6,$31,$00
+L01AC:
+	.byte	$C1,$D4,$C5,$30,$00
+L022F:
+	.byte	$C5,$D2,$D2,$20,$00
+L0065	:=	L01C8+0
+L0106	:=	L0101+0
+L0158	:=	L01E1+0
+L0208	:=	L0101+0
+L017F:
+	.byte	$C4,$D3,$D2,$20,$00
+L0179:
+	.byte	$C4,$C3,$C4,$20,$00
+L023A	:=	L01E1+0
+L007F:
+	.byte	$D4,$D8,$3E,$20,$00
+L0235:
+	.byte	$D7,$C1,$D2,$CE,$00
+L0184:
+	.byte	$C9,$D2,$D1,$00
+L01A3:
+	.byte	$C1,$D4,$DA,$00
+L01DE:
+	.byte	$CF,$CB,$00
+L0169:
+	.byte	$20,$5B,$00
+L0187:
+	.byte	$5D,$00
+L01C4:
+	.byte	$3A,$00
+L0062	:=	L01C4+0
 
 .segment	"BSS"
 
@@ -115,7 +263,7 @@ _payload_buffer:
 
 .segment	"BSS"
 
-L000B:
+L000C:
 	.res	1,$00
 
 .segment	"CODE"
@@ -132,15 +280,112 @@ L000B:
 	jsr     ldax0sp
 	jsr     _cputs
 	jsr     _wherex
-	sta     L000B
-L011E:	lda     L000B
+	sta     L000C
+L040A:	lda     L000C
 	cmp     #$28
-	bcs     L0016
+	bcs     L0017
 	lda     #$20
 	jsr     _cputc
-	inc     L000B
-	jmp     L011E
-L0016:	jmp     incsp2
+	inc     L000C
+	jmp     L040A
+L0017:	jmp     incsp2
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ debug_print (__near__ const unsigned char *, __near__ const unsigned char *)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_debug_print: near
+
+.segment	"BSS"
+
+L0021:
+	.res	1,$00
+
+.segment	"CODE"
+
+	jsr     pushax
+	lda     #$00
+	jsr     pusha
+	lda     _debug_row
+	jsr     _gotoxy
+	lda     #$01
+	jsr     _textcolor
+	lda     #$00
+	jsr     _bgcolor
+	ldy     #$03
+	jsr     ldaxysp
+	jsr     _cputs
+	jsr     ldax0sp
+	jsr     _cputs
+	jsr     _wherex
+	sta     L0021
+L040B:	lda     L0021
+	cmp     #$28
+	bcs     L040C
+	lda     #$20
+	jsr     _cputc
+	inc     L0021
+	jmp     L040B
+L040C:	inc     _debug_row
+	lda     _debug_row
+	cmp     #$15
+	bcc     L0038
+	lda     #$03
+	sta     _debug_row
+L0038:	jmp     incsp4
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ debug_hex (unsigned char)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_debug_hex: near
+
+.segment	"RODATA"
+
+L003E:
+	.byte	$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$C1,$C2,$C3,$C4,$C5,$C6
+	.byte	$00
+
+.segment	"CODE"
+
+	jsr     pusha
+	ldy     #$00
+	lda     (sp),y
+	lsr     a
+	lsr     a
+	lsr     a
+	lsr     a
+	and     #$0F
+	sta     ptr1
+	tya
+	clc
+	adc     #>(L003E)
+	sta     ptr1+1
+	ldy     #<(L003E)
+	lda     (ptr1),y
+	jsr     _cputc
+	ldy     #$00
+	lda     (sp),y
+	and     #$0F
+	sta     ptr1
+	tya
+	clc
+	adc     #>(L003E)
+	sta     ptr1+1
+	ldy     #<(L003E)
+	lda     (ptr1),y
+	jsr     _cputc
+	lda     #$20
+	jsr     _cputc
+	jmp     incsp1
 
 .endproc
 
@@ -157,19 +402,381 @@ L0016:	jmp     incsp2
 	jsr     _clrscr
 	lda     #$06
 	jsr     _bordercolor
-	lda     #$03
+	lda     #$00
 	jsr     _bgcolor
-	lda     #$06
+	lda     #$0D
 	jsr     _textcolor
 	lda     #$00
 	jsr     pusha
 	jsr     _gotoxy
-	lda     #<(L002B)
-	ldx     #>(L002B)
+	lda     #<(L0054)
+	ldx     #>(L0054)
 	jsr     _cputs
-	lda     #<(L002E)
-	ldx     #>(L002E)
+	lda     #$00
+	jsr     pusha
+	lda     #$01
+	jsr     _gotoxy
+	lda     #$03
+	jsr     _textcolor
+	lda     #<(L005C)
+	ldx     #>(L005C)
+	jsr     _cputs
+	lda     #<(L005F)
+	ldx     #>(L005F)
+	jsr     _cputs
+	lda     #<(L0062)
+	ldx     #>(L0062)
+	jsr     _cputs
+	lda     #<(L0065)
+	ldx     #>(L0065)
+	jsr     _cputs
+	lda     #<(L0068)
+	ldx     #>(L0068)
+	jsr     _cputs
+	lda     #$00
+	jsr     pusha
+	lda     #$02
+	jsr     _gotoxy
+	lda     #$07
+	jsr     _textcolor
+	lda     #<(L0070)
+	ldx     #>(L0070)
+	jsr     _cputs
+	lda     #<(L0073)
+	ldx     #>(L0073)
 	jmp     _show_status
+
+.endproc
+
+; ---------------------------------------------------------------
+; unsigned char __near__ send_at_debug (__near__ const unsigned char *, __near__ unsigned char *, unsigned char)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_send_at_debug: near
+
+.segment	"BSS"
+
+L0076:
+	.res	1,$00
+L0077:
+	.res	2,$00
+L0078:
+	.res	1,$00
+L007A:
+	.res	1,$00
+L007B:
+	.res	1,$00
+L007C:
+	.res	1,$00
+L00A6:
+	.res	2,$00
+L00D0:
+	.res	2,$00
+L00F2:
+	.res	1,$00
+
+.segment	"CODE"
+
+	jsr     pusha
+	lda     #$00
+	sta     L0078
+	sta     L007C
+	lda     #<(L007F)
+	ldx     #>(L007F)
+	jsr     pushax
+	ldy     #$06
+	jsr     ldaxysp
+	jsr     _debug_print
+	lda     #$00
+	sta     L007B
+L0082:	ldy     #$04
+	jsr     ldaxysp
+	ldy     L007B
+	sta     ptr1
+	stx     ptr1+1
+	lda     (ptr1),y
+	beq     L0414
+	inc     L007B
+	jmp     L0082
+L0414:	sta     L0076
+L008B:	ldy     #$04
+	jsr     ldaxysp
+	ldy     L0076
+	sta     ptr1
+	stx     ptr1+1
+	lda     (ptr1),y
+	beq     L009B
+L0094:	jsr     _serial_can_write
+	tax
+	beq     L0094
+	ldy     #$04
+	jsr     ldaxysp
+	ldy     L0076
+	sta     ptr1
+	stx     ptr1+1
+	lda     (ptr1),y
+	jsr     _serial_write
+	inc     L0076
+	jmp     L008B
+L009B:	jsr     _serial_can_write
+	tax
+	beq     L009B
+	lda     #$0D
+	jsr     _serial_write
+	jsr     _serial_flush
+	lda     #$00
+	sta     L0077
+	sta     L0077+1
+	sta     L0078
+	sta     L00A6
+	sta     L00A6+1
+L00A7:	lda     L00A6+1
+	cmp     #$75
+	bne     L00AE
+	lda     L00A6
+	cmp     #$30
+L00AE:	jcs     L00F4
+	lda     L00A6
+	ldx     L00A6+1
+	jsr     incax1
+	sta     L00A6
+	stx     L00A6+1
+	jmp     L00A7
+L00B0:	jsr     _serial_available
+	tax
+	jeq     L00B7
+	jsr     _serial_read
+	sta     L007A
+	lda     L007C
+	cmp     L007B
+	bcs     L0416
+	lda     L007A
+	jsr     pusha0
+	ldy     #$06
+	jsr     ldaxysp
+	ldy     L007C
+	sta     ptr1
+	stx     ptr1+1
+	lda     (ptr1),y
+	jsr     tosicmp0
+	bne     L0416
+	inc     L007C
+	lda     #$00
+	sta     L0077
+	sta     L0077+1
+	jmp     L00F4
+L0416:	lda     L007A
+	cmp     #$20
+	bcc     L041A
+	cmp     #$7F
+	bcs     L041A
+	lda     L0078
+	inc     L0078
+	clc
+	ldy     #$01
+	adc     (sp),y
+	sta     ptr1
+	lda     #$00
+	iny
+	adc     (sp),y
+	sta     ptr1+1
+	lda     L007A
+	ldy     #$00
+	sta     (ptr1),y
+	jmp     L0426
+L041A:	lda     L007A
+	cmp     #$0D
+	beq     L041B
+	cmp     #$0A
+	jne     L0426
+L041B:	lda     L0078
+	beq     L0427
+	lda     #$00
+	sta     L00D0
+	sta     L00D0+1
+L00D1:	lda     L00D0+1
+	cmp     #$03
+	bne     L00D8
+	lda     L00D0
+	cmp     #$E8
+L00D8:	jcs     L00B1
+	jsr     _serial_available
+	tax
+	beq     L00D3
+	jsr     _serial_read
+	sta     L007A
+	cmp     #$20
+	bcc     L041F
+	lda     L007A
+	cmp     #$7F
+	bcs     L041F
+	lda     L0078
+	inc     L0078
+	clc
+	ldy     #$01
+	adc     (sp),y
+	sta     ptr1
+	lda     #$00
+	iny
+	adc     (sp),y
+	sta     ptr1+1
+	lda     L007A
+	ldy     #$00
+	sta     (ptr1),y
+	jmp     L0424
+L041F:	lda     L007A
+	cmp     #$0D
+	beq     L0420
+	cmp     #$0A
+	bne     L0424
+L0420:	lda     L0078
+	bne     L00B1
+	jmp     L0425
+L0424:	lda     #$00
+L0425:	sta     L00D0
+	sta     L00D0+1
+L00D3:	lda     L00D0
+	ldx     L00D0+1
+	jsr     incax1
+	sta     L00D0
+	stx     L00D0+1
+	jmp     L00D1
+L0426:	lda     #$00
+L0427:	sta     L0077
+	sta     L0077+1
+	jmp     L00F4
+L00B7:	lda     L0077
+	ldx     L0077+1
+	jsr     incax1
+	sta     L0077
+	stx     L0077+1
+	lda     #$00
+	sta     L00F2
+L0428:	lda     L00F2
+	cmp     #$32
+	bcs     L00F4
+	inc     L00F2
+	jmp     L0428
+L00F4:	lda     L0077+1
+	cmp     #$13
+	bne     L00B4
+	lda     L0077
+	cmp     #$88
+L00B4:	bcs     L00B1
+	lda     L0078
+	jsr     pusha0
+	ldy     #$02
+	lda     (sp),y
+	jsr     decax1
+	jsr     tosicmp
+	jcc     L00B0
+L00B1:	ldy     #$02
+	jsr     ldaxysp
+	clc
+	adc     L0078
+	bcc     L0411
+	inx
+L0411:	sta     ptr1
+	stx     ptr1+1
+	lda     #$00
+	tay
+	sta     (ptr1),y
+	lda     L0078
+	beq     L00FE
+	lda     #<(L0101)
+	ldx     #>(L0101)
+	jsr     pushax
+	ldy     #$04
+	jsr     ldaxysp
+	jmp     L0412
+L00FE:	lda     #<(L0106)
+	ldx     #>(L0106)
+	jsr     pushax
+	lda     #<(L0108)
+	ldx     #>(L0108)
+L0412:	jsr     _debug_print
+	ldx     #$00
+	lda     L0078
+	jmp     incsp5
+
+.endproc
+
+; ---------------------------------------------------------------
+; unsigned char __near__ response_contains (__near__ const unsigned char *, __near__ const unsigned char *)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_response_contains: near
+
+.segment	"BSS"
+
+L010C:
+	.res	1,$00
+L010D:
+	.res	1,$00
+
+.segment	"CODE"
+
+	jsr     pushax
+	lda     #$00
+	sta     L010C
+L010E:	ldy     #$03
+	jsr     ldaxysp
+	ldy     L010C
+	sta     ptr1
+	stx     ptr1+1
+	ldx     #$00
+	lda     (ptr1),y
+	beq     L010B
+	stx     L010D
+L0117:	jsr     ldax0sp
+	ldy     L010D
+	sta     ptr1
+	stx     ptr1+1
+	lda     (ptr1),y
+	beq     L0118
+	ldx     #$00
+	lda     L010C
+	clc
+	adc     L010D
+	bcc     L042E
+	inx
+	clc
+L042E:	ldy     #$02
+	adc     (sp),y
+	sta     ptr1
+	txa
+	iny
+	adc     (sp),y
+	sta     ptr1+1
+	ldx     #$00
+	lda     (ptr1,x)
+	jsr     pusha0
+	ldy     #$03
+	jsr     ldaxysp
+	ldy     L010D
+	sta     ptr1
+	stx     ptr1+1
+	lda     (ptr1),y
+	jsr     tosicmp0
+	bne     L0118
+	inc     L010D
+	jmp     L0117
+L0118:	jsr     ldax0sp
+	ldy     L010D
+	sta     ptr1
+	stx     ptr1+1
+	lda     (ptr1),y
+	bne     L042F
+	tax
+	lda     #$01
+	jmp     incsp4
+L042F:	inc     L010C
+	jmp     L010E
+L010B:	jmp     incsp4
 
 .endproc
 
@@ -183,61 +790,61 @@ L0016:	jmp     incsp2
 
 .segment	"BSS"
 
-L0031:
+L012A:
 	.res	2,$00
-L0039:
+L0132:
 	.res	1,$00
-L003B:
+L0134:
 	.res	1,$00
-L0044:
+L013D:
 	.res	1,$00
 
 .segment	"CODE"
 
 	jsr     pushax
 	lda     #$00
-	sta     L0031
-	sta     L0031+1
-	jmp     L0035
-L0033:	jsr     _serial_available
+	sta     L012A
+	sta     L012A+1
+	jmp     L012E
+L012C:	jsr     _serial_available
 	tax
-	beq     L0121
+	beq     L0433
 	jsr     _serial_read
-	sta     L0039
+	sta     L0132
 	lda     #<(_proto)
 	ldx     #>(_proto)
 	jsr     pushax
-	lda     L0039
+	lda     L0132
 	jsr     _proto_process_byte
-	sta     L003B
-	lda     L003B
-	beq     L0121
+	sta     L0134
+	lda     L0134
+	beq     L0433
 	ldy     #$02
 	lda     (sp),y
-	cmp     L003B
-	bne     L0120
+	cmp     L0134
+	bne     L0432
 	ldx     #$00
 	lda     #$01
 	jmp     incsp3
-L0120:	lda     #$00
-L0121:	sta     L0044
-L0122:	lda     L0044
+L0432:	lda     #$00
+L0433:	sta     L013D
+L0434:	lda     L013D
 	cmp     #$64
-	bcs     L0046
-	inc     L0044
-	jmp     L0122
-L0046:	lda     L0031
-	ldx     L0031+1
+	bcs     L013F
+	inc     L013D
+	jmp     L0434
+L013F:	lda     L012A
+	ldx     L012A+1
 	jsr     incax1
-	sta     L0031
-	stx     L0031+1
-L0035:	lda     L0031
+	sta     L012A
+	stx     L012A+1
+L012E:	lda     L012A
 	ldy     #$00
 	cmp     (sp),y
-	lda     L0031+1
+	lda     L012A+1
 	iny
 	sbc     (sp),y
-	bcc     L0033
+	bcc     L012C
 	ldx     #$00
 	txa
 	jmp     incsp3
@@ -254,35 +861,89 @@ L0035:	lda     L0031
 
 .segment	"BSS"
 
-L0050:
+L0149:
 	.res	1,$00
-L0067:
-	.res	2,$00
-L0080:
-	.res	2,$00
-L0099:
-	.res	2,$00
-L00B3:
+L014B:
+	.res	64,$00
+L014D:
+	.res	48,$00
+L015C:
 	.res	1,$00
-L00B5:
-	.res	2,$00
-L00B7:
+L018E:
 	.res	1,$00
-L00C5:
+L01E5:
+	.res	2,$00
+L01E6:
 	.res	1,$00
-L00C7:
+L01F6:
 	.res	1,$00
-L00CD:
+L023E:
 	.res	2,$00
-L00D5:
-	.res	2,$00
-L00E6:
-	.res	2,$00
-L00EF:
+L023F:
 	.res	1,$00
-L00FE:
+L024C:
+	.res	1,$00
+L0275:
+	.res	8,$00
+L0276:
+	.res	1,$00
+L0278:
+	.res	1,$00
+L028E:
+	.res	1,$00
+L0297:
+	.res	1,$00
+L02AC:
+	.res	4,$00
+L02BE:
 	.res	2,$00
-L010D:
+L02CD:
+	.res	2,$00
+L02CF:
+	.res	1,$00
+L02D1:
+	.res	1,$00
+L02DC:
+	.res	1,$00
+L02DE:
+	.res	1,$00
+L031F:
+	.res	1,$00
+L0338:
+	.res	8,$00
+L0339:
+	.res	1,$00
+L033B:
+	.res	1,$00
+L0351:
+	.res	1,$00
+L035A:
+	.res	1,$00
+L036C:
+	.res	2,$00
+L0385:
+	.res	2,$00
+L039F:
+	.res	1,$00
+L03A1:
+	.res	2,$00
+L03A3:
+	.res	1,$00
+L03B1:
+	.res	1,$00
+L03B3:
+	.res	1,$00
+L03B9:
+	.res	2,$00
+L03C1:
+	.res	2,$00
+L03D2:
+	.res	2,$00
+L03DB:
+	.res	1,$00
+L03EA:
+	.res	2,$00
+L03F9:
 	.res	2,$00
 
 .segment	"CODE"
@@ -297,255 +958,969 @@ L010D:
 	ldx     #$02
 	lda     #$00
 	jsr     _proto_init
-	lda     #<(L0057)
-	ldx     #>(L0057)
+	lda     #<(L0154)
+	ldx     #>(L0154)
 	jsr     _show_status
-	lda     #<(L005B)
-	ldx     #>(L005B)
+	jsr     _acia_init_hw
+	lda     #<(L0158)
+	ldx     #>(L0158)
 	jsr     pushax
-	ldx     #$19
+	lda     #<(L015A)
+	ldx     #>(L015A)
+	jsr     _debug_print
+	jsr     _acia_get_status
+	sta     L015C
 	lda     #$00
-	jsr     _serial_init
-	sta     L0050
-	lda     L0050
-	beq     L005E
-	lda     #<(L0061)
-	ldx     #>(L0061)
-	jsr     _show_status
-	jmp     L0063
-L005E:	lda     #<(L0065)
-	ldx     #>(L0065)
-	jsr     _show_status
-	lda     #$00
-	sta     L0067
-	sta     L0067+1
-L0068:	lda     L0067+1
-	cmp     #$75
-	bne     L006F
-	lda     L0067
-	cmp     #$30
-L006F:	bcs     L0069
-	lda     L0067
-	ldx     L0067+1
-	jsr     incax1
-	sta     L0067
-	stx     L0067+1
-	jmp     L0068
-L0069:	lda     #<(L0072)
-	ldx     #>(L0072)
-	jsr     _show_status
-	jsr     _proto_send_ping
-	lda     #$10
 	jsr     pusha
-	ldx     #$01
-	lda     #$2C
-	jsr     _wait_for_message
+	lda     _debug_row
+	jsr     _gotoxy
+	lda     #$03
+	jsr     _textcolor
+	lda     #<(L0164)
+	ldx     #>(L0164)
+	jsr     _cputs
+	lda     L015C
+	jsr     _debug_hex
+	lda     #<(L0169)
+	ldx     #>(L0169)
+	jsr     _cputs
+	lda     L015C
+	and     #$08
+	beq     L043A
+	lda     #<(L016E)
+	ldx     #>(L016E)
+	jsr     _cputs
+L043A:	lda     L015C
+	and     #$10
+	beq     L043B
+	lda     #<(L0173)
+	ldx     #>(L0173)
+	jsr     _cputs
+L043B:	lda     L015C
+	and     #$20
+	bne     L043C
+	lda     #<(L0179)
+	ldx     #>(L0179)
+	jsr     _cputs
+L043C:	lda     L015C
+	and     #$40
+	bne     L043D
+	lda     #<(L017F)
+	ldx     #>(L017F)
+	jsr     _cputs
+L043D:	lda     L015C
+	and     #$80
+	beq     L0181
+	lda     #<(L0184)
+	ldx     #>(L0184)
+	jsr     _cputs
+L0181:	lda     #<(L0187)
+	ldx     #>(L0187)
+	jsr     _cputs
+	inc     _debug_row
+	lda     _debug_row
+	cmp     #$15
+	bcc     L018A
+	lda     #$03
+	sta     _debug_row
+L018A:	jsr     _acia_get_status
+	sta     L018E
+	lda     #$00
+	jsr     pusha
+	lda     _debug_row
+	jsr     _gotoxy
+	lda     #$03
+	jsr     _textcolor
+	lda     #<(L0196)
+	ldx     #>(L0196)
+	jsr     _cputs
+	lda     L018E
+	jsr     _debug_hex
+	inc     _debug_row
+	lda     _debug_row
+	cmp     #$15
+	bcc     L019B
+	lda     #$03
+	sta     _debug_row
+L019B:	lda     #<(L01A0)
+	ldx     #>(L01A0)
+	jsr     _show_status
+	lda     #<(L01A3)
+	ldx     #>(L01A3)
+	jsr     pushax
+	lda     #<(L014B)
+	ldx     #>(L014B)
+	jsr     pushax
+	lda     #$40
+	jsr     _send_at_debug
+	lda     #<(L01A9)
+	ldx     #>(L01A9)
+	jsr     _show_status
+	lda     #<(L01AC)
+	ldx     #>(L01AC)
+	jsr     pushax
+	lda     #<(L014B)
+	ldx     #>(L014B)
+	jsr     pushax
+	lda     #$40
+	jsr     _send_at_debug
+	lda     #<(L01B2)
+	ldx     #>(L01B2)
+	jsr     _show_status
+	lda     #<(L01B5)
+	ldx     #>(L01B5)
+	jsr     pushax
+	lda     #<(L014B)
+	ldx     #>(L014B)
+	jsr     pushax
+	lda     #$40
+	jsr     _send_at_debug
+	lda     #<(L014D)
+	ldx     #>(L014D)
+	jsr     pushax
+	lda     #<(L01BC)
+	ldx     #>(L01BC)
+	jsr     _strcpy
+	lda     #<(L014D)
+	ldx     #>(L014D)
+	jsr     pushax
+	lda     #<(L01C0)
+	ldx     #>(L01C0)
+	jsr     _strcat
+	lda     #<(L014D)
+	ldx     #>(L014D)
+	jsr     pushax
+	lda     #<(L01C4)
+	ldx     #>(L01C4)
+	jsr     _strcat
+	lda     #<(L014D)
+	ldx     #>(L014D)
+	jsr     pushax
+	lda     #<(L01C8)
+	ldx     #>(L01C8)
+	jsr     _strcat
+	lda     #<(L01CB)
+	ldx     #>(L01CB)
+	jsr     _show_status
+	lda     #<(L014D)
+	ldx     #>(L014D)
+	jsr     pushax
+	lda     #<(L014B)
+	ldx     #>(L014B)
+	jsr     pushax
+	lda     #$40
+	jsr     _send_at_debug
+	lda     #<(L014B)
+	ldx     #>(L014B)
+	jsr     pushax
+	lda     #<(L01D5)
+	ldx     #>(L01D5)
+	jsr     _response_contains
 	tax
-	beq     L0075
-	lda     #<(L007A)
-	ldx     #>(L007A)
+	beq     L01D2
+	lda     #<(L01D8)
+	ldx     #>(L01D8)
 	jsr     _show_status
-	jmp     L007C
-L0075:	lda     #<(L007E)
-	ldx     #>(L007E)
-	jsr     _show_status
-	jmp     L0063
-L007C:	lda     #$00
-	sta     L0080
-	sta     L0080+1
-L0081:	lda     L0080+1
-	cmp     #$75
-	bne     L0088
-	lda     L0080
-	cmp     #$30
-L0088:	bcs     L0082
-	lda     L0080
-	ldx     L0080+1
+	jmp     L0233
+L01D2:	lda     #<(L014B)
+	ldx     #>(L014B)
+	jsr     pushax
+	lda     #<(L01DE)
+	ldx     #>(L01DE)
+	jsr     _response_contains
+	tax
+	jeq     L01DB
+	lda     #<(L01E1)
+	ldx     #>(L01E1)
+	jsr     pushax
+	lda     #<(L01E3)
+	ldx     #>(L01E3)
+	jsr     _debug_print
+	lda     #$00
+	sta     L01E6
+	sta     L01E5
+	sta     L01E5+1
+L01E8:	lda     L01E5+1
+	cmp     #$13
+	bne     L01EF
+	lda     L01E5
+	cmp     #$88
+L01EF:	bcs     L01E9
+	lda     L01E6
+	cmp     #$3F
+	bcs     L01E9
+	jsr     _serial_available
+	tax
+	beq     L01EA
+	jsr     _serial_read
+	sta     L01F6
+	cmp     #$20
+	lda     #$00
+	bcc     L0443
+	lda     L01F6
+	cmp     #$7F
+	bcs     L0464
+	lda     L01E6
+	inc     L01E6
+	clc
+	adc     #<(L014B)
+	sta     ptr1
+	lda     #$00
+	adc     #>(L014B)
+	sta     ptr1+1
+	lda     L01F6
+	ldy     #$00
+	sta     (ptr1),y
+L0464:	lda     #$00
+L0443:	sta     L01E5
+	sta     L01E5+1
+L01EA:	lda     L01E5
+	ldx     L01E5+1
 	jsr     incax1
-	sta     L0080
-	stx     L0080+1
-	jmp     L0081
-L0082:	lda     #<(L008B)
-	ldx     #>(L008B)
+	sta     L01E5
+	stx     L01E5+1
+	jmp     L01E8
+L01E9:	ldy     L01E6
+	lda     #$00
+	sta     L014B,y
+	lda     L01E6
+	beq     L0205
+	lda     #<(L0208)
+	ldx     #>(L0208)
+	jsr     pushax
+	lda     #<(L014B)
+	ldx     #>(L014B)
+	jsr     _debug_print
+L0205:	lda     #<(L014B)
+	ldx     #>(L014B)
+	jsr     pushax
+	lda     #<(L020E)
+	ldx     #>(L020E)
+	jsr     _response_contains
+	tax
+	bne     L020B
+	lda     #<(L0211)
+	ldx     #>(L0211)
+	jsr     _show_status
+	jmp     L0213
+L020B:	lda     #<(L0215)
+	ldx     #>(L0215)
+	jsr     _show_status
+	jmp     L0233
+L01DB:	lda     #<(L014B)
+	ldx     #>(L014B)
+	jsr     pushax
+	lda     #<(L021B)
+	ldx     #>(L021B)
+	jsr     _response_contains
+	tax
+	bne     L0219
+	lda     #<(L014B)
+	ldx     #>(L014B)
+	jsr     pushax
+	lda     #<(L021E)
+	ldx     #>(L021E)
+	jsr     _response_contains
+	tax
+	bne     L0219
+	lda     #<(L014B)
+	ldx     #>(L014B)
+	jsr     pushax
+	lda     #<(L0221)
+	ldx     #>(L0221)
+	jsr     _response_contains
+	tax
+	beq     L0444
+L0219:	lda     #<(L0225)
+	ldx     #>(L0225)
+	jsr     _show_status
+	jmp     L0213
+L0444:	lda     L014B
+	bne     L0228
+	lda     #<(L022C)
+	ldx     #>(L022C)
+	jsr     _show_status
+	lda     #<(L022F)
+	ldx     #>(L022F)
+	jsr     pushax
+	lda     #<(L0231)
+	ldx     #>(L0231)
+	jsr     _debug_print
+	jmp     L0213
+L0228:	lda     #<(L0235)
+	ldx     #>(L0235)
+	jsr     pushax
+	lda     #<(L0237)
+	ldx     #>(L0237)
+	jsr     _debug_print
+L0233:	lda     #<(L023A)
+	ldx     #>(L023A)
+	jsr     pushax
+	lda     #<(L023C)
+	ldx     #>(L023C)
+	jsr     _debug_print
+	lda     #$00
+	sta     L023F
+	sta     L023E
+	sta     L023E+1
+L0241:	lda     L023E+1
+	cmp     #$07
+	bne     L0248
+	lda     L023E
+	cmp     #$D0
+L0248:	bcs     L0242
+	jsr     _serial_available
+	tax
+	beq     L0243
+	jsr     _serial_read
+	sta     L024C
+	inc     L023F
+	lda     L023F
+	cmp     #$0B
+	bcs     L0449
+	lda     #$00
+	jsr     pusha
+	lda     _debug_row
+	jsr     _gotoxy
+	lda     #$0B
+	jsr     _textcolor
+	lda     #<(L0257)
+	ldx     #>(L0257)
+	jsr     _cputs
+	lda     L024C
+	jsr     _debug_hex
+	lda     L024C
+	cmp     #$20
+	bcc     L0448
+	cmp     #$7F
+	bcs     L0448
+	lda     #$27
+	jsr     _cputc
+	lda     L024C
+	jsr     _cputc
+	lda     #$27
+	jsr     _cputc
+L0448:	inc     _debug_row
+	lda     _debug_row
+	cmp     #$15
+	lda     #$00
+	bcc     L044A
+	lda     #$03
+	sta     _debug_row
+L0449:	lda     #$00
+L044A:	sta     L023E
+	sta     L023E+1
+L0243:	lda     L023E
+	ldx     L023E+1
+	jsr     incax1
+	sta     L023E
+	stx     L023E+1
+	jmp     L0241
+L0242:	lda     L023F
+	jeq     L026C
+	lda     #$00
+	jsr     pusha
+	lda     _debug_row
+	jsr     _gotoxy
+	lda     #<(L0272)
+	ldx     #>(L0272)
+	jsr     _cputs
+	lda     #$00
+	sta     L0276
+	lda     L023F
+	sta     L0278
+	lda     L0278
+	bne     L044C
+	lda     L0276
+	inc     L0276
+	clc
+	adc     #<(L0275)
+	sta     ptr1
+	lda     #$00
+	adc     #>(L0275)
+	sta     ptr1+1
+	lda     #$30
+	ldy     #$00
+	sta     (ptr1),y
+	jmp     L027F
+L044B:	lda     L0276
+	inc     L0276
+	clc
+	adc     #<(L0275)
+	tay
+	lda     #$00
+	adc     #>(L0275)
+	tax
+	tya
+	jsr     pushax
+	lda     L0278
+	jsr     pusha0
+	lda     #$0A
+	jsr     tosumoda0
+	ldy     #$30
+	jsr     incaxy
+	ldy     #$00
+	jsr     staspidx
+	lda     L0278
+	jsr     pusha0
+	lda     #$0A
+	jsr     tosudiva0
+	sta     L0278
+L044C:	lda     L0278
+	bne     L044B
+L027F:	ldy     L0276
+	lda     #$00
+	sta     L0275,y
+	sta     L028E
+L044D:	lda     L028E
+	jsr     pusha0
+	lda     L0276
+	lsr     a
+	jsr     tosicmp0
+	bcs     L0290
+	ldy     L028E
+	lda     L0275,y
+	sta     L0297
+	lda     #<(L0275)
+	ldx     #>(L0275)
+	clc
+	adc     L028E
+	bcc     L029D
+	inx
+L029D:	sta     sreg
+	stx     sreg+1
+	ldx     #$00
+	lda     L0276
+	jsr     decax1
+	sec
+	sbc     L028E
+	sta     ptr1
+	txa
+	sbc     #$00
+	clc
+	adc     #>(L0275)
+	sta     ptr1+1
+	ldy     #<(L0275)
+	lda     (ptr1),y
+	ldy     #$00
+	sta     (sreg),y
+	ldx     #$00
+	lda     L0276
+	jsr     decax1
+	sec
+	sbc     L028E
+	pha
+	txa
+	sbc     #$00
+	tax
+	pla
+	clc
+	adc     #<(L0275)
+	sta     ptr1
+	txa
+	adc     #>(L0275)
+	sta     ptr1+1
+	lda     L0297
+	sta     (ptr1),y
+	inc     L028E
+	jmp     L044D
+L0290:	lda     #<(L0275)
+	ldx     #>(L0275)
+	jsr     _cputs
+	lda     #<(L02A6)
+	ldx     #>(L02A6)
+	jsr     _cputs
+	inc     _debug_row
+L026C:	lda     #<(L02AA)
+	ldx     #>(L02AA)
+	jsr     _show_status
+	lda     #$00
+	sta     L02AC
+	sta     L02AC+1
+	tay
+	sta     L02AC+2
+	sta     L02AC+3
+L02AD:	lda     L02AC+3
+	sta     sreg+1
+	lda     L02AC+2
+	sta     sreg
+	lda     L02AC
+	cmp     #$50
+	lda     L02AC+1
+	sbc     #$C3
+	lda     sreg
+	sbc     #$00
+	lda     sreg+1
+	sbc     #$00
+	bcs     L02AE
+	lda     L02AC+3
+	sta     sreg+1
+	lda     L02AC+2
+	sta     sreg
+	ldx     L02AC+1
+	lda     L02AC
+	jsr     saveeax
+	ldy     #$01
+	jsr     inceaxy
+	sta     L02AC
+	stx     L02AC+1
+	ldy     sreg
+	sty     L02AC+2
+	ldy     sreg+1
+	sty     L02AC+3
+	jsr     resteax
+	jmp     L02AD
+L02AE:	lda     #<(L02B6)
+	ldx     #>(L02B6)
+	jsr     _show_status
+	lda     #<(L02B9)
+	ldx     #>(L02B9)
+	jsr     pushax
+	lda     #<(L02BB)
+	ldx     #>(L02BB)
+	jsr     _debug_print
+	jsr     _proto_send_ping
+	lda     #$00
+	sta     L02BE
+	sta     L02BE+1
+L02BF:	lda     L02BE+1
+	cmp     #$13
+	bne     L02C6
+	lda     L02BE
+	cmp     #$88
+L02C6:	bcs     L02C0
+	lda     L02BE
+	ldx     L02BE+1
+	jsr     incax1
+	sta     L02BE
+	stx     L02BE+1
+	jmp     L02BF
+L02C0:	lda     #<(L02C9)
+	ldx     #>(L02C9)
+	jsr     pushax
+	lda     #<(L02CB)
+	ldx     #>(L02CB)
+	jsr     _debug_print
+	lda     #$00
+	sta     L02CD
+	sta     L02CD+1
+	sta     L02CF
+	sta     L02D1
+	jmp     L02D5
+L02D3:	jsr     _serial_available
+	tax
+	jeq     L0456
+	jsr     _serial_read
+	sta     L02DC
+	lda     #$00
+	jsr     pusha
+	lda     _debug_row
+	jsr     _gotoxy
+	lda     #$0C
+	jsr     _textcolor
+	lda     #<(L02E5)
+	ldx     #>(L02E5)
+	jsr     _cputs
+	lda     L02DC
+	jsr     _debug_hex
+	lda     L02DC
+	cmp     #$20
+	bcc     L0451
+	cmp     #$7F
+	bcs     L0451
+	lda     #$27
+	jsr     _cputc
+	lda     L02DC
+	jsr     _cputc
+	lda     #$27
+	jsr     _cputc
+L0451:	inc     _debug_row
+	lda     _debug_row
+	cmp     #$15
+	bcc     L0452
+	lda     #$03
+	sta     _debug_row
+L0452:	inc     L02D1
+	lda     #<(_proto)
+	ldx     #>(_proto)
+	jsr     pushax
+	lda     L02DC
+	jsr     _proto_process_byte
+	sta     L02DE
+	lda     L02DE
+	beq     L0456
+	cmp     #$40
+	bne     L02FF
+	lda     #$01
+	sta     L02CF
+	lda     #<(L0304)
+	ldx     #>(L0304)
+	jsr     pushax
+	lda     #<(L0306)
+	ldx     #>(L0306)
+	jsr     _debug_print
+	jmp     L0308
+L02FF:	lda     #$00
+	jsr     pusha
+	lda     _debug_row
+	jsr     _gotoxy
+	lda     #$0A
+	jsr     _textcolor
+	lda     #<(L030F)
+	ldx     #>(L030F)
+	jsr     _cputs
+	lda     L02DE
+	jsr     _debug_hex
+	lda     L02DE
+	cmp     #$36
+	bne     L0453
+	lda     #<(L0316)
+	ldx     #>(L0316)
+	jmp     L0438
+L0453:	lda     L02DE
+	cmp     #$41
+	bne     L0454
+	lda     #<(L031C)
+	ldx     #>(L031C)
+L0438:	jsr     _cputs
+L0454:	inc     _debug_row
+L0308:	lda     #$00
+L0456:	sta     L031F
+L0457:	lda     L031F
+	cmp     #$64
+	bcs     L0321
+	inc     L031F
+	jmp     L0457
+L0321:	lda     L02CD
+	ldx     L02CD+1
+	jsr     incax1
+	sta     L02CD
+	stx     L02CD+1
+L02D5:	lda     L02CD+1
+	cmp     #$02
+	bne     L02D7
+	lda     L02CD
+	cmp     #$58
+L02D7:	bcs     L0436
+	lda     L02CF
+	jeq     L02D3
+L0436:	lda     L02CF
+	beq     L0458
+	lda     #<(L032C)
+	ldx     #>(L032C)
+	jsr     _show_status
+	jmp     L032E
+L0458:	jsr     pusha
+	lda     _debug_row
+	jsr     _gotoxy
+	lda     #$0A
+	jsr     _textcolor
+	lda     #<(L0335)
+	ldx     #>(L0335)
+	jsr     _cputs
+	lda     #$00
+	sta     L0339
+	lda     L02D1
+	sta     L033B
+	lda     L033B
+	bne     L045A
+	lda     L0339
+	inc     L0339
+	clc
+	adc     #<(L0338)
+	sta     ptr1
+	lda     #$00
+	adc     #>(L0338)
+	sta     ptr1+1
+	lda     #$30
+	ldy     #$00
+	sta     (ptr1),y
+	jmp     L0342
+L0459:	lda     L0339
+	inc     L0339
+	clc
+	adc     #<(L0338)
+	tay
+	lda     #$00
+	adc     #>(L0338)
+	tax
+	tya
+	jsr     pushax
+	lda     L033B
+	jsr     pusha0
+	lda     #$0A
+	jsr     tosumoda0
+	ldy     #$30
+	jsr     incaxy
+	ldy     #$00
+	jsr     staspidx
+	lda     L033B
+	jsr     pusha0
+	lda     #$0A
+	jsr     tosudiva0
+	sta     L033B
+L045A:	lda     L033B
+	bne     L0459
+L0342:	ldy     L0339
+	lda     #$00
+	sta     L0338,y
+	sta     L0351
+L045B:	lda     L0351
+	jsr     pusha0
+	lda     L0339
+	lsr     a
+	jsr     tosicmp0
+	bcs     L0353
+	ldy     L0351
+	lda     L0338,y
+	sta     L035A
+	lda     #<(L0338)
+	ldx     #>(L0338)
+	clc
+	adc     L0351
+	bcc     L0360
+	inx
+L0360:	sta     sreg
+	stx     sreg+1
+	ldx     #$00
+	lda     L0339
+	jsr     decax1
+	sec
+	sbc     L0351
+	sta     ptr1
+	txa
+	sbc     #$00
+	clc
+	adc     #>(L0338)
+	sta     ptr1+1
+	ldy     #<(L0338)
+	lda     (ptr1),y
+	ldy     #$00
+	sta     (sreg),y
+	ldx     #$00
+	lda     L0339
+	jsr     decax1
+	sec
+	sbc     L0351
+	pha
+	txa
+	sbc     #$00
+	tax
+	pla
+	clc
+	adc     #<(L0338)
+	sta     ptr1
+	txa
+	adc     #>(L0338)
+	sta     ptr1+1
+	lda     L035A
+	sta     (ptr1),y
+	inc     L0351
+	jmp     L045B
+L0353:	lda     #<(L0338)
+	ldx     #>(L0338)
+	jsr     _cputs
+	inc     _debug_row
+	lda     #<(L036A)
+	ldx     #>(L036A)
+	jsr     _show_status
+	jmp     L0213
+L032E:	lda     #$00
+	sta     L036C
+	sta     L036C+1
+L036D:	lda     L036C+1
+	cmp     #$75
+	bne     L0374
+	lda     L036C
+	cmp     #$30
+L0374:	bcs     L036E
+	lda     L036C
+	ldx     L036C+1
+	jsr     incax1
+	sta     L036C
+	stx     L036C+1
+	jmp     L036D
+L036E:	lda     #<(L0377)
+	ldx     #>(L0377)
 	jsr     _show_status
 	jsr     _proto_send_new_conversation
-	lda     #$10
+	lda     #$40
 	jsr     pusha
 	ldx     #$01
 	lda     #$2C
 	jsr     _wait_for_message
 	tax
-	beq     L008E
-	lda     #<(L0093)
-	ldx     #>(L0093)
+	beq     L037A
+	lda     #<(L037F)
+	ldx     #>(L037F)
 	jsr     _show_status
-	jmp     L0095
-L008E:	lda     #<(L0097)
-	ldx     #>(L0097)
+	jmp     L0381
+L037A:	lda     #<(L0383)
+	ldx     #>(L0383)
 	jsr     _show_status
-	jmp     L0063
-L0095:	lda     #$00
-	sta     L0099
-	sta     L0099+1
-L009A:	lda     L0099+1
+	jmp     L0213
+L0381:	lda     #$00
+	sta     L0385
+	sta     L0385+1
+L0386:	lda     L0385+1
 	cmp     #$75
-	bne     L00A1
-	lda     L0099
+	bne     L038D
+	lda     L0385
 	cmp     #$30
-L00A1:	bcs     L009B
-	lda     L0099
-	ldx     L0099+1
+L038D:	bcs     L0387
+	lda     L0385
+	ldx     L0385+1
 	jsr     incax1
-	sta     L0099
-	stx     L0099+1
-	jmp     L009A
-L009B:	lda     #<(L00A4)
-	ldx     #>(L00A4)
+	sta     L0385
+	stx     L0385+1
+	jmp     L0386
+L0387:	lda     #<(L0390)
+	ldx     #>(L0390)
 	jsr     _show_status
-	lda     #<(L00A7)
-	ldx     #>(L00A7)
+	lda     #<(L0393)
+	ldx     #>(L0393)
 	jsr     _proto_send_chat
-	lda     #$10
+	lda     #$40
 	jsr     pusha
 	ldx     #$01
 	lda     #$2C
 	jsr     _wait_for_message
 	tax
-	bne     L00A9
-	lda     #<(L00AE)
-	ldx     #>(L00AE)
+	bne     L0395
+	lda     #<(L039A)
+	ldx     #>(L039A)
 	jsr     _show_status
-	jmp     L0063
-L00A9:	lda     #<(L00B1)
-	ldx     #>(L00B1)
+	jmp     L0213
+L0395:	lda     #<(L039D)
+	ldx     #>(L039D)
 	jsr     _show_status
 	lda     #$00
-	sta     L00B3
-	sta     L00B5
-	sta     L00B5+1
+	sta     L039F
+	sta     L03A1
+	sta     L03A1+1
 	lda     #$05
-	sta     L00B7
+	sta     L03A3
 	lda     #$00
 	jsr     pusha
-	lda     L00B7
+	lda     L03A3
 	jsr     _gotoxy
-	jmp     L00BE
-L00BC:	jsr     _serial_available
+	jmp     L03AA
+L03A8:	jsr     _serial_available
 	tax
-	jeq     L012A
+	jeq     L0461
 	jsr     _serial_read
-	sta     L00C5
+	sta     L03B1
 	lda     #<(_proto)
 	ldx     #>(_proto)
 	jsr     pushax
-	lda     L00C5
+	lda     L03B1
 	jsr     _proto_process_byte
-	sta     L00C7
-	cmp     #$25
-	bne     L0125
+	sta     L03B3
+	cmp     #$55
+	bne     L045C
 	lda     #<(_proto)
 	ldx     #>(_proto)
 	jsr     _proto_get_payload
-	sta     L00CD
-	stx     L00CD+1
+	sta     L03B9
+	stx     L03B9+1
 	jsr     _show_status
-	jmp     L0128
-L0125:	lda     L00C7
-	cmp     #$20
-	bne     L0126
+	jmp     L045F
+L045C:	lda     L03B3
+	cmp     #$50
+	bne     L045D
 	lda     #<(_proto)
 	ldx     #>(_proto)
 	jsr     _proto_get_payload
-	sta     L00D5
-	stx     L00D5+1
+	sta     L03C1
+	stx     L03C1+1
 	jsr     incax1
 	jsr     _cputs
-	jmp     L0128
-L0126:	lda     L00C7
-	cmp     #$21
-	bne     L0127
+	jmp     L045F
+L045D:	lda     L03B3
+	cmp     #$51
+	bne     L045E
 	lda     #$01
-	sta     L00B3
-	lda     #<(L00E1)
-	ldx     #>(L00E1)
+	sta     L039F
+	lda     #<(L03CD)
+	ldx     #>(L03CD)
 	jsr     _show_status
-	jmp     L0128
-L0127:	lda     L00C7
-	cmp     #$22
-	bne     L0128
+	jmp     L045F
+L045E:	lda     L03B3
+	cmp     #$52
+	bne     L045F
 	lda     #<(_proto)
 	ldx     #>(_proto)
 	jsr     _proto_get_payload
-	sta     L00E6
-	stx     L00E6+1
+	sta     L03D2
+	stx     L03D2+1
 	jsr     _show_status
 	lda     #$01
-	sta     L00B3
-L0128:	lda     #$00
-	sta     L00B5
-	sta     L00B5+1
-L012A:	sta     L00EF
-L012B:	lda     L00EF
+	sta     L039F
+L045F:	lda     #$00
+	sta     L03A1
+	sta     L03A1+1
+L0461:	sta     L03DB
+L0462:	lda     L03DB
 	cmp     #$64
-	bcs     L00F1
-	inc     L00EF
-	jmp     L012B
-L00F1:	lda     L00B5
-	ldx     L00B5+1
+	bcs     L03DD
+	inc     L03DB
+	jmp     L0462
+L03DD:	lda     L03A1
+	ldx     L03A1+1
 	jsr     incax1
-	sta     L00B5
-	stx     L00B5+1
-L00BE:	lda     L00B3
-	bne     L0123
-	lda     L00B5+1
+	sta     L03A1
+	stx     L03A1+1
+L03AA:	lda     L039F
+	bne     L0437
+	lda     L03A1+1
 	cmp     #$07
-	bne     L00C1
-	lda     L00B5
+	bne     L03AD
+	lda     L03A1
 	cmp     #$08
-L00C1:	jcc     L00BC
-L0123:	lda     L00B3
-	bne     L012C
-	lda     #<(L00FC)
-	ldx     #>(L00FC)
+L03AD:	jcc     L03A8
+L0437:	lda     L039F
+	bne     L0463
+	lda     #<(L03E8)
+	ldx     #>(L03E8)
 	jsr     _show_status
-L012C:	lda     #$00
-	sta     L00FE
-	sta     L00FE+1
-L00FF:	lda     L00FE+1
+L0463:	lda     #$00
+	sta     L03EA
+	sta     L03EA+1
+L03EB:	lda     L03EA+1
 	cmp     #$75
-	bne     L0106
-	lda     L00FE
+	bne     L03F2
+	lda     L03EA
 	cmp     #$30
-L0106:	bcs     L0100
-	lda     L00FE
-	ldx     L00FE+1
+L03F2:	bcs     L03EC
+	lda     L03EA
+	ldx     L03EA+1
 	jsr     incax1
-	sta     L00FE
-	stx     L00FE+1
-	jmp     L00FF
-L0100:	lda     #<(L0109)
-	ldx     #>(L0109)
+	sta     L03EA
+	stx     L03EA+1
+	jmp     L03EB
+L03EC:	lda     #<(L03F5)
+	ldx     #>(L03F5)
 	jsr     _show_status
-	jmp     L0124
-L0063:	lda     #$00
-	sta     L010D
-	sta     L010D+1
-L010E:	lda     L010D+1
+	jmp     L0439
+L0213:	lda     #$00
+	sta     L03F9
+	sta     L03F9+1
+L03FA:	lda     L03F9+1
 	cmp     #$75
-	bne     L0115
-	lda     L010D
+	bne     L0401
+	lda     L03F9
 	cmp     #$30
-L0115:	bcs     L010F
-	lda     L010D
-	ldx     L010D+1
+L0401:	bcs     L03FB
+	lda     L03F9
+	ldx     L03F9+1
 	jsr     incax1
-	sta     L010D
-	stx     L010D+1
-	jmp     L010E
-L010F:	lda     #<(L0118)
-	ldx     #>(L0118)
+	sta     L03F9
+	stx     L03F9+1
+	jmp     L03FA
+L03FB:	lda     #<(L0404)
+	ldx     #>(L0404)
 	jsr     _cputs
-L0124:	jsr     _cgetc
+L0439:	jsr     _cgetc
 	jsr     _serial_disconnect
 	jsr     _clrscr
 	ldx     #$00

@@ -18,6 +18,13 @@
 uint8_t serial_init(const char* hostname, uint16_t port);
 
 /**
+ * Dial connection using ATDT command
+ * dial_str should be formatted like "ATDT192.168.1.39:6400"
+ * Returns 0 on success
+ */
+uint8_t serial_dial(const char* dial_str);
+
+/**
  * Disconnect and reset ACIA
  */
 void serial_disconnect(void);
@@ -67,6 +74,7 @@ void serial_flush(void);
 /* Internal functions (implemented in ASM) */
 void __fastcall__ acia_init_hw(void);
 uint8_t __fastcall__ acia_send_at_command(const char* cmd);
+uint8_t acia_get_status(void);
 void acia_irq_handler(void);
 
 #endif /* SERIAL_H */
