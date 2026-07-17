@@ -10,4 +10,1258 @@
 	.importzp	sp, sreg, regsave, regbank
 	.importzp	tmp1, tmp2, tmp3, tmp4, ptr1, ptr2, ptr3, ptr4
 	.macpack	longbranch
+	.forceimport	__STARTUP__
+	.import		_memcpy
+	.import		_kbhit
+	.import		_cgetc
+	.import		_serial_available
+	.import		_serial_read
+	.import		_acia_init_hw
+	.import		_proto_init
+	.import		_proto_process_byte
+	.import		_proto_get_payload
+	.import		_proto_get_length
+	.import		_proto_send_message
+	.import		_proto_send_ping
+	.import		_proto_send_chat
+	.import		_proto_send_new_conversation
+	.import		_proto_send_list_conversations
+	.import		_proto_send_cancel
+	.import		_ascii_to_petscii
+	.import		_ascii_to_petscii_str
+	.import		_ui_init
+	.import		_ui_status
+	.import		_chat_start
+	.import		_chat_append_ascii
+	.import		_chat_append_ascii_char
+	.import		_chat_append_petscii
+	.import		_chat_finish
+	.import		_chat_clear
+	.import		_chat_scroll
+	.import		_chat_redraw
+	.import		_chat_area_clear_screen
+	.import		_ui_draw_row
+	.import		_editor_init
+	.import		_editor_clear
+	.import		_editor_key
+	.import		_editor_text
+	.import		_editor_len
+	.export		_main
+
+.segment	"DATA"
+
+_state:
+	.byte	$00
+_modal:
+	.byte	$00
+_pending_ack:
+	.byte	$00
+
+.segment	"RODATA"
+
+L0084:
+	.byte	$20,$C3,$4F,$4E,$56,$45,$52,$53,$41,$54,$49,$4F,$4E,$53,$20,$28
+	.byte	$52,$45,$54,$55,$52,$4E,$3D,$4C,$4F,$41,$44,$2C,$20,$46,$35,$3D
+	.byte	$43,$4C,$4F,$53,$45,$29,$00
+L01A2:
+	.byte	$C2,$55,$53,$59,$20,$2D,$20,$57,$41,$49,$54,$20,$4F,$52,$20,$50
+	.byte	$52,$45,$53,$53,$20,$C6,$33,$20,$54,$4F,$20,$43,$41,$4E,$43,$45
+	.byte	$4C,$2E,$00
+L004B:
+	.byte	$20,$20,$C6,$35,$20,$20,$20,$20,$20,$20,$20,$20,$20,$43,$4F,$4E
+	.byte	$56,$45,$52,$53,$41,$54,$49,$4F,$4E,$20,$42,$52,$4F,$57,$53,$45
+	.byte	$52,$00
+L021D:
+	.byte	$CE,$4F,$20,$53,$45,$52,$56,$45,$52,$20,$52,$45,$53,$50,$4F,$4E
+	.byte	$53,$45,$21,$20,$C3,$48,$45,$43,$4B,$20,$50,$52,$4F,$58,$59,$2E
+	.byte	$00
+L005D:
+	.byte	$20,$20,$43,$54,$52,$4C,$2D,$41,$2F,$45,$20,$20,$20,$53,$54,$41
+	.byte	$52,$54,$2F,$45,$4E,$44,$20,$4F,$46,$20,$49,$4E,$50,$55,$54,$00
+L022C:
+	.byte	$C3,$4F,$4E,$4E,$45,$43,$54,$45,$44,$20,$54,$4F,$20,$31,$39,$32
+	.byte	$2E,$31,$36,$38,$2E,$31,$2E,$33,$39,$3A,$36,$34,$30,$30,$00
+L003F:
+	.byte	$20,$20,$C6,$32,$20,$20,$20,$20,$20,$20,$20,$20,$20,$4E,$45,$57
+	.byte	$20,$43,$4F,$4E,$56,$45,$52,$53,$41,$54,$49,$4F,$4E,$00
+L01BD:
+	.byte	$D3,$54,$41,$52,$54,$49,$4E,$47,$20,$4E,$45,$57,$20,$43,$4F,$4E
+	.byte	$56,$45,$52,$53,$41,$54,$49,$4F,$4E,$2E,$2E,$2E,$00
+L013B:
+	.byte	$C3,$4F,$4E,$56,$45,$52,$53,$41,$54,$49,$4F,$4E,$20,$4C,$4F,$41
+	.byte	$44,$45,$44,$2E,$20,$D2,$45,$41,$44,$59,$2E,$00
+L0156:
+	.byte	$D2,$45,$43,$45,$49,$56,$49,$4E,$47,$2E,$2E,$2E,$20,$28,$C6,$33
+	.byte	$20,$54,$4F,$20,$43,$41,$4E,$43,$45,$4C,$29,$00
+L0075:
+	.byte	$20,$20,$53,$45,$52,$56,$45,$52,$3A,$20,$31,$39,$32,$2E,$31,$36
+	.byte	$38,$2E,$31,$2E,$33,$39,$3A,$36,$34,$30,$30,$00
+L0176:
+	.byte	$C5,$52,$52,$4F,$52,$20,$46,$52,$4F,$4D,$20,$53,$45,$52,$56,$45
+	.byte	$52,$2E,$20,$D2,$45,$41,$44,$59,$2E,$00
+L0039:
+	.byte	$20,$20,$C6,$31,$2F,$D2,$45,$54,$55,$52,$4E,$20,$20,$53,$45,$4E
+	.byte	$44,$20,$4D,$45,$53,$53,$41,$47,$45,$00
+L0235:
+	.byte	$D2,$45,$41,$44,$59,$2E,$20,$D4,$59,$50,$45,$20,$59,$4F,$55,$52
+	.byte	$20,$4D,$45,$53,$53,$41,$47,$45,$2E,$00
+L0045:
+	.byte	$20,$20,$C6,$33,$20,$20,$20,$20,$20,$20,$20,$20,$20,$43,$41,$4E
+	.byte	$43,$45,$4C,$20,$52,$45,$50,$4C,$59,$00
+L0164	:=	L0235+0
+L006F:
+	.byte	$20,$20,$43,$4C,$52,$2F,$48,$4F,$4D,$45,$20,$20,$20,$43,$4C,$45
+	.byte	$41,$52,$20,$49,$4E,$50,$55,$54,$00
+L0069:
+	.byte	$20,$20,$43,$54,$52,$4C,$2D,$44,$20,$20,$20,$20,$20,$44,$45,$4C
+	.byte	$45,$54,$45,$20,$43,$48,$41,$52,$00
+L0063:
+	.byte	$20,$20,$43,$54,$52,$4C,$2D,$4B,$20,$20,$20,$20,$20,$4B,$49,$4C
+	.byte	$4C,$20,$54,$4F,$20,$45,$4E,$44,$00
+L007B:
+	.byte	$20,$20,$50,$52,$45,$53,$53,$20,$41,$4E,$59,$20,$4B,$45,$59,$20
+	.byte	$54,$4F,$20,$43,$4C,$4F,$53,$45,$00
+L0057:
+	.byte	$20,$20,$43,$52,$53,$52,$20,$55,$50,$2F,$44,$4E,$20,$53,$43,$52
+	.byte	$4F,$4C,$4C,$20,$43,$48,$41,$54,$00
+L017E:
+	.byte	$CE,$45,$57,$20,$43,$4F,$4E,$56,$45,$52,$53,$41,$54,$49,$4F,$4E
+	.byte	$2E,$20,$D2,$45,$41,$44,$59,$2E,$00
+L00BC:
+	.byte	$CC,$4F,$41,$44,$49,$4E,$47,$20,$43,$4F,$4E,$56,$45,$52,$53,$41
+	.byte	$54,$49,$4F,$4E,$2E,$2E,$2E,$00
+L0033:
+	.byte	$20,$20,$C3,$36,$34,$20,$CC,$CC,$CD,$20,$43,$4C,$49,$45,$4E,$54
+	.byte	$20,$2D,$20,$48,$45,$4C,$50,$00
+L0051:
+	.byte	$20,$20,$C6,$37,$20,$20,$20,$20,$20,$20,$20,$20,$20,$54,$48,$49
+	.byte	$53,$20,$48,$45,$4C,$50,$00
+L0216:
+	.byte	$C3,$4F,$4E,$54,$41,$43,$54,$49,$4E,$47,$20,$53,$45,$52,$56,$45
+	.byte	$52,$2E,$2E,$2E,$00
+L0212:
+	.byte	$C9,$4E,$49,$54,$49,$41,$4C,$49,$5A,$49,$4E,$47,$20,$C1,$C3,$C9
+	.byte	$C1,$2E,$2E,$2E,$00
+L0184:
+	.byte	$C3,$41,$4E,$43,$45,$4C,$4C,$45,$44,$2E,$20,$D2,$45,$41,$44,$59
+	.byte	$2E,$00
+L0094:
+	.byte	$20,$20,$28,$4E,$4F,$4E,$45,$20,$46,$4F,$55,$4E,$44,$29,$00
+L01C6:
+	.byte	$C3,$41,$4E,$43,$45,$4C,$4C,$49,$4E,$47,$2E,$2E,$2E,$00
+L008C:
+	.byte	$20,$20,$4C,$4F,$41,$44,$49,$4E,$47,$2E,$2E,$2E,$00
+L01B4:
+	.byte	$D3,$45,$4E,$44,$49,$4E,$47,$2E,$2E,$2E,$00
+L016E:
+	.byte	$45,$52,$52,$4F,$52,$3A,$20,$00
+L01A9:
+	.byte	$3E,$20,$00
+L0129	:=	L01A9+0
+
+.segment	"BSS"
+
+_proto:
+	.res	11,$00
+_payload_buffer:
+	.res	512,$00
+_convs:
+	.res	697,$00
+_conv_count:
+	.res	1,$00
+_conv_sel:
+	.res	1,$00
+_conv_loading:
+	.res	1,$00
+
+; ---------------------------------------------------------------
+; void __near__ pump_serial (void)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_pump_serial: near
+
+.segment	"BSS"
+
+L0194:
+	.res	1,$00
+
+.segment	"CODE"
+
+	jmp     L0198
+L0190:	lda     #<(_proto)
+	ldx     #>(_proto)
+	jsr     pushax
+	jsr     _serial_read
+	jsr     _proto_process_byte
+	sta     L0194
+	lda     L0194
+	beq     L0198
+	cmp     #$FE
+	beq     L0198
+	jsr     _handle_message
+L0198:	jsr     _serial_available
+	tax
+	bne     L0190
+	rts
+
+.endproc
+
+; ---------------------------------------------------------------
+; unsigned char __near__ wait_for_ack (unsigned int)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_wait_for_ack: near
+
+.segment	"BSS"
+
+L0010:
+	.res	2,$00
+L0011:
+	.res	1,$00
+
+.segment	"CODE"
+
+	jsr     pushax
+	lda     #$00
+	sta     L0010
+	sta     L0010+1
+L0012:	lda     L0010
+	ldy     #$00
+	cmp     (sp),y
+	lda     L0010+1
+	iny
+	sbc     (sp),y
+	bcc     L001F
+	jmp     L0013
+L001B:	lda     #<(_proto)
+	ldx     #>(_proto)
+	jsr     pushax
+	jsr     _serial_read
+	jsr     _proto_process_byte
+	cmp     #$40
+	bne     L001F
+	ldx     #$00
+	lda     #$01
+	jmp     incsp2
+L001F:	jsr     _serial_available
+	tax
+	bne     L001B
+	sta     L0011
+L0242:	lda     L0011
+	cmp     #$C8
+	bcs     L0014
+	inc     L0011
+	jmp     L0242
+L0014:	inc     L0010
+	bne     L0012
+	inc     L0010+1
+	jmp     L0012
+L0013:	ldx     #$00
+	txa
+	jmp     incsp2
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ help_open (void)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_help_open: near
+
+.segment	"CODE"
+
+	lda     #$02
+	sta     _modal
+	jsr     _chat_area_clear_screen
+	lda     #$02
+	jsr     pusha
+	lda     #<(L0033)
+	ldx     #>(L0033)
+	jsr     pushax
+	lda     #$01
+	jsr     pusha
+	lda     #$00
+	jsr     _ui_draw_row
+	lda     #$04
+	jsr     pusha
+	lda     #<(L0039)
+	ldx     #>(L0039)
+	jsr     pushax
+	lda     #$03
+	jsr     pusha
+	lda     #$00
+	jsr     _ui_draw_row
+	lda     #$05
+	jsr     pusha
+	lda     #<(L003F)
+	ldx     #>(L003F)
+	jsr     pushax
+	lda     #$03
+	jsr     pusha
+	lda     #$00
+	jsr     _ui_draw_row
+	lda     #$06
+	jsr     pusha
+	lda     #<(L0045)
+	ldx     #>(L0045)
+	jsr     pushax
+	lda     #$03
+	jsr     pusha
+	lda     #$00
+	jsr     _ui_draw_row
+	lda     #$07
+	jsr     pusha
+	lda     #<(L004B)
+	ldx     #>(L004B)
+	jsr     pushax
+	lda     #$03
+	jsr     pusha
+	lda     #$00
+	jsr     _ui_draw_row
+	lda     #$08
+	jsr     pusha
+	lda     #<(L0051)
+	ldx     #>(L0051)
+	jsr     pushax
+	lda     #$03
+	jsr     pusha
+	lda     #$00
+	jsr     _ui_draw_row
+	lda     #$0A
+	jsr     pusha
+	lda     #<(L0057)
+	ldx     #>(L0057)
+	jsr     pushax
+	lda     #$03
+	jsr     pusha
+	lda     #$00
+	jsr     _ui_draw_row
+	lda     #$0B
+	jsr     pusha
+	lda     #<(L005D)
+	ldx     #>(L005D)
+	jsr     pushax
+	lda     #$03
+	jsr     pusha
+	lda     #$00
+	jsr     _ui_draw_row
+	lda     #$0C
+	jsr     pusha
+	lda     #<(L0063)
+	ldx     #>(L0063)
+	jsr     pushax
+	lda     #$03
+	jsr     pusha
+	lda     #$00
+	jsr     _ui_draw_row
+	lda     #$0D
+	jsr     pusha
+	lda     #<(L0069)
+	ldx     #>(L0069)
+	jsr     pushax
+	lda     #$03
+	jsr     pusha
+	lda     #$00
+	jsr     _ui_draw_row
+	lda     #$0E
+	jsr     pusha
+	lda     #<(L006F)
+	ldx     #>(L006F)
+	jsr     pushax
+	lda     #$03
+	jsr     pusha
+	lda     #$00
+	jsr     _ui_draw_row
+	lda     #$10
+	jsr     pusha
+	lda     #<(L0075)
+	ldx     #>(L0075)
+	jsr     pushax
+	lda     #$0C
+	jsr     pusha
+	lda     #$00
+	jsr     _ui_draw_row
+	lda     #$12
+	jsr     pusha
+	lda     #<(L007B)
+	ldx     #>(L007B)
+	jsr     pushax
+	lda     #$01
+	jsr     pusha
+	lda     #$00
+	jmp     _ui_draw_row
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ conv_draw (void)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_conv_draw: near
+
+.segment	"BSS"
+
+L0080:
+	.res	1,$00
+
+.segment	"CODE"
+
+	jsr     _chat_area_clear_screen
+	lda     #$01
+	jsr     pusha
+	lda     #<(L0084)
+	ldx     #>(L0084)
+	jsr     pushax
+	lda     #$01
+	jsr     pusha
+	lda     #$00
+	jsr     _ui_draw_row
+	lda     _conv_loading
+	beq     L0088
+	lda     #$03
+	jsr     pusha
+	lda     #<(L008C)
+	ldx     #>(L008C)
+	jsr     pushax
+	lda     #$0C
+	jsr     pusha
+	lda     #$00
+	jmp     _ui_draw_row
+L0088:	lda     _conv_count
+	bne     L0244
+	lda     #$03
+	jsr     pusha
+	lda     #<(L0094)
+	ldx     #>(L0094)
+	jsr     pushax
+	lda     #$0C
+	jsr     pusha
+	lda     #$00
+	jmp     _ui_draw_row
+L0244:	lda     #$00
+	sta     L0080
+L0245:	lda     L0080
+	cmp     _conv_count
+	bcs     L0099
+	clc
+	adc     #$02
+	jsr     pusha
+	lda     L0080
+	jsr     pusha0
+	lda     #$29
+	jsr     tosmula0
+	clc
+	adc     #<(_convs)
+	tay
+	txa
+	adc     #>(_convs)
+	tax
+	tya
+	jsr     incax4
+	jsr     pushax
+	lda     #$03
+	jsr     pusha
+	lda     _conv_sel
+	cmp     L0080
+	jsr     booleq
+	jsr     _ui_draw_row
+	inc     L0080
+	jmp     L0245
+L0099:	rts
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ conv_open (void)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_conv_open: near
+
+.segment	"CODE"
+
+	lda     #$01
+	sta     _modal
+	lda     #$00
+	sta     _conv_count
+	sta     _conv_sel
+	lda     #$01
+	sta     _conv_loading
+	jsr     _conv_draw
+	jmp     _proto_send_list_conversations
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ conv_close (void)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_conv_close: near
+
+.segment	"CODE"
+
+	lda     #$00
+	sta     _modal
+	jmp     _chat_redraw
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ conv_load_selected (void)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_conv_load_selected: near
+
+.segment	"BSS"
+
+L00B6:
+	.res	4,$00
+
+.segment	"CODE"
+
+	lda     _conv_sel
+	jsr     pusha0
+	lda     #$29
+	jsr     tosmula0
+	clc
+	adc     #<(_convs)
+	tay
+	txa
+	adc     #>(_convs)
+	tax
+	tya
+	jsr     ldeaxi
+	sta     L00B6
+	stx     L00B6+1
+	ldy     sreg
+	sty     L00B6+2
+	ldy     sreg+1
+	sty     L00B6+3
+	jsr     _conv_close
+	jsr     _chat_clear
+	lda     #<(L00BC)
+	ldx     #>(L00BC)
+	jsr     _ui_status
+	lda     #$34
+	jsr     pusha
+	lda     #<(L00B6)
+	ldx     #>(L00B6)
+	jsr     pushax
+	ldx     #$00
+	lda     #$04
+	jmp     _proto_send_message
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ conv_list_frame (void)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_conv_list_frame: near
+
+.segment	"BSS"
+
+L00C3:
+	.res	2,$00
+L00C6:
+	.res	2,$00
+L00C9:
+	.res	1,$00
+L00CC:
+	.res	1,$00
+L00CF:
+	.res	2,$00
+L00D1:
+	.res	1,$00
+L00DC:
+	.res	2,$00
+L00DF:
+	.res	1,$00
+
+.segment	"CODE"
+
+	lda     #<(_proto)
+	ldx     #>(_proto)
+	jsr     _proto_get_payload
+	sta     L00C3
+	stx     L00C3+1
+	lda     #<(_proto)
+	ldx     #>(_proto)
+	jsr     _proto_get_length
+	sta     L00C6
+	stx     L00C6+1
+	lda     L00C3+1
+	sta     ptr1+1
+	lda     L00C3
+	sta     ptr1
+	ldy     #$00
+	lda     (ptr1),y
+	sta     L00C9
+	lda     L00C3+1
+	sta     ptr1+1
+	lda     L00C3
+	sta     ptr1
+	iny
+	lda     (ptr1),y
+	sta     L00CC
+	ldx     #$00
+	lda     #$02
+	sta     L00CF
+	stx     L00CF+1
+	stx     L00D1
+L024A:	lda     L00D1
+	cmp     L00C9
+	jcs     L00D3
+	lda     _conv_count
+	cmp     #$11
+	jcs     L00D3
+	lda     L00CF
+	ldx     L00CF+1
+	jsr     incax8
+	cmp     L00C6
+	txa
+	sbc     L00C6+1
+	jcs     L00D3
+	lda     _conv_count
+	jsr     pusha0
+	lda     #$29
+	jsr     tosmula0
+	clc
+	adc     #<(_convs)
+	sta     L00DC
+	txa
+	adc     #>(_convs)
+	sta     L00DC+1
+	lda     #$00
+	sta     L00DF
+	lda     L00DC
+	ldx     L00DC+1
+	jsr     pushax
+	lda     L00C3
+	clc
+	adc     L00CF
+	pha
+	lda     L00C3+1
+	adc     L00CF+1
+	tax
+	pla
+	jsr     pushax
+	ldx     #$00
+	lda     #$04
+	jsr     _memcpy
+	lda     #$08
+	clc
+	adc     L00CF
+	sta     L00CF
+	bcc     L00EA
+	inc     L00CF+1
+	jmp     L00EA
+L00E8:	lda     L00DC
+	ldx     L00DC+1
+	jsr     incax4
+	sta     ptr1
+	stx     ptr1+1
+	lda     L00DF
+	inc     L00DF
+	clc
+	adc     ptr1
+	ldx     ptr1+1
+	bcc     L0247
+	inx
+L0247:	jsr     pushax
+	lda     L00C3
+	ldx     L00C3+1
+	jsr     pushax
+	lda     L00CF
+	ldx     L00CF+1
+	sta     regsave
+	stx     regsave+1
+	jsr     incax1
+	sta     L00CF
+	stx     L00CF+1
+	lda     regsave
+	ldx     regsave+1
+	jsr     tosaddax
+	sta     ptr1
+	stx     ptr1+1
+	ldy     #$00
+	lda     (ptr1),y
+	jsr     _ascii_to_petscii
+	ldy     #$00
+	jsr     staspidx
+L00EA:	lda     L00CF
+	cmp     L00C6
+	lda     L00CF+1
+	sbc     L00C6+1
+	bcs     L0249
+	lda     L00C3
+	clc
+	adc     L00CF
+	sta     ptr1
+	lda     L00C3+1
+	adc     L00CF+1
+	sta     ptr1+1
+	ldy     #$00
+	lda     (ptr1),y
+	beq     L0249
+	lda     L00DF
+	cmp     #$24
+	bcc     L00E8
+L0249:	lda     L00DC
+	ldx     L00DC+1
+	jsr     incax4
+	clc
+	adc     L00DF
+	bcc     L0246
+	inx
+L0246:	sta     ptr1
+	stx     ptr1+1
+	lda     #$00
+	tay
+	sta     (ptr1),y
+	inc     L00CF
+	bne     L00F9
+	inc     L00CF+1
+L00F9:	inc     _conv_count
+	inc     L00D1
+	jmp     L024A
+L00D3:	lda     L00CC
+	beq     L0252
+	lda     _conv_count
+	cmp     #$11
+	bcc     L0251
+	lda     #$00
+L0252:	sta     _conv_loading
+L0251:	lda     _modal
+	cmp     #$01
+	jeq     _conv_draw
+	rts
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ conv_data_frame (void)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_conv_data_frame: near
+
+.segment	"BSS"
+
+L0104:
+	.res	2,$00
+L0107:
+	.res	2,$00
+L010A:
+	.res	1,$00
+L010D:
+	.res	1,$00
+L0110:
+	.res	2,$00
+L0112:
+	.res	1,$00
+L011D:
+	.res	1,$00
+
+.segment	"CODE"
+
+	lda     #<(_proto)
+	ldx     #>(_proto)
+	jsr     _proto_get_payload
+	sta     L0104
+	stx     L0104+1
+	lda     #<(_proto)
+	ldx     #>(_proto)
+	jsr     _proto_get_length
+	sta     L0107
+	stx     L0107+1
+	lda     L0104+1
+	sta     ptr1+1
+	lda     L0104
+	sta     ptr1
+	ldy     #$00
+	lda     (ptr1),y
+	sta     L010A
+	lda     L0104+1
+	sta     ptr1+1
+	lda     L0104
+	sta     ptr1
+	iny
+	lda     (ptr1),y
+	sta     L010D
+	ldx     #$00
+	lda     #$02
+	sta     L0110
+	stx     L0110+1
+	stx     L0112
+L0255:	lda     L0112
+	cmp     L010A
+	jcs     L0114
+	lda     L0110
+	cmp     L0107
+	lda     L0110+1
+	sbc     L0107+1
+	jcs     L0114
+	lda     L0104
+	ldx     L0104+1
+	jsr     pushax
+	lda     L0110
+	ldx     L0110+1
+	sta     regsave
+	stx     regsave+1
+	jsr     incax1
+	sta     L0110
+	stx     L0110+1
+	lda     regsave
+	ldx     regsave+1
+	jsr     tosaddax
+	sta     ptr1
+	stx     ptr1+1
+	ldy     #$00
+	lda     (ptr1),y
+	sta     L011D
+	lda     L011D
+	beq     L0258
+	lda     #$01
+L0258:	jsr     _chat_start
+	lda     L011D
+	bne     L012D
+	lda     #<(L0129)
+	ldx     #>(L0129)
+	jsr     _chat_append_petscii
+	jmp     L012D
+L012B:	lda     L0104
+	ldx     L0104+1
+	jsr     pushax
+	lda     L0110
+	ldx     L0110+1
+	sta     regsave
+	stx     regsave+1
+	jsr     incax1
+	sta     L0110
+	stx     L0110+1
+	lda     regsave
+	ldx     regsave+1
+	jsr     tosaddax
+	sta     ptr1
+	stx     ptr1+1
+	ldy     #$00
+	lda     (ptr1),y
+	jsr     _chat_append_ascii_char
+L012D:	lda     L0110
+	cmp     L0107
+	lda     L0110+1
+	sbc     L0107+1
+	bcs     L0254
+	lda     L0104
+	clc
+	adc     L0110
+	sta     ptr1
+	lda     L0104+1
+	adc     L0110+1
+	sta     ptr1+1
+	ldy     #$00
+	lda     (ptr1),y
+	bne     L012B
+L0254:	inc     L0110
+	bne     L0136
+	inc     L0110+1
+L0136:	jsr     _chat_finish
+	inc     L0112
+	jmp     L0255
+L0114:	lda     L010D
+	bne     L0138
+	lda     #<(L013B)
+	ldx     #>(L013B)
+	jmp     _ui_status
+L0138:	rts
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ handle_message (unsigned char)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_handle_message: near
+
+.segment	"BSS"
+
+L0143:
+	.res	2,$00
+L014C:
+	.res	2,$00
+L0168:
+	.res	2,$00
+
+.segment	"CODE"
+
+	jsr     pusha
+	ldy     #$00
+	lda     (sp),y
+	cmp     #$40
+	jeq     L025C
+	cmp     #$50
+	beq     L014B
+	cmp     #$51
+	beq     L025B
+	cmp     #$52
+	jeq     L0167
+	cmp     #$53
+	jeq     L0189
+	cmp     #$54
+	jeq     L018C
+	cmp     #$55
+	beq     L025F
+	jmp     incsp1
+L025F:	lda     #<(_proto)
+	ldx     #>(_proto)
+	jsr     _proto_get_payload
+	sta     L0143
+	stx     L0143+1
+	jsr     _ascii_to_petscii_str
+	lda     L0143
+	ldx     L0143+1
+	jsr     _ui_status
+	jmp     incsp1
+L014B:	lda     #<(_proto)
+	ldx     #>(_proto)
+	jsr     _proto_get_payload
+	sta     L014C
+	stx     L014C+1
+	lda     _state
+	cmp     #$02
+	beq     L014F
+	lda     #$02
+	sta     _state
+	lda     #$01
+	jsr     _chat_start
+	lda     #<(L0156)
+	ldx     #>(L0156)
+	jsr     _ui_status
+L014F:	lda     L014C
+	ldx     L014C+1
+	jsr     incax1
+	jsr     _chat_append_ascii
+	jsr     _chat_redraw
+	jmp     incsp1
+L025B:	lda     _state
+	beq     L0140
+	jsr     _chat_finish
+	lda     #$00
+	sta     _state
+	lda     #<(L0164)
+	ldx     #>(L0164)
+	jsr     _ui_status
+	jmp     incsp1
+L0167:	lda     #<(_proto)
+	ldx     #>(_proto)
+	jsr     _proto_get_payload
+	sta     L0168
+	stx     L0168+1
+	lda     #$02
+	jsr     _chat_start
+	lda     #<(L016E)
+	ldx     #>(L016E)
+	jsr     _chat_append_petscii
+	lda     L0168
+	ldx     L0168+1
+	jsr     _chat_append_ascii
+	jsr     _chat_finish
+	lda     #$00
+	sta     _state
+	lda     #<(L0176)
+	ldx     #>(L0176)
+	jsr     _ui_status
+	jmp     incsp1
+L025C:	lda     _pending_ack
+	cmp     #$01
+	bne     L025D
+	jsr     _chat_clear
+	lda     #<(L017E)
+	ldx     #>(L017E)
+	jmp     L025A
+L025D:	lda     _pending_ack
+	cmp     #$02
+	bne     L025E
+	lda     #<(L0184)
+	ldx     #>(L0184)
+L025A:	jsr     _ui_status
+L025E:	lda     #$00
+	sta     _pending_ack
+	jmp     incsp1
+L0189:	jsr     _conv_list_frame
+	jmp     incsp1
+L018C:	jsr     _conv_data_frame
+	jmp     incsp1
+L0140:	jmp     incsp1
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ send_message (void)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_send_message: near
+
+.segment	"CODE"
+
+	lda     _state
+	beq     L019F
+	lda     #<(L01A2)
+	ldx     #>(L01A2)
+	jmp     _ui_status
+L019F:	jsr     _editor_len
+	cmp     #$00
+	beq     L019E
+	lda     #$00
+	jsr     _chat_start
+	lda     #<(L01A9)
+	ldx     #>(L01A9)
+	jsr     _chat_append_petscii
+	jsr     _editor_text
+	jsr     _chat_append_petscii
+	jsr     _chat_finish
+	jsr     _editor_text
+	jsr     _proto_send_chat
+	jsr     _editor_clear
+	lda     #$01
+	sta     _state
+	lda     #<(L01B4)
+	ldx     #>(L01B4)
+	jmp     _ui_status
+L019E:	rts
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ new_conversation (void)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_new_conversation: near
+
+.segment	"CODE"
+
+	lda     _state
+	bne     L01B6
+	lda     #$01
+	sta     _pending_ack
+	jsr     _proto_send_new_conversation
+	lda     #<(L01BD)
+	ldx     #>(L01BD)
+	jmp     _ui_status
+L01B6:	rts
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ cancel_stream (void)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_cancel_stream: near
+
+.segment	"CODE"
+
+	lda     _state
+	beq     L01BF
+	lda     #$02
+	sta     _pending_ack
+	jsr     _proto_send_cancel
+	lda     #<(L01C6)
+	ldx     #>(L01C6)
+	jmp     _ui_status
+L01BF:	rts
+
+.endproc
+
+; ---------------------------------------------------------------
+; void __near__ handle_key (unsigned char)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_handle_key: near
+
+.segment	"CODE"
+
+	jsr     pusha
+	lda     _modal
+	cmp     #$02
+	bne     L0260
+	lda     #$00
+	sta     _modal
+	jsr     _chat_redraw
+	jmp     incsp1
+L0260:	lda     _modal
+	cmp     #$01
+	bne     L01CE
+	ldx     #$00
+	lda     (sp,x)
+	cmp     #$03
+	beq     L01E5
+	cmp     #$0D
+	beq     L01E0
+	cmp     #$11
+	beq     L0261
+	cmp     #$87
+	beq     L01E5
+	cmp     #$91
+	beq     L0264
+	jmp     incsp1
+L0264:	lda     _conv_sel
+	bne     L0265
+	jmp     incsp1
+L0265:	dec     _conv_sel
+	jsr     _conv_draw
+	jmp     incsp1
+L0261:	lda     _conv_sel
+	jsr     incax1
+	cmp     _conv_count
+	txa
+	sbc     #$00
+	bcs     L01EB
+	inc     _conv_sel
+	jsr     _conv_draw
+	jmp     incsp1
+L01E0:	lda     _conv_count
+	beq     L01EB
+	jsr     _conv_load_selected
+	jmp     incsp1
+L01E5:	jsr     _conv_close
+	jmp     incsp1
+L01CE:	ldy     #$00
+	lda     (sp),y
+	cmp     #$0D
+	beq     L01ED
+	cmp     #$11
+	beq     L0204
+	cmp     #$85
+	beq     L01ED
+	cmp     #$86
+	beq     L01F5
+	cmp     #$87
+	beq     L0262
+	cmp     #$88
+	beq     L01FD
+	cmp     #$89
+	beq     L01F2
+	cmp     #$91
+	beq     L0200
+	jmp     L0263
+L01ED:	jsr     _send_message
+	jmp     incsp1
+L01F2:	jsr     _new_conversation
+	jmp     incsp1
+L01F5:	jsr     _cancel_stream
+	jmp     incsp1
+L0262:	lda     _state
+	bne     L01EB
+	jsr     _conv_open
+	jmp     incsp1
+L01FD:	jsr     _help_open
+	jmp     incsp1
+L0200:	lda     #$01
+	jsr     _chat_scroll
+	jmp     incsp1
+L0204:	lda     #$FF
+	jsr     _chat_scroll
+	jmp     incsp1
+L0263:	lda     (sp),y
+	jsr     _editor_key
+L01EB:	jmp     incsp1
+
+.endproc
+
+; ---------------------------------------------------------------
+; int __near__ main (void)
+; ---------------------------------------------------------------
+
+.segment	"CODE"
+
+.proc	_main: near
+
+.segment	"CODE"
+
+	lda     #<(_proto)
+	ldx     #>(_proto)
+	jsr     pushax
+	lda     #<(_payload_buffer)
+	ldx     #>(_payload_buffer)
+	jsr     pushax
+	ldx     #$02
+	lda     #$00
+	jsr     _proto_init
+	jsr     _ui_init
+	jsr     _editor_init
+	lda     #<(L0212)
+	ldx     #>(L0212)
+	jsr     _ui_status
+	jsr     _acia_init_hw
+	lda     #<(L0216)
+	ldx     #>(L0216)
+	jsr     _ui_status
+	jsr     _proto_send_ping
+	ldx     #$1F
+	lda     #$40
+	jsr     _wait_for_ack
+	tax
+	bne     L0220
+	lda     #<(L021D)
+	ldx     #>(L021D)
+	jsr     _ui_status
+L0222:	jsr     _kbhit
+	tax
+	beq     L0222
+	jsr     _cgetc
+	jmp     L0222
+L0220:	jsr     _proto_send_new_conversation
+	ldx     #$0F
+	lda     #$A0
+	jsr     _wait_for_ack
+	lda     #$02
+	jsr     _chat_start
+	lda     #<(L022C)
+	ldx     #>(L022C)
+	jsr     _chat_append_petscii
+	jsr     _chat_finish
+	jmp     L0231
+L022F:	jsr     _cgetc
+L0231:	jsr     _kbhit
+	tax
+	bne     L022F
+	lda     #<(L0235)
+	ldx     #>(L0235)
+	jsr     _ui_status
+L023A:	jsr     _pump_serial
+	jsr     _kbhit
+	tax
+	beq     L023A
+	jsr     _cgetc
+	jsr     _handle_key
+	jmp     L023A
+
+.endproc
 

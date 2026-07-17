@@ -639,22 +639,22 @@ int main(void) {
         for (i = 0; i < 30000; i++);
     }
     show_status("Test complete! Press any key...");
-    while (kbhit()) cgetc();  /* drop leftover autostart keystrokes */
-    cgetc();
-    goto cleanup;
+    goto park;
 
 error:
     {
         uint16_t i;
         for (i = 0; i < 30000; i++);
     }
-    cputs("\n\nPress any key to exit...");
-    while (kbhit()) cgetc();
-    cgetc();
+    cputs("\n\nDone (diagnostic build).");
 
-cleanup:
-    serial_disconnect();
-    clrscr();
+park:
+    /* Park forever so the final screen stays up for the test harness
+       (and for humans reading the diagnostics). Stray keystrokes from
+       autostart must not blank the screen - reset to exit. */
+    for (;;) {
+        if (kbhit()) cgetc();
+    }
     return 0;
 }
 
