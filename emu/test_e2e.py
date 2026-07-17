@@ -317,6 +317,14 @@ def main():
                 wait_for_screen(monitor, r'number\s+60', 15,
                                 artifacts, f'{tag}-pagedown')
 
+                # Long input: 260 chars scrolls the editor viewport and
+                # sends as a single frame (would have been cut at 120)
+                monitor.keyboard_feed('say ok: ' + 'x' * 252 + '\r')
+                wait_for_screen(monitor, r'x{60}', 60,
+                                artifacts, f'{tag}-longinput')
+                wait_ready(monitor, args.timeout, artifacts,
+                           f'{tag}-longinput-done')
+
                 # F1 menu -> M -> model browser -> select second model
                 monitor.keyboard_feed_petscii(b'\x85')  # F1
                 wait_for_screen(monitor, r'select model', 15,

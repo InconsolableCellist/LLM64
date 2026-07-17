@@ -180,18 +180,30 @@ void proto_send_ping(void) {
     proto_send_message(MSG_PING, NULL, 0);
 }
 
-/* Send a message whose payload is PETSCII text, converted to ASCII */
+/* Send a message whose payload is PETSCII text, converted to ASCII.
+   Streams straight from the source (no temp buffer), so text can be as
+   long as the server accepts (2KB) - the editor allows 960 chars. */
 void proto_send_text(uint8_t msg_type, const char* text) {
-    uint16_t len = strlen(text);
+    uint16_t n = strlen(text);
+    uint16_t len = n + 1;  /* include the null terminator */
     uint16_t i;
-    uint8_t buffer[256];  /* Temporary buffer */
+    uint8_t b;
+    uint8_t crc;
 
-    for (i = 0; i < len; i++) {
-        buffer[i] = petscii_to_ascii((uint8_t)text[i]);
+    crc = msg_type ^ (len & 0xFF) ^ ((len >> 8) & 0xFF);
+
+    serial_write(SYNC_BYTE);
+    serial_write(msg_type);
+    serial_write((len & 0xFF) + 0x20);
+    serial_write(((len >> 8) & 0xFF) + 0x20);
+    for (i = 0; i < n; i++) {
+        b = petscii_to_ascii((uint8_t)text[i]);
+        serial_write(b);
+        crc ^= b;
     }
-    buffer[len] = 0;
-
-    proto_send_message(msg_type, buffer, len + 1);
+    serial_write(0);
+    serial_write(crc);
+    serial_flush();
 }
 
 /* Helper: Send chat message (converts PETSCII text to ASCII for the wire) */

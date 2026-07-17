@@ -156,9 +156,14 @@ class ViceMonitor:
                                          for c in text.encode('ascii')))
 
     def keyboard_feed_petscii(self, data):
-        """Feed raw PETSCII bytes (e.g. b'\\x88' for F7)."""
-        self._transact(CMD_KEYBOARD_FEED, bytes([len(data)]) + data)
-        self.resume()
+        """Feed raw PETSCII bytes (e.g. b'\\x88' for F7). The command's
+        length field is one byte, so long inputs are sent in chunks."""
+        for i in range(0, len(data), 32):
+            piece = data[i:i + 32]
+            self._transact(CMD_KEYBOARD_FEED, bytes([len(piece)]) + piece)
+            self.resume()
+            if len(data) > 32:
+                time.sleep(0.35)  # let the emulated KERNAL drain the queue
 
     def quit(self):
         """Ask VICE to exit (triggers -exitscreenshot if configured)."""

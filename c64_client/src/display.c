@@ -257,6 +257,7 @@ static void draw_scroll_pct(void) {
     }
     {
         static uint8_t full[TEXT_COLS];
+        memset(full, 0x20 | 0x80, TEXT_COLS);  /* span rounds to pairs */
         memcpy(full + TEXT_COLS - 5, cells, 5);
         ui_blit_span(0, full, TEXT_COLS - 5, 5);
     }

@@ -7,7 +7,7 @@
 
 #include "common.h"
 
-#define EDIT_MAX 120
+#define EDIT_MAX 960
 
 void editor_init(void);
 void editor_clear(void);
@@ -17,7 +17,7 @@ uint8_t editor_key(uint8_t key);
 
 /* Current text (PETSCII, null-terminated) and length */
 char* editor_text(void);
-uint8_t editor_len(void);
+uint16_t editor_len(void);
 
 void editor_redraw(void);
 

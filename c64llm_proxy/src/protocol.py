@@ -180,8 +180,14 @@ class ProtocolHandler:
             else:
                 self.logger.warning(f"Unknown message type: 0x{self.msg_type:02X}")
 
-        except ValueError:
-            self.logger.error(f"Invalid message type: 0x{self.msg_type:02X}")
+        except ValueError as e:
+            if 'is not a valid MessageType' in str(e):
+                self.logger.error(
+                    f"Invalid message type: 0x{self.msg_type:02X}")
+            else:
+                self.logger.error("Handler error", exc_info=True)
+        except Exception:
+            self.logger.error("Handler error", exc_info=True)
 
     async def send_message(self, msg_type: MessageType, payload: bytes = b''):
         """Send a protocol message"""
@@ -197,9 +203,10 @@ class ProtocolHandler:
         frame = bytearray()
         frame.append(self.SYNC_BYTE)
         frame.append(msg_type)
-        # Encode length bytes (add 0x20 to avoid NUL bytes for IP232/Telnet compatibility)
-        frame.append((len(payload) & 0xFF) + 0x20)
-        frame.append(((len(payload) >> 8) & 0xFF) + 0x20)
+        # Encode length bytes (+0x20, wrapped: reduces NUL bytes for
+        # IP232/Telnet; the decoder subtracts with uint8 wrap-around)
+        frame.append(((len(payload) & 0xFF) + 0x20) & 0xFF)
+        frame.append((((len(payload) >> 8) & 0xFF) + 0x20) & 0xFF)
         frame.extend(payload)
 
         # Calculate and append CRC

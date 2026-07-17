@@ -1,158 +1,202 @@
-2026-07-17 12:54:12 - __main__ - INFO - ============================================================
-2026-07-17 12:54:12 - __main__ - INFO - C64 LLM Proxy Server v0.1.0
-2026-07-17 12:54:12 - __main__ - INFO - ============================================================
-2026-07-17 12:54:12 - __main__ - INFO - API Endpoint: https://mlboy.tail99c274.ts.net:5000/v1
-2026-07-17 12:54:12 - __main__ - INFO - Model: gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 12:54:12 - __main__ - INFO - Data Directory: ./data
-2026-07-17 12:54:12 - __main__ - INFO - Starting server on 0.0.0.0:6400
-2026-07-17 12:54:12 - __main__ - INFO - Press Ctrl+C to stop
-2026-07-17 12:54:12 - __main__ - INFO - ============================================================
-2026-07-17 12:54:12 - src.tcp_server - INFO - Server listening on 0.0.0.0:6400
-2026-07-17 12:54:12 - src.tcp_server - INFO - Waiting for C64 clients...
-2026-07-17 14:12:51 - Client-1 - INFO - Client connected from ('192.168.1.64', 52432)
-2026-07-17 14:12:55 - src.protocol - INFO - Received: PING (length=0)
-2026-07-17 14:12:55 - src.protocol - INFO - Received: NEW_CONVERSATION (length=0)
-2026-07-17 14:12:55 - src.protocol - INFO - New conversation request
-2026-07-17 14:12:55 - ConversationManager-1 - INFO - Started new conversation: 1784319175
-2026-07-17 14:15:25 - src.protocol - INFO - Received: LIST_MODELS (length=0)
-2026-07-17 14:15:25 - httpx - INFO - HTTP Request: GET https://mlboy.tail99c274.ts.net:5000/v1/models "HTTP/1.1 200 OK"
-2026-07-17 14:15:29 - src.protocol - INFO - Received: SET_MODEL (length=35)
-2026-07-17 14:15:29 - httpx - INFO - HTTP Request: GET https://mlboy.tail99c274.ts.net:5000/v1/models "HTTP/1.1 200 OK"
-2026-07-17 14:15:29 - src.protocol - INFO - Model -> gemma4-26b-a4b-it-heretic-q4-mlboy
-2026-07-17 14:15:39 - src.protocol - INFO - Received: CHAT_REQUEST (length=16)
-2026-07-17 14:15:39 - src.protocol - INFO - Chat request: what's up derp!...
-2026-07-17 14:15:39 - src.api_client - INFO - Streaming chat completion: 2 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:15:39 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:15:40 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319175.json
-2026-07-17 14:15:40 - src.protocol - INFO - Response complete: 77 bytes
-2026-07-17 14:22:34 - src.protocol - INFO - Received: CHAT_REQUEST (length=11)
-2026-07-17 14:22:34 - src.protocol - INFO - Chat request: /adventure...
-2026-07-17 14:22:34 - ConversationManager-1 - INFO - Started new conversation: 1784319754
-2026-07-17 14:22:34 - src.protocol - INFO - Mode -> Text adventure
-2026-07-17 14:22:34 - src.api_client - INFO - Streaming chat completion: 2 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:22:34 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:22:36 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:22:36 - src.protocol - INFO - Response complete: 362 bytes
-2026-07-17 14:22:44 - src.protocol - INFO - Received: CHAT_REQUEST (length=14)
-2026-07-17 14:22:44 - src.protocol - INFO - Chat request: eat the cell....
-2026-07-17 14:22:44 - src.api_client - INFO - Streaming chat completion: 3 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:22:44 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:22:45 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:22:45 - src.protocol - INFO - Response complete: 283 bytes
-2026-07-17 14:22:57 - src.protocol - INFO - Received: CHAT_REQUEST (length=30)
-2026-07-17 14:22:57 - src.protocol - INFO - Chat request: make the cell undergo mitosis...
-2026-07-17 14:22:57 - src.api_client - INFO - Streaming chat completion: 5 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:22:57 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:22:58 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:22:58 - src.protocol - INFO - Response complete: 379 bytes
-2026-07-17 14:23:17 - src.protocol - INFO - Received: CHAT_REQUEST (length=42)
-2026-07-17 14:23:17 - src.protocol - INFO - Chat request: pick up the small piece of mortar and cry...
-2026-07-17 14:23:17 - src.api_client - INFO - Streaming chat completion: 7 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:23:17 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:23:19 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:23:19 - src.protocol - INFO - Response complete: 363 bytes
-2026-07-17 14:23:47 - src.protocol - INFO - Received: CHAT_REQUEST (length=42)
-2026-07-17 14:23:47 - src.protocol - INFO - Chat request: sit and reflect upon the spells i learned...
-2026-07-17 14:23:47 - src.api_client - INFO - Streaming chat completion: 9 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:23:47 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:23:49 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:23:49 - src.protocol - INFO - Response complete: 360 bytes
-2026-07-17 14:24:27 - src.protocol - INFO - Received: CHAT_REQUEST (length=23)
-2026-07-17 14:24:27 - src.protocol - INFO - Chat request: scream for the guards...
-2026-07-17 14:24:27 - src.api_client - INFO - Streaming chat completion: 11 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:24:27 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:24:29 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:24:29 - src.protocol - INFO - Response complete: 315 bytes
-2026-07-17 14:25:09 - src.protocol - INFO - Received: CHAT_REQUEST (length=98)
-2026-07-17 14:25:09 - src.protocol - INFO - Chat request: say "oh my favorite guard, I love you so much! I m...
-2026-07-17 14:25:09 - src.api_client - INFO - Streaming chat completion: 13 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:25:09 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:25:11 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:25:11 - src.protocol - INFO - Response complete: 326 bytes
-2026-07-17 14:25:39 - src.protocol - INFO - Received: CHAT_REQUEST (length=58)
-2026-07-17 14:25:39 - src.protocol - INFO - Chat request: uhhhhh i roll a d20 to see if my persuasion check ...
-2026-07-17 14:25:39 - src.api_client - INFO - Streaming chat completion: 15 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:25:39 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:25:41 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:25:41 - src.protocol - INFO - Response complete: 367 bytes
-2026-07-17 14:25:50 - src.protocol - INFO - Received: CHAT_REQUEST (length=13)
-2026-07-17 14:25:50 - src.protocol - INFO - Chat request: FUUUUUUCCCKK...
-2026-07-17 14:25:50 - src.api_client - INFO - Streaming chat completion: 17 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:25:50 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:25:51 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:25:51 - src.protocol - INFO - Response complete: 282 bytes
-2026-07-17 14:28:54 - src.protocol - INFO - Received: CHAT_REQUEST (length=29)
-2026-07-17 14:28:54 - src.protocol - INFO - Chat request: pee in the corner in sadness...
-2026-07-17 14:28:54 - src.api_client - INFO - Streaming chat completion: 19 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:28:54 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:28:56 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:28:56 - src.protocol - INFO - Response complete: 284 bytes
-2026-07-17 14:29:08 - src.protocol - INFO - Received: CHAT_REQUEST (length=25)
-2026-07-17 14:29:08 - src.protocol - INFO - Chat request: run around and get swole...
-2026-07-17 14:29:08 - src.api_client - INFO - Streaming chat completion: 21 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:29:08 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:29:10 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:29:10 - src.protocol - INFO - Response complete: 323 bytes
-2026-07-17 14:29:32 - src.protocol - INFO - Received: CHAT_REQUEST (length=82)
-2026-07-17 14:29:32 - src.protocol - INFO - Chat request: well, it's like my grandfather always said...you d...
-2026-07-17 14:29:32 - src.api_client - INFO - Streaming chat completion: 23 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:29:32 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:29:34 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:29:34 - src.protocol - INFO - Response complete: 310 bytes
-2026-07-17 14:29:56 - src.protocol - INFO - Received: CHAT_REQUEST (length=69)
-2026-07-17 14:29:56 - src.protocol - INFO - Chat request: check the cell door, maybe the guard was stupid an...
-2026-07-17 14:29:56 - src.api_client - INFO - Streaming chat completion: 25 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:29:56 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:29:57 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:29:57 - src.protocol - INFO - Response complete: 294 bytes
-2026-07-17 14:30:22 - src.protocol - INFO - Received: CHAT_REQUEST (length=83)
-2026-07-17 14:30:22 - src.protocol - INFO - Chat request: yell for my cell neighbor. what's his name again? ...
-2026-07-17 14:30:22 - src.api_client - INFO - Streaming chat completion: 27 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:30:22 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:30:23 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:30:23 - src.protocol - INFO - Response complete: 309 bytes
-2026-07-17 14:30:59 - src.protocol - INFO - Received: CHAT_REQUEST (length=105)
-2026-07-17 14:30:59 - src.protocol - INFO - Chat request: use my gift of gab and start going into a long len...
-2026-07-17 14:30:59 - src.api_client - INFO - Streaming chat completion: 29 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:30:59 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:31:01 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:31:01 - src.protocol - INFO - Response complete: 384 bytes
-2026-07-17 14:31:19 - src.protocol - INFO - Received: CHAT_REQUEST (length=52)
-2026-07-17 14:31:19 - src.protocol - INFO - Chat request: examine every inch of the cell, including the floo...
-2026-07-17 14:31:19 - src.api_client - INFO - Streaming chat completion: 31 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:31:20 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:31:22 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:31:22 - src.protocol - INFO - Response complete: 330 bytes
-2026-07-17 14:31:41 - src.protocol - INFO - Received: CHAT_REQUEST (length=25)
-2026-07-17 14:31:41 - src.protocol - INFO - Chat request: get on my knees and pray...
-2026-07-17 14:31:41 - src.api_client - INFO - Streaming chat completion: 33 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
-2026-07-17 14:31:41 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
-2026-07-17 14:31:43 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
-2026-07-17 14:31:43 - src.protocol - INFO - Response complete: 346 bytes
-2026-07-17 14:32:37 - src.protocol - INFO - Received: CANCEL_REQUEST (length=0)
-2026-07-17 14:32:37 - src.protocol - INFO - Cancel request received
-2026-07-17 15:00:30 - Client-1 - INFO - Connection closed by client
-2026-07-17 15:00:30 - Client-1 - INFO - Closing client connection
-2026-07-17 15:00:42 - Client-2 - INFO - Client connected from ('192.168.1.64', 52433)
-2026-07-17 15:00:45 - src.protocol - INFO - Received: PING (length=0)
-2026-07-17 15:00:45 - src.protocol - INFO - Received: NEW_CONVERSATION (length=0)
-2026-07-17 15:00:45 - src.protocol - INFO - New conversation request
-2026-07-17 15:00:45 - ConversationManager-2 - INFO - Started new conversation: 1784322045
-2026-07-17 15:01:01 - src.protocol - INFO - Received: LIST_CONVERSATIONS (length=0)
-2026-07-17 15:01:01 - src.protocol - INFO - List conversations request
-2026-07-17 15:01:01 - src.protocol - INFO - Found 50 conversations
-2026-07-17 15:01:07 - src.protocol - INFO - Received: LOAD_CONVERSATION (length=4)
-2026-07-17 15:01:07 - src.protocol - INFO - Load conversation: 1784321993
-2026-07-17 15:01:07 - ConversationManager-2 - INFO - Loaded conversation: 1784321993
-2026-07-17 15:01:13 - src.protocol - INFO - Received: LIST_CONVERSATIONS (length=0)
-2026-07-17 15:01:13 - src.protocol - INFO - List conversations request
-2026-07-17 15:01:13 - src.protocol - INFO - Found 50 conversations
-2026-07-17 15:02:18 - src.protocol - INFO - Received: LOAD_CONVERSATION (length=4)
-2026-07-17 15:02:18 - src.protocol - INFO - Load conversation: 1784321993
-2026-07-17 15:02:18 - ConversationManager-2 - WARNING - Conversation not found: 1784321993
-2026-07-17 15:02:20 - src.protocol - INFO - Received: LIST_CONVERSATIONS (length=0)
-2026-07-17 15:02:20 - src.protocol - INFO - List conversations request
-2026-07-17 15:02:20 - src.protocol - INFO - Found 1 conversations
-2026-07-17 15:02:21 - src.protocol - INFO - Received: LOAD_CONVERSATION (length=4)
-2026-07-17 15:02:21 - src.protocol - INFO - Load conversation: 1784319754
-2026-07-17 15:02:21 - ConversationManager-2 - INFO - Loaded conversation: 1784319754
+2026-07-17 15:11:22 - __main__ - INFO - ============================================================
+2026-07-17 15:11:22 - __main__ - INFO - C64 LLM Proxy Server v0.1.0
+2026-07-17 15:11:22 - __main__ - INFO - ============================================================
+2026-07-17 15:11:22 - __main__ - INFO - API Endpoint: https://mlboy.tail99c274.ts.net:5000/v1
+2026-07-17 15:11:22 - __main__ - INFO - Model: gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:11:22 - __main__ - INFO - Data Directory: ./data
+2026-07-17 15:11:22 - __main__ - INFO - Starting server on 0.0.0.0:6400
+2026-07-17 15:11:22 - __main__ - INFO - Press Ctrl+C to stop
+2026-07-17 15:11:22 - __main__ - INFO - ============================================================
+2026-07-17 15:11:22 - src.tcp_server - INFO - Server listening on 0.0.0.0:6400
+2026-07-17 15:11:22 - src.tcp_server - INFO - Waiting for C64 clients...
+2026-07-17 15:11:46 - Client-1 - INFO - Client connected from ('192.168.1.64', 52434)
+2026-07-17 15:11:50 - src.protocol - INFO - Received: PING (length=0)
+2026-07-17 15:11:50 - src.protocol - INFO - Received: NEW_CONVERSATION (length=0)
+2026-07-17 15:11:50 - src.protocol - INFO - New conversation request
+2026-07-17 15:11:50 - ConversationManager-1 - INFO - Started new conversation: 1784322710
+2026-07-17 15:14:22 - src.protocol - INFO - Received: LIST_CONVERSATIONS (length=0)
+2026-07-17 15:14:22 - src.protocol - INFO - List conversations request
+2026-07-17 15:14:22 - src.protocol - INFO - Found 1 conversations
+2026-07-17 15:14:24 - src.protocol - INFO - Received: LOAD_CONVERSATION (length=4)
+2026-07-17 15:14:24 - src.protocol - INFO - Load conversation: 1784319754
+2026-07-17 15:14:24 - ConversationManager-1 - INFO - Loaded conversation: 1784319754
+2026-07-17 15:14:47 - src.protocol - INFO - Received: CHAT_REQUEST (length=10)
+2026-07-17 15:14:47 - src.protocol - INFO - Chat request: fuuuuuck!...
+2026-07-17 15:14:47 - src.api_client - INFO - Streaming chat completion: 35 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:14:47 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:14:51 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:14:51 - src.protocol - INFO - Response complete: 284 bytes
+2026-07-17 15:14:51 - src.api_client - INFO - Streaming chat completion: 1 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:14:51 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:14:51 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:14:51 - ConversationManager-1 - INFO - Conversation titled: Absurd Dungeon Roleplay
+2026-07-17 15:15:12 - src.protocol - INFO - Received: CHAT_REQUEST (length=27)
+2026-07-17 15:15:12 - src.protocol - INFO - Chat request: scream for the guard again...
+2026-07-17 15:15:12 - src.api_client - INFO - Streaming chat completion: 37 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:15:12 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:15:15 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:15:15 - src.protocol - INFO - Response complete: 443 bytes
+2026-07-17 15:15:32 - src.protocol - INFO - Received: CHAT_REQUEST (length=39)
+2026-07-17 15:15:32 - src.protocol - INFO - Chat request: say "heh, joke's on you. I love rats."...
+2026-07-17 15:15:32 - src.api_client - INFO - Streaming chat completion: 39 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:15:32 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:15:35 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:15:35 - src.protocol - INFO - Response complete: 355 bytes
+2026-07-17 15:15:45 - src.protocol - INFO - Received: CHAT_REQUEST (length=28)
+2026-07-17 15:15:45 - src.protocol - INFO - Chat request: scream for the guard again!...
+2026-07-17 15:15:45 - src.api_client - INFO - Streaming chat completion: 41 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:15:45 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:15:47 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:15:47 - src.protocol - INFO - Response complete: 336 bytes
+2026-07-17 15:15:51 - src.protocol - INFO - Received: CHAT_REQUEST (length=13)
+2026-07-17 15:15:51 - src.protocol - INFO - Chat request: go to sleep....
+2026-07-17 15:15:51 - src.api_client - INFO - Streaming chat completion: 43 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:15:52 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:15:54 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:15:54 - src.protocol - INFO - Response complete: 338 bytes
+2026-07-17 15:16:05 - src.protocol - INFO - Received: CHAT_REQUEST (length=6)
+2026-07-17 15:16:05 - src.protocol - INFO - Chat request: dream...
+2026-07-17 15:16:05 - src.api_client - INFO - Streaming chat completion: 45 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:16:05 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:16:08 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:16:08 - src.protocol - INFO - Response complete: 450 bytes
+2026-07-17 15:16:31 - src.protocol - INFO - Received: CHAT_REQUEST (length=68)
+2026-07-17 15:16:31 - src.protocol - INFO - Chat request: grab for the cigarette and attempt to bring it int...
+2026-07-17 15:16:31 - src.api_client - INFO - Streaming chat completion: 47 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:16:31 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:16:34 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:16:34 - src.protocol - INFO - Response complete: 524 bytes
+2026-07-17 15:16:50 - src.protocol - INFO - Received: CHAT_REQUEST (length=20)
+2026-07-17 15:16:50 - src.protocol - INFO - Chat request: yell for the guard!...
+2026-07-17 15:16:50 - src.api_client - INFO - Streaming chat completion: 49 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:16:50 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:16:53 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:16:53 - src.protocol - INFO - Response complete: 388 bytes
+2026-07-17 15:17:03 - src.protocol - INFO - Received: CHAT_REQUEST (length=30)
+2026-07-17 15:17:03 - src.protocol - INFO - Chat request: tell the guard about my dream...
+2026-07-17 15:17:03 - src.api_client - INFO - Streaming chat completion: 51 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:17:04 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:17:06 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:17:06 - src.protocol - INFO - Response complete: 358 bytes
+2026-07-17 15:17:27 - src.protocol - INFO - Received: CHAT_REQUEST (length=71)
+2026-07-17 15:17:27 - src.protocol - INFO - Chat request: HHMFFPH how is that insanity? Dreams are normal an...
+2026-07-17 15:17:27 - src.api_client - INFO - Streaming chat completion: 53 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:17:27 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:17:30 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:17:30 - src.protocol - INFO - Response complete: 415 bytes
+2026-07-17 15:17:39 - src.protocol - INFO - Received: CHAT_REQUEST (length=12)
+2026-07-17 15:17:39 - src.protocol - INFO - Chat request: sleep more....
+2026-07-17 15:17:39 - src.api_client - INFO - Streaming chat completion: 55 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:17:40 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:17:42 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:17:42 - src.protocol - INFO - Response complete: 407 bytes
+2026-07-17 15:17:56 - src.protocol - INFO - Received: CHAT_REQUEST (length=36)
+2026-07-17 15:17:56 - src.protocol - INFO - Chat request: look around in the tin roofed shack...
+2026-07-17 15:17:56 - src.api_client - INFO - Streaming chat completion: 57 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:17:56 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:17:59 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:17:59 - src.protocol - INFO - Response complete: 360 bytes
+2026-07-17 15:18:10 - src.protocol - INFO - Received: CHAT_REQUEST (length=38)
+2026-07-17 15:18:10 - src.protocol - INFO - Chat request: open the door to the shack and leave!...
+2026-07-17 15:18:10 - src.api_client - INFO - Streaming chat completion: 59 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:18:11 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:18:13 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:18:13 - src.protocol - INFO - Response complete: 345 bytes
+2026-07-17 15:18:23 - src.protocol - INFO - Received: CHAT_REQUEST (length=47)
+2026-07-17 15:18:23 - src.protocol - INFO - Chat request: run into the forest and experience the freedom...
+2026-07-17 15:18:23 - src.api_client - INFO - Streaming chat completion: 61 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:18:24 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:18:27 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:18:27 - src.protocol - INFO - Response complete: 457 bytes
+2026-07-17 15:18:41 - src.protocol - INFO - Received: CHAT_REQUEST (length=13)
+2026-07-17 15:18:41 - src.protocol - INFO - Chat request: climb a tree...
+2026-07-17 15:18:41 - src.api_client - INFO - Streaming chat completion: 63 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:18:42 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:18:44 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:18:44 - src.protocol - INFO - Response complete: 433 bytes
+2026-07-17 15:18:54 - src.protocol - INFO - Received: CHAT_REQUEST (length=18)
+2026-07-17 15:18:54 - src.protocol - INFO - Chat request: jump into the sky...
+2026-07-17 15:18:54 - src.api_client - INFO - Streaming chat completion: 65 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:18:55 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:18:58 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:18:58 - src.protocol - INFO - Response complete: 401 bytes
+2026-07-17 15:19:09 - src.protocol - INFO - Received: CHAT_REQUEST (length=21)
+2026-07-17 15:19:09 - src.protocol - INFO - Chat request: enjoy it for a while...
+2026-07-17 15:19:09 - src.api_client - INFO - Streaming chat completion: 67 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:19:10 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:19:12 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:19:12 - src.protocol - INFO - Response complete: 388 bytes
+2026-07-17 15:19:17 - src.protocol - INFO - Received: CHAT_REQUEST (length=16)
+2026-07-17 15:19:17 - src.protocol - INFO - Chat request: wake up i guess...
+2026-07-17 15:19:17 - src.api_client - INFO - Streaming chat completion: 69 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:19:18 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:19:20 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:19:20 - src.protocol - INFO - Response complete: 363 bytes
+2026-07-17 15:19:31 - src.protocol - INFO - Received: CHAT_REQUEST (length=23)
+2026-07-17 15:19:31 - src.protocol - INFO - Chat request: wonder what time it is...
+2026-07-17 15:19:31 - src.api_client - INFO - Streaming chat completion: 71 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:19:32 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:19:34 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:19:34 - src.protocol - INFO - Response complete: 383 bytes
+2026-07-17 15:19:46 - src.protocol - INFO - Received: CHAT_REQUEST (length=47)
+2026-07-17 15:19:46 - src.protocol - INFO - Chat request: reflect on what got me here in the first place...
+2026-07-17 15:19:46 - src.api_client - INFO - Streaming chat completion: 73 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:19:46 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:19:49 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:19:49 - src.protocol - INFO - Response complete: 461 bytes
+2026-07-17 15:20:05 - src.protocol - INFO - Received: CHAT_REQUEST (length=43)
+2026-07-17 15:20:05 - src.protocol - INFO - Chat request: growl. why can't i remember my own crimes?...
+2026-07-17 15:20:05 - src.api_client - INFO - Streaming chat completion: 75 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:20:06 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:20:08 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:20:08 - src.protocol - INFO - Response complete: 359 bytes
+2026-07-17 15:20:20 - src.protocol - INFO - Received: CHAT_REQUEST (length=38)
+2026-07-17 15:20:20 - src.protocol - INFO - Chat request: wonder what happened to y inventory!?...
+2026-07-17 15:20:20 - src.api_client - INFO - Streaming chat completion: 77 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:20:21 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:20:23 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:20:23 - src.protocol - INFO - Response complete: 332 bytes
+2026-07-17 15:20:41 - src.protocol - INFO - Received: CHAT_REQUEST (length=74)
+2026-07-17 15:20:41 - src.protocol - INFO - Chat request: yell at the guard that it's okay, I can't even rem...
+2026-07-17 15:20:41 - src.api_client - INFO - Streaming chat completion: 79 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:20:42 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:20:45 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:20:45 - src.protocol - INFO - Response complete: 418 bytes
+2026-07-17 15:20:56 - src.protocol - INFO - Received: CHAT_REQUEST (length=28)
+2026-07-17 15:20:56 - src.protocol - INFO - Chat request: oh fuck, breakfast! I wait....
+2026-07-17 15:20:56 - src.api_client - INFO - Streaming chat completion: 81 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:20:56 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:20:59 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:20:59 - src.protocol - INFO - Response complete: 393 bytes
+2026-07-17 15:21:38 - src.protocol - INFO - Received: CHAT_REQUEST (length=32)
+2026-07-17 15:21:38 - src.protocol - INFO - Chat request: ask my neighbor what time it is...
+2026-07-17 15:21:38 - src.api_client - INFO - Streaming chat completion: 83 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:21:39 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:21:42 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:21:42 - src.protocol - INFO - Response complete: 406 bytes
+2026-07-17 15:22:01 - src.protocol - INFO - Received: CHAT_REQUEST (length=92)
+2026-07-17 15:22:01 - src.protocol - INFO - Chat request: try to enter a meditative trance before breakfast,...
+2026-07-17 15:22:01 - src.api_client - INFO - Streaming chat completion: 85 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:22:02 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:22:06 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:22:06 - src.protocol - INFO - Response complete: 740 bytes
+2026-07-17 15:23:30 - src.protocol - INFO - Received: CHAT_REQUEST (length=115)
+2026-07-17 15:23:30 - src.protocol - INFO - Chat request: try to remain calm as I feel my corporeal body try...
+2026-07-17 15:23:30 - src.api_client - INFO - Streaming chat completion: 87 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:23:31 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:23:34 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:23:34 - src.protocol - INFO - Response complete: 543 bytes
+2026-07-17 15:23:55 - src.protocol - INFO - Received: CHAT_REQUEST (length=26)
+2026-07-17 15:23:55 - src.protocol - INFO - Chat request: give in and slowly return...
+2026-07-17 15:23:55 - src.api_client - INFO - Streaming chat completion: 89 messages, model=gemma4-26b-a4b-it-qat-q4-mlboy
+2026-07-17 15:23:56 - httpx - INFO - HTTP Request: POST https://mlboy.tail99c274.ts.net:5000/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-17 15:23:59 - ConversationManager-1 - INFO - Saved conversation: data/conversations/1784319754.json
+2026-07-17 15:23:59 - src.protocol - INFO - Response complete: 442 bytes
+2026-07-17 15:25:08 - src.protocol - INFO - Received: LIST_CONVERSATIONS (length=0)
+2026-07-17 15:25:08 - src.protocol - INFO - List conversations request
+2026-07-17 15:25:08 - src.protocol - INFO - Found 1 conversations
+2026-07-17 15:25:10 - src.protocol - INFO - Received: LOAD_CONVERSATION (length=4)
+2026-07-17 15:25:10 - src.protocol - INFO - Load conversation: 1784319754
+2026-07-17 15:25:10 - ConversationManager-1 - INFO - Loaded conversation: 1784319754
+2026-07-17 15:25:27 - Client-1 - INFO - Connection closed by client
+2026-07-17 15:25:27 - Client-1 - INFO - Closing client connection
