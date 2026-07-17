@@ -228,6 +228,16 @@ def main():
             monitor.keyboard_feed(' ')
             final = wait_for_screen(monitor, r'> hello computer', 15,
                                     artifacts, f'{tag}-restore')
+            if not args.live:
+                # Conversation browser: F5, load newest (= this session)
+                monitor.keyboard_feed_petscii(b'\x87')
+                wait_for_screen(monitor, r'conversations \(return=load',
+                                15, artifacts, f'{tag}-browser')
+                monitor.keyboard_feed('\r')
+                wait_for_screen(monitor, r'conversation loaded', 30,
+                                artifacts, f'{tag}-loadstatus')
+                final = wait_for_screen(monitor, r'> hello computer', 15,
+                                        artifacts, f'{tag}-loaded')
         else:
             # Scripted debug session runs in warp faster than we can poll,
             # so assert on the durable end state: the client parks on

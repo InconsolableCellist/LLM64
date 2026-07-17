@@ -300,12 +300,26 @@ class ProtocolHandler:
             payload.append(len(chunk))  # Count
             payload.append(more)  # More flag
 
+            count = 0
             for conv in chunk:
-                # ID (4 bytes), timestamp (4 bytes), title (null-terminated)
-                payload.extend(struct.pack('<II', conv['id'], conv['timestamp']))
-                title = conv['title'][:38]  # Truncate for C64
-                payload.extend(title.encode('ascii', errors='replace'))
-                payload.append(0x00)
+                try:
+                    # ID and timestamp masked to 32 bits: some stored ids are
+                    # millisecond timestamps that overflow the 4-byte field.
+                    # handle_load_conversation resolves masked ids.
+                    entry = bytearray()
+                    entry.extend(struct.pack(
+                        '<II',
+                        int(conv['id']) & 0xFFFFFFFF,
+                        int(conv['timestamp']) & 0xFFFFFFFF))
+                    title = str(conv['title'])[:36]
+                    entry.extend(title.encode('ascii', errors='replace'))
+                    entry.append(0x00)
+                except (ValueError, TypeError) as e:
+                    self.logger.warning(f"Skipping malformed conversation: {e}")
+                    continue
+                payload.extend(entry)
+                count += 1
+            payload[0] = count
 
             await self.send_message(MessageType.CONVERSATION_LIST, bytes(payload))
             await asyncio.sleep(0.1)  # Give C64 time to process
@@ -317,31 +331,35 @@ class ProtocolHandler:
             await self.send_nak()
             return
 
-        conv_id = struct.unpack('<I', self.payload[:4])[0]
-        self.logger.info(f"Load conversation: {conv_id}")
+        masked_id = struct.unpack('<I', self.payload[:4])[0]
+        self.logger.info(f"Load conversation: {masked_id}")
 
         await self.send_ack()
+
+        # The wire id is 32-bit; stored ids may be wider (ms timestamps),
+        # so resolve by masked comparison.
+        conv_id = masked_id
+        for conv in self.conv_manager.list_conversations():
+            if int(conv['id']) & 0xFFFFFFFF == masked_id:
+                conv_id = int(conv['id'])
+                break
 
         if self.conv_manager.load_conversation(conv_id):
             messages = self.conv_manager.get_messages()
 
-            # Send messages in chunks
-            chunk_size = 3
-            for i in range(0, len(messages), chunk_size):
-                chunk = messages[i:i+chunk_size]
-                more = 1 if (i + chunk_size) < len(messages) else 0
+            # One message per frame: the C64 client's payload buffer is
+            # small (512 bytes), so keep each frame well under that.
+            for i, msg in enumerate(messages):
+                more = 1 if i + 1 < len(messages) else 0
 
                 payload = bytearray()
-                payload.append(len(chunk))
+                payload.append(1)
                 payload.append(more)
-
-                for msg in chunk:
-                    # Role (1 byte), text (null-terminated)
-                    role = 0 if msg['role'] == 'user' else 1
-                    payload.append(role)
-                    text = msg['content'][:500]  # Truncate long messages
-                    payload.extend(text.encode('ascii', errors='replace'))
-                    payload.append(0x00)
+                role = 0 if msg['role'] == 'user' else 1
+                payload.append(role)
+                text = msg['content'][:400]
+                payload.extend(text.encode('ascii', errors='replace'))
+                payload.append(0x00)
 
                 await self.send_message(MessageType.CONVERSATION_DATA, bytes(payload))
                 await asyncio.sleep(0.1)
