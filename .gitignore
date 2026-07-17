@@ -1,0 +1,11 @@
+# C64 build outputs
+c64_client/build/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Runtime data
+c64llm_proxy/data/
+emu/artifacts/
