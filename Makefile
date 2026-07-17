@@ -69,3 +69,10 @@ test-live: client-tui-direct
 clean:
 	$(MAKE) -C c64_client clean
 	rm -rf emu/artifacts
+
+# Build for real hardware and run it on the C64 Ultimate over the network
+C64U_IP ?= 192.168.1.64
+deploy-c64u:
+	$(MAKE) -C c64_client clean
+	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=192.168.1.39
+	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm.prg

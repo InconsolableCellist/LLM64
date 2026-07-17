@@ -16,6 +16,7 @@
 ;
 
         .export _kb_scan
+        .export joy_mask
 
 CIA1_PA   = $DC00
 CIA1_PB   = $DC01
@@ -51,6 +52,8 @@ mods:     .res 1
 code:     .res 1
 gcol:     .res 1        ; scratch: column of key being handled
 growbit:  .res 1        ; scratch: row bit of key being handled
+joy_mask: .res 1        ; rows pulled low by a control-port device
+not_joy:  .res 1        ; its complement
 rpt_code: .res 1        ; matrix code of the repeat candidate
 rpt_char: .res 1
 rpt_cnt:  .res 1
@@ -66,6 +69,23 @@ bitmask:  .byte $01,$02,$04,$08,$10,$20,$40,$80
 ; void kb_scan(void) - one 60Hz tick
 ;---------------------------------------
 _kb_scan:
+        ; --- joystick rejection ---
+        ; A joystick/mouse on control port 1 pulls CIA1 PB lines low
+        ; independently of the column select, which reads as an entire
+        ; matrix ROW held down (port-1 fire = row 4 = ">MBCZ", space,
+        ; rshift, F1...). Keyboard keys can only pull a row low through
+        ; a selected column, so with NO column selected anything still
+        ; low is external - mask those rows out of this frame's scan.
+        lda #$FF
+        sta CIA1_PA
+@jdeb:  lda CIA1_PB
+        cmp CIA1_PB
+        bne @jdeb
+        eor #$FF
+        sta joy_mask            ; 1 = row driven by the joystick
+        eor #$FF
+        sta not_joy             ; complement, for masking below
+
         ; --- read the matrix ---
         ldx #7
 @col:   lda colmask,x
@@ -73,7 +93,8 @@ _kb_scan:
 @deb:   lda CIA1_PB
         cmp CIA1_PB
         bne @deb
-        eor #$FF
+        eor #$FF                ; 1 = pressed
+        and not_joy             ; drop joystick-driven rows
         sta state,x
         dex
         bpl @col
