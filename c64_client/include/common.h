@@ -105,6 +105,10 @@ typedef enum {
 #define MSG_CONVERSATION_DATA   0x54  /* 'T' - was 0x24 */
 #define MSG_STATUS              0x55  /* 'U' - was 0x25 */
 
+/* Pseudo message type returned by proto_process_byte on checksum failure
+   (not a wire value - chosen outside the protocol's type range) */
+#define PROTO_CRC_FAIL          0xFE
+
 /* Protocol constants */
 #define SYNC_BYTE       0x42  /* 'B' - safe ASCII byte (was 0xC6, corrupted by VICE IP232) */
 #define MAX_PAYLOAD     512

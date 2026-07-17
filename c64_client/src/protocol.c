@@ -91,6 +91,7 @@ uint8_t proto_process_byte(ProtoContext* ctx, uint8_t byte) {
             } else {
                 /* CRC mismatch */
                 ctx->state = PROTO_SYNC_SEARCHING;
+                return PROTO_CRC_FAIL;
             }
             break;
     }

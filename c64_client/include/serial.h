@@ -71,10 +71,14 @@ uint8_t serial_can_write(void);
  */
 void serial_flush(void);
 
+/**
+ * Bytes currently waiting in the RX ring buffer
+ */
+uint8_t serial_rx_count(void);
+
 /* Internal functions (implemented in ASM) */
 void __fastcall__ acia_init_hw(void);
 uint8_t __fastcall__ acia_send_at_command(const char* cmd);
 uint8_t acia_get_status(void);
-void acia_irq_handler(void);
 
 #endif /* SERIAL_H */

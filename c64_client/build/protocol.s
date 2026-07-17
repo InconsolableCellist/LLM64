@@ -145,12 +145,14 @@ L0030:	lda     (sp,x)
 	jsr     ldaxysp
 	sta     ptr1
 	stx     ptr1+1
+	ldx     #$00
 	lda     #$01
 	ldy     #$00
 	sta     (ptr1),y
 	iny
-	lda     #$00
-	jmp     L00D6
+	txa
+	sta     (ptr1),y
+	jmp     incsp3
 L0036:	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
@@ -172,9 +174,13 @@ L0036:	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
 	stx     ptr1+1
-	lda     #$00
+	ldx     #$00
+	txa
 	ldy     #$05
-	jmp     L00DF
+	sta     (ptr1),y
+	iny
+	sta     (ptr1),y
+	jmp     incsp3
 L003E:	tay
 	jsr     ldaxysp
 	jsr     pushax
@@ -204,9 +210,9 @@ L003E:	tay
 	sbc     #$00
 	lda     #$00
 	tax
-	bcs     L00E0
+	bcs     L00D6
 	jmp     incsp3
-L00E0:	lda     L002A
+L00D6:	lda     L002A
 	ldy     #$20
 	jsr     decaxy
 	sta     L0044
@@ -251,27 +257,42 @@ L00D5:	ldy     #$02
 	jsr     ldaxidx
 	jsr     tosicmp
 	bcc     L0052
-	jne     L006C
+	beq     L0052
+	ldy     #$02
+	jsr     ldaxysp
+	sta     ptr1
+	stx     ptr1+1
+	ldx     #$00
+	txa
+	tay
+	sta     (ptr1),y
+	iny
+	sta     (ptr1),y
+	jmp     incsp3
 L0052:	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
 	stx     ptr1+1
+	ldx     #$00
 	lda     #$03
 	ldy     #$00
 	sta     (ptr1),y
 	iny
-	lda     #$00
-	jmp     L00D6
+	txa
+	sta     (ptr1),y
+	jmp     incsp3
 L004F:	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
 	stx     ptr1+1
+	ldx     #$00
 	lda     #$04
 	ldy     #$00
 	sta     (ptr1),y
 	iny
-	lda     #$00
-	jmp     L00D6
+	txa
+	sta     (ptr1),y
+	jmp     incsp3
 L005D:	ldy     #$02
 	jsr     ldaxysp
 	ldy     #$08
@@ -308,12 +329,14 @@ L005D:	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
 	stx     ptr1+1
+	ldx     #$00
 	lda     #$04
 	ldy     #$00
 	sta     (ptr1),y
 	iny
-	lda     #$00
-	jmp     L00D6
+	txa
+	sta     (ptr1),y
+	jmp     incsp3
 L0066:	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
@@ -359,9 +382,12 @@ L006C:	ldy     #$02
 	stx     ptr1+1
 	lda     #$00
 	tay
-L00DF:	sta     (ptr1),y
+	sta     (ptr1),y
 	iny
-L00D6:	sta     (ptr1),y
+	sta     (ptr1),y
+	tax
+	lda     #$FE
+	jmp     incsp3
 L002E:	ldx     #$00
 L00D4:	txa
 	jmp     incsp3
@@ -414,13 +440,13 @@ L00D4:	txa
 
 .segment	"BSS"
 
-L007C:
-	.res	1,$00
 L007D:
-	.res	2,$00
-L007E:
 	.res	1,$00
+L007E:
+	.res	2,$00
 L007F:
+	.res	1,$00
+L0080:
 	.res	1,$00
 
 .segment	"CODE"
@@ -431,50 +457,50 @@ L007F:
 	ldx     #$00
 	ldy     #$20
 	jsr     incaxy
-	sta     L007E
+	sta     L007F
 	ldy     #$01
 	lda     (sp),y
 	ldx     #$00
 	ldy     #$20
 	jsr     incaxy
-	sta     L007F
+	sta     L0080
 	lda     #$42
 	jsr     _serial_write
 	ldy     #$04
 	lda     (sp),y
 	jsr     _serial_write
-	lda     L007E
-	jsr     _serial_write
 	lda     L007F
 	jsr     _serial_write
+	lda     L0080
+	jsr     _serial_write
 	lda     #$00
-	sta     L007D
-	sta     L007D+1
-L008F:	lda     L007D
+	sta     L007E
+	sta     L007E+1
+L0090:	lda     L007E
 	ldy     #$00
 	cmp     (sp),y
-	lda     L007D+1
+	lda     L007E+1
 	iny
 	sbc     (sp),y
-	bcs     L0090
+	bcs     L0091
 	ldy     #$03
 	jsr     ldaxysp
 	clc
-	adc     L007D
+	adc     L007E
 	sta     ptr1
 	txa
-	adc     L007D+1
+	adc     L007E+1
 	sta     ptr1+1
 	ldy     #$00
 	lda     (ptr1),y
 	jsr     _serial_write
-	lda     L007D
-	ldx     L007D+1
+	lda     L007E
+	ldx     L007E+1
 	jsr     incax1
-	sta     L007D
-	stx     L007D+1
-	jmp     L008F
-L0090:	ldy     #$04
+	sta     L007E
+	stx     L007E+1
+	jmp     L0090
+L0091:	ldy     #$04
 	lda     (sp),y
 	jsr     pusha
 	ldy     #$04
@@ -482,7 +508,7 @@ L0090:	ldy     #$04
 	ldy     #$06
 	jsr     ldaxysp
 	jsr     _proto_calc_crc
-	sta     L007C
+	sta     L007D
 	jsr     _serial_write
 	jsr     _serial_flush
 	jmp     incsp5
@@ -550,9 +576,9 @@ L0090:	ldy     #$04
 
 .segment	"BSS"
 
-L00B2:
+L00B3:
 	.res	2,$00
-L00B6:
+L00B7:
 	.res	256,$00
 
 .segment	"CODE"
@@ -560,33 +586,33 @@ L00B6:
 	jsr     pushax
 	jsr     ldax0sp
 	jsr     _strlen
-	sta     L00B2
-	stx     L00B2+1
-	lda     #<(L00B6)
-	ldx     #>(L00B6)
+	sta     L00B3
+	stx     L00B3+1
+	lda     #<(L00B7)
+	ldx     #>(L00B7)
 	jsr     pushax
 	ldy     #$05
 	jsr     pushwysp
-	lda     L00B2
-	ldx     L00B2+1
+	lda     L00B3
+	ldx     L00B3+1
 	jsr     _memcpy
-	lda     #<(L00B6)
+	lda     #<(L00B7)
 	clc
-	adc     L00B2
+	adc     L00B3
 	sta     ptr1
-	lda     #>(L00B6)
-	adc     L00B2+1
+	lda     #>(L00B7)
+	adc     L00B3+1
 	sta     ptr1+1
 	lda     #$00
 	tay
 	sta     (ptr1),y
 	lda     #$31
 	jsr     pusha
-	lda     #<(L00B6)
-	ldx     #>(L00B6)
+	lda     #<(L00B7)
+	ldx     #>(L00B7)
 	jsr     pushax
-	lda     L00B2
-	ldx     L00B2+1
+	lda     L00B3
+	ldx     L00B3+1
 	jsr     incax1
 	jsr     _proto_send_message
 	jmp     incsp2

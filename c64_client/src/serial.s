@@ -2,6 +2,11 @@
 ; C64 LLM Client - ACIA Driver (Assembly)
 ; 6551 ACIA at $DE00 (SwiftLink compatible)
 ;
+; RX is interrupt-driven: the ACIA raises an IRQ per received byte and the
+; handler stores it in a 256-byte ring buffer, so the main program can spend
+; milliseconds updating the screen without losing data. TX polls the TDRE
+; status bit with a timeout fallback (some real 6551s have a stuck TDRE).
+;
 
         .export _serial_init
         .export _serial_dial
@@ -15,7 +20,7 @@
         .export _acia_init_hw
         .export _acia_send_at_command
         .export _acia_get_status
-        .export acia_irq_handler
+        .export _serial_rx_count
 
         .import popa, popax
         .importzp ptr1, ptr2, tmp1, tmp2
@@ -30,25 +35,30 @@ ACIA_CONTROL = $DE03
 ACIA_SR_RDRF = $08      ; Receive Data Register Full
 ACIA_SR_TDRE = $10      ; Transmit Data Register Empty
 
-; Circular buffer pointers (zero page would be ideal, but using BSS)
-        .bss
-rx_head:        .res 2          ; RX buffer head pointer
-rx_tail:        .res 2          ; RX buffer tail pointer
-tx_head:        .res 2          ; TX buffer head pointer
-tx_tail:        .res 2          ; TX buffer tail pointer
-connected:      .res 1          ; Connection status
-old_irq:        .res 2          ; Original IRQ vector
+; Control register: bit4 = internal baud generator, bits 0-3 = rate
+; %1110 = 9600 baud (standard 6551 crystal; doubled on real SwiftLink)
+ACIA_CTRL_VALUE = $1E
 
-; Buffers (in fixed memory locations)
-RX_BUFFER_ADDR  = $2C00
-TX_BUFFER_ADDR  = $3000
-RX_BUFFER_SIZE  = 1024
-TX_BUFFER_SIZE  = 256
+; Command register: DTR active (bit0=1), RX IRQ enabled (bit1=0),
+; RTS active + TX IRQ off (bits3-2=10), no echo, no parity
+ACIA_CMD_VALUE  = %00001001
+
+; KERNAL interrupt vectors
+IRQ_VECTOR = $0314
+NMI_VECTOR = $0318
+
+        .bss
+rx_head:        .res 1          ; write index (IRQ handler)
+rx_tail:        .res 1          ; read index (main program)
+connected:      .res 1
+old_irq:        .res 2
+old_nmi:        .res 2
+vectors_saved:  .res 1
+rx_buffer:      .res 256        ; ring buffer (8-bit indices wrap naturally)
 
         .code
 
 ;---------------------------------------
-; Get ACIA status register (for debugging)
 ; uint8_t acia_get_status(void)
 ;---------------------------------------
 _acia_get_status:
@@ -57,325 +67,171 @@ _acia_get_status:
         rts
 
 ;---------------------------------------
-; Initialize ACIA hardware
 ; void acia_init_hw(void)
+; Reset the ACIA, set baud/format, enable RX interrupts, and install
+; the interrupt handler on both the IRQ and NMI KERNAL vectors (VICE
+; uses IRQ; real SwiftLink cartridges are commonly wired to NMI).
 ;---------------------------------------
 _acia_init_hw:
-        ; Programmed reset - disable interrupts, set known state
-        ; This is the proper way to reset the 6551
-        lda #%00001010          ; DTR disabled, RTS high, interrupts off
-        sta ACIA_COMMAND
+        ; Programmed reset: any write to the status register
+        sta ACIA_STATUS
 
-        ; Small delay after reset
+        ; Small settle delay
         ldy #10
 @reset_delay:
         dey
         bne @reset_delay
 
-        ; Set control register (9600 baud, 8N1)
-        ; Bits 0-3: 1110 = 9600 baud
-        ; Bit 4: 1 = internal baud rate generator
-        ; Bits 5-6: 00 = 8 data bits
-        ; Bit 7: 0 = 1 stop bit
-        lda #$1E                ; 9600 baud, 8 data bits, 1 stop
+        lda #ACIA_CTRL_VALUE
         sta ACIA_CONTROL
 
-        ; Read status to clear any pending flags
-        lda ACIA_STATUS
+        ; Reset ring buffer
+        lda #0
+        sta rx_head
+        sta rx_tail
+        sta connected
 
-        ; Set command register for operation
-        ; Bit 0: 1 = DTR low (active/ready)
-        ; Bit 1: 0 = RX IRQ disabled
-        ; Bits 2-3: 10 = RTS low (active), TX IRQ disabled (polling mode)
-        ; Bit 4: 0 = no echo
-        ; Bits 5-7: 000 = no parity
-        lda #%00001001          ; DTR active, RTS active, polling mode, no parity
+        ; Install interrupt handlers (once)
+        lda vectors_saved
+        bne @vectors_done
+
+        sei
+        lda IRQ_VECTOR
+        sta old_irq
+        lda IRQ_VECTOR+1
+        sta old_irq+1
+        lda #<acia_irq_entry
+        sta IRQ_VECTOR
+        lda #>acia_irq_entry
+        sta IRQ_VECTOR+1
+
+        lda NMI_VECTOR
+        sta old_nmi
+        lda NMI_VECTOR+1
+        sta old_nmi+1
+        lda #<acia_nmi_entry
+        sta NMI_VECTOR
+        lda #>acia_nmi_entry
+        sta NMI_VECTOR+1
+
+        lda #1
+        sta vectors_saved
+        cli
+
+@vectors_done:
+        ; Clear any stale byte, then enable the receiver + RX IRQ
+        lda ACIA_DATA
+        lda ACIA_STATUS
+        lda #ACIA_CMD_VALUE
         sta ACIA_COMMAND
 
-        ; Small delay for hardware to stabilize
         ldy #20
 @init_delay:
         dey
         bne @init_delay
-
-        ; Initialize buffer pointers
-        lda #<RX_BUFFER_ADDR
-        sta rx_head
-        sta rx_tail
-        lda #>RX_BUFFER_ADDR
-        sta rx_head+1
-        sta rx_tail+1
-
-        lda #<TX_BUFFER_ADDR
-        sta tx_head
-        sta tx_tail
-        lda #>TX_BUFFER_ADDR
-        sta tx_head+1
-        sta tx_tail+1
-
-        lda #0
-        sta connected
-
         rts
 
 ;---------------------------------------
-; Send AT command and wait for response
-; uint8_t acia_send_at_command(const char* cmd)
-; Returns 0 on success
+; Interrupt entry points.
+; Drain every byte the ACIA has (usually one), then chain to the
+; previous handler so KERNAL housekeeping still runs.
 ;---------------------------------------
-_acia_send_at_command:
-        sta ptr1                ; Store string pointer
-        stx ptr1+1
+acia_irq_entry:
+        jsr acia_drain_rx
+        jmp (old_irq)
 
-        ; Send the command string
-@send_loop:
-        ldy #0
-        lda (ptr1),y
-        beq @send_cr            ; Null terminator
-        jsr send_byte
-        inc ptr1
-        bne @send_loop
-        inc ptr1+1
-        bne @send_loop
+acia_nmi_entry:
+        jsr acia_drain_rx
+        jmp (old_nmi)
 
-@send_cr:
-        lda #13                 ; Send CR
-        jsr send_byte
-
-        ; Wait for response (simplified - just wait a bit)
-        ; In a full implementation, we'd parse "OK" or "CONNECT"
-        ldx #50                 ; Wait ~500ms
-@wait_loop:
-        ldy #100
-@inner_wait:
-        dey
-        bne @inner_wait
-        dex
-        bne @wait_loop
-
-        lda #0                  ; Success
-        rts
-
-;---------------------------------------
-; Send a single byte (blocking)
-; Note: 6551 TDRE flag is buggy, so we use a fixed delay
-;---------------------------------------
-send_byte:
-        pha
-
-        ; Write byte to ACIA
-        pla
-        sta ACIA_DATA
-
-        ; Fixed delay to allow byte to transmit
-        ; At 9600 baud: ~1042 microseconds per byte
-        ; On 1 MHz C64: need ~1042 cycles
-        pha
-        lda #11                 ; Outer loop count
-@tx_delay:
-        ldx #95                 ; Inner loop count (~95*11 ≈ 1045 cycles)
-@tx_inner:
-        dex
-        bne @tx_inner
-        sec
-        sbc #1
-        bne @tx_delay
-        pla
-        rts
-
-;---------------------------------------
-; Send dial command with hostname:port
-; uint8_t serial_dial(const char* dial_str)
-;---------------------------------------
-_serial_dial:
-        sta ptr1
-        stx ptr1+1
-        jsr _acia_send_at_command
-
-        ; Wait for CONNECT response (with timeout)
-        ; The modem should respond with "CONNECT" or "CONNECT 9600"
-        ldx #200                ; Timeout counter (~2 seconds)
-@wait_connect:
-        ldy #100
-@inner_wait:
-        ; Check if data available
-        lda ACIA_STATUS
+acia_drain_rx:
+        lda ACIA_STATUS         ; reading clears the ACIA IRQ flag
         and #ACIA_SR_RDRF
-        bne @got_data           ; Data available, modem is responding
-
-        dey
-        bne @inner_wait
-        dex
-        bne @wait_connect
-
-        ; Timeout - connection failed
-        lda #0
-        sta connected
-        lda #1                  ; Error
-        rts
-
-@got_data:
-        ; Data received, connection successful
-        ; Drain the CONNECT response and any remaining bytes
-        ldx #200                ; Read up to 200 times
-@drain_loop:
-        lda ACIA_STATUS
-        and #ACIA_SR_RDRF
-        beq @drain_done         ; No more data
-        lda ACIA_DATA           ; Actually read and discard the byte
-        dex
-        bne @drain_loop
-
-@drain_done:
-        ; Small delay to let connection stabilize
-        ldy #50
-@delay_outer:
-        ldx #100
-@delay_inner:
-        dex
-        bne @delay_inner
-        dey
-        bne @delay_outer
-
-        ; Mark as connected
-        lda #1
-        sta connected
-
-        lda #0                  ; Success
+        beq @done
+        lda ACIA_DATA
+        ldx rx_head
+        sta rx_buffer,x
+        inx
+        cpx rx_tail             ; full? drop newest rather than corrupt ring
+        beq @done
+        stx rx_head
+@done:
         rts
 
 ;---------------------------------------
-; Initialize serial and connect
-; uint8_t serial_init(const char* hostname, uint16_t port)
-;---------------------------------------
-_serial_init:
-        ; For now, hostname and port are ignored
-        ; We'll just send the Hayes AT commands
-
-        ; Initialize hardware
-        jsr _acia_init_hw
-
-        ; Send ATZ (reset modem)
-        lda #<at_reset
-        ldx #>at_reset
-        jsr _acia_send_at_command
-
-        ; Send ATE0 (echo off)
-        lda #<at_echo_off
-        ldx #>at_echo_off
-        jsr _acia_send_at_command
-
-        ; Note: Caller should call serial_dial() separately
-        ; to establish actual connection
-        lda #0
-        sta connected
-
-        lda #0                  ; Success
-        rts
-
-;---------------------------------------
-; Disconnect
-; void serial_disconnect(void)
-;---------------------------------------
-_serial_disconnect:
-        lda #0
-        sta connected
-        ; Could send +++ and ATH here
-        rts
-
-;---------------------------------------
-; Check if connected
-; uint8_t serial_is_connected(void)
-;---------------------------------------
-_serial_is_connected:
-        lda connected
-        ldx #0
-        rts
-
-;---------------------------------------
-; Check bytes available
 ; uint8_t serial_available(void)
 ;---------------------------------------
 _serial_available:
-        ; Check if hardware has data
-        lda ACIA_STATUS
-        and #ACIA_SR_RDRF
-        beq @no_data
-
-        ; Data available
-        lda #1
-        ldx #0
-        rts
-
-@no_data:
-        ; Also check our buffer
         lda rx_head
         cmp rx_tail
-        bne @has_buffered
-        lda rx_head+1
-        cmp rx_tail+1
-        bne @has_buffered
-
-        ; No data
+        beq @empty
+        lda #1
+        ldx #0
+        rts
+@empty:
         lda #0
         ldx #0
         rts
 
-@has_buffered:
+;---------------------------------------
+; uint8_t serial_read(void)
+; Returns next buffered byte (0 if empty - call serial_available first)
+;---------------------------------------
+_serial_read:
+        ldx rx_tail
+        cpx rx_head
+        beq @empty
+        lda rx_buffer,x
+        inc rx_tail
+        ldx #0
+        rts
+@empty:
+        lda #0
+        ldx #0
+        rts
+
+;---------------------------------------
+; uint8_t serial_rx_count(void)
+; Bytes currently waiting in the ring buffer
+;---------------------------------------
+_serial_rx_count:
+        lda rx_head
+        sec
+        sbc rx_tail
+        ldx #0
+        rts
+
+;---------------------------------------
+; uint8_t serial_write(uint8_t byte)
+; Waits for TDRE with a timeout fallback (~2 byte times) so a stuck
+; TDRE (real 65C51 bug) degrades to pacing instead of hanging.
+;---------------------------------------
+_serial_write:
+        tay                     ; save byte
+        ldx #0                  ; timeout: 256 * ~9 cycles per inner pass
+@wait_outer:
+        lda ACIA_STATUS
+        and #ACIA_SR_TDRE
+        bne @send
+        inx
+        bne @wait_outer
+        ; TDRE never set: fall back to a fixed one-byte-time delay
+        lda #11
+@fb_delay:
+        ldx #95
+@fb_inner:
+        dex
+        bne @fb_inner
+        sec
+        sbc #1
+        bne @fb_delay
+@send:
+        sty ACIA_DATA
         lda #1
         ldx #0
         rts
 
 ;---------------------------------------
-; Read one byte (non-blocking)
-; uint8_t serial_read(void)
-;---------------------------------------
-_serial_read:
-        ; Check if data available in hardware
-        lda ACIA_STATUS
-        and #ACIA_SR_RDRF
-        beq @no_hw_data
-
-        ; Read from hardware
-        lda ACIA_DATA
-        ldx #0
-        rts
-
-@no_hw_data:
-        ; Try buffer (simplified for now)
-        lda #0
-        ldx #0
-        rts
-
-;---------------------------------------
-; Write one byte (blocking - waits for TX ready)
-; uint8_t serial_write(uint8_t byte)
-; Note: 6551 TDRE flag is buggy, use fixed delay
-;---------------------------------------
-_serial_write:
-        ; Byte to write is already in A
-        sta ACIA_DATA
-
-        ; Fixed delay for transmission
-        ; At 9600 baud: ~1042 microseconds per byte
-        pha
-        lda #11
-@tx_delay:
-        ldx #95
-@tx_inner:
-        dex
-        bne @tx_inner
-        sec
-        sbc #1
-        bne @tx_delay
-        pla
-
-        lda #1                  ; Return success
-        ldx #0
-        rts
-
-;---------------------------------------
-; Check if can write
 ; uint8_t serial_can_write(void)
 ;---------------------------------------
 _serial_can_write:
@@ -391,32 +247,79 @@ _serial_can_write:
         rts
 
 ;---------------------------------------
-; Flush TX buffer (wait until sent)
 ; void serial_flush(void)
-; Note: Just add delay since TDRE is buggy
+; Wait until the transmitter is idle (TDRE set, with timeout)
 ;---------------------------------------
 _serial_flush:
-        ; Add a longer delay to ensure last byte is fully transmitted
-        lda #20
-@flush_delay:
-        ldx #100
-@flush_inner:
-        dex
-        bne @flush_inner
-        sec
-        sbc #1
-        bne @flush_delay
+        ldx #0
+@wait:
+        lda ACIA_STATUS
+        and #ACIA_SR_TDRE
+        bne @done
+        inx
+        bne @wait
+@done:
         rts
 
 ;---------------------------------------
-; IRQ handler (not used yet)
+; uint8_t acia_send_at_command(const char* cmd)
+; Send string + CR (response is read by the caller via serial_read)
 ;---------------------------------------
-acia_irq_handler:
-        rti
+_acia_send_at_command:
+        sta ptr1
+        stx ptr1+1
+        ldy #0
+@send_loop:
+        lda (ptr1),y
+        beq @send_cr
+        jsr push_and_write
+        iny
+        bne @send_loop
+@send_cr:
+        lda #13
+        jsr push_and_write
+        lda #0
+        rts
+
+push_and_write:
+        sty tmp1                ; _serial_write clobbers Y
+        jsr _serial_write
+        ldy tmp1
+        rts
 
 ;---------------------------------------
-; Data
+; uint8_t serial_dial(const char* dial_str)
+; Send an AT dial command; caller watches for CONNECT via serial_read.
 ;---------------------------------------
-        .rodata
-at_reset:       .asciiz "ATZ"
-at_echo_off:    .asciiz "ATE0"
+_serial_dial:
+        jsr _acia_send_at_command
+        lda #1
+        sta connected
+        lda #0
+        rts
+
+;---------------------------------------
+; uint8_t serial_init(const char* hostname, uint16_t port)
+;---------------------------------------
+_serial_init:
+        jsr _acia_init_hw
+        lda #0
+        sta connected
+        lda #0
+        rts
+
+;---------------------------------------
+; void serial_disconnect(void)
+;---------------------------------------
+_serial_disconnect:
+        lda #0
+        sta connected
+        rts
+
+;---------------------------------------
+; uint8_t serial_is_connected(void)
+;---------------------------------------
+_serial_is_connected:
+        lda connected
+        ldx #0
+        rts

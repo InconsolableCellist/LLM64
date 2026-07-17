@@ -10,9 +10,13 @@
 #include "serial.h"
 #include "protocol.h"
 
-/* Server configuration - CHANGE THIS TO YOUR PROXY IP */
+/* Server configuration - override with -DSERVER_IP=\"x.x.x.x\" at build time */
+#ifndef SERVER_IP
 #define SERVER_IP   "192.168.1.39"
+#endif
+#ifndef SERVER_PORT
 #define SERVER_PORT "6400"
+#endif
 
 /* Global protocol context */
 ProtoContext proto;
@@ -273,6 +277,11 @@ int main(void) {
         if (debug_row > 20) debug_row = 3;
     }
 
+#ifdef CONNECT_DIRECT
+    /* Direct mode: the ACIA pipe IS the connection (VICE rsdev -> proxy).
+       No modem in the loop, so skip the Hayes AT handshake entirely. */
+    debug_print("INFO", "Direct mode: no modem handshake");
+#else
     /* Send ATZ (reset modem) with debug */
     show_status("Resetting modem...");
     send_at_debug("ATZ", response, sizeof(response));
@@ -391,6 +400,8 @@ int main(void) {
         }
     }
     
+#endif /* !CONNECT_DIRECT */
+
     show_status("Connection established!");
 
     /* Longer delay to ensure connection is stable */
@@ -541,9 +552,9 @@ int main(void) {
     {
         uint8_t done = 0;
         uint16_t timeout = 0;
-        uint8_t row = 5;
-
-        gotoxy(0, row);
+        uint8_t chunk_count = 0;
+        uint8_t crc_fails = 0;
+        uint8_t cx = 0, cy = 21;  /* chunk text area: rows 21-23 */
 
         while (!done && timeout < 1800) {  /* 30 second timeout */
             if (serial_available()) {
@@ -556,10 +567,15 @@ int main(void) {
                     show_status((char*)payload);
 
                 } else if (msg_type == MSG_CHAT_CHUNK) {
-                    /* Chat chunk */
+                    /* Chat chunk - skip sequence number byte */
                     uint8_t* payload = proto_get_payload(&proto);
-                    /* Skip sequence number byte */
+                    ++chunk_count;
+                    gotoxy(cx, cy);
+                    textcolor(COLOR_WHITE);
                     cputs((char*)(payload + 1));
+                    cx = wherex();
+                    cy = wherey();
+                    if (cy > 23) cy = 21;  /* wrap within chunk area */
 
                 } else if (msg_type == MSG_CHAT_DONE) {
                     /* Done! */
@@ -571,6 +587,9 @@ int main(void) {
                     uint8_t* payload = proto_get_payload(&proto);
                     show_status((char*)payload);
                     done = 1;
+
+                } else if (msg_type == PROTO_CRC_FAIL) {
+                    ++crc_fails;
                 }
 
                 timeout = 0;  /* Reset timeout on any data */
@@ -584,6 +603,15 @@ int main(void) {
             timeout++;
         }
 
+        /* Show receive statistics in the debug area */
+        gotoxy(0, debug_row);
+        textcolor(COLOR_CYAN);
+        cputs("Chunks: ");
+        debug_hex(chunk_count);
+        cputs(" CRC fails: ");
+        debug_hex(crc_fails);
+        debug_row++;
+
         if (!done) {
             show_status("Timeout waiting for response");
         }
@@ -595,6 +623,7 @@ int main(void) {
         for (i = 0; i < 30000; i++);
     }
     show_status("Test complete! Press any key...");
+    while (kbhit()) cgetc();  /* drop leftover autostart keystrokes */
     cgetc();
     goto cleanup;
 
@@ -604,6 +633,7 @@ error:
         for (i = 0; i < 30000; i++);
     }
     cputs("\n\nPress any key to exit...");
+    while (kbhit()) cgetc();
     cgetc();
 
 cleanup:

@@ -13,8 +13,18 @@ TARGET = c64llm
 TARGETDIR = build
 PRG = $(TARGETDIR)/$(TARGET).prg
 
+# Connection mode: hayes (AT dial, real C64 Ultimate) or direct (raw pipe, VICE)
+CONNECT ?= hayes
+# Proxy server address baked into the binary
+SERVER_IP ?= 192.168.1.39
+SERVER_PORT ?= 6400
+
 # Compiler flags
 CFLAGS = -t c64 -O -Or -Cl -I include
+CFLAGS += -DSERVER_IP=\"$(SERVER_IP)\" -DSERVER_PORT=\"$(SERVER_PORT)\"
+ifeq ($(CONNECT),direct)
+CFLAGS += -DCONNECT_DIRECT
+endif
 ASFLAGS = -t c64 -I include
 LDFLAGS = -t c64 -m $(TARGETDIR)/$(TARGET).map
 
@@ -36,6 +46,11 @@ $(PRG): $(OBJECTS)
 	CC65_HOME=$(CC65_HOME) $(CC) $(LDFLAGS) -o $@ $^
 	@echo "Build complete: $(PRG)"
 	@ls -lh $(PRG)
+
+$(OBJECTS): | $(TARGETDIR)
+
+$(TARGETDIR):
+	mkdir -p $(TARGETDIR)
 
 # Compile C files (compile to .s then assemble to .o)
 $(TARGETDIR)/%.o: src/%.c
