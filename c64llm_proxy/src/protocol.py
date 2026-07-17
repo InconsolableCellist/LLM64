@@ -3,8 +3,12 @@
 import struct
 import asyncio
 from enum import IntEnum
+from pathlib import Path
 from typing import Callable, Optional
 import logging
+
+from .modes import (Mode, AdventureMode, RoleplayMode, CharacterCard,
+                    find_cards)
 
 
 class MessageType(IntEnum):
@@ -58,6 +62,8 @@ class ProtocolHandler:
     def __init__(self, conv_manager, api_client):
         self.conv_manager = conv_manager
         self.api_client = api_client
+        self.config = api_client.config
+        self.mode = Mode(self.config)
         self.logger = logging.getLogger(__name__)
 
         # Parser state
@@ -219,9 +225,14 @@ class ProtocolHandler:
         """Handle chat request from C64"""
         # Extract message text (null-terminated)
         text = self.payload.rstrip(b'\x00').decode('ascii', errors='replace')
+        text = text.strip()
         self.logger.info(f"Chat request: {text[:50]}...")
 
         await self.send_ack()
+
+        if text.startswith('/'):
+            await self.handle_command(text)
+            return
 
         # Add user message to conversation
         self.conv_manager.add_message('user', text)
@@ -229,7 +240,104 @@ class ProtocolHandler:
         # Start streaming task
         self.stream_task = asyncio.create_task(self._stream_response())
 
-    async def _stream_response(self):
+    # --- slash commands / modes ---------------------------------------
+
+    async def handle_command(self, text: str):
+        """Mode-switching commands typed on the C64 (/adventure, /char...)"""
+        parts = text[1:].split(None, 1)
+        cmd = parts[0].lower() if parts else ''
+        arg = parts[1].strip() if len(parts) > 1 else ''
+
+        if cmd == 'help':
+            await self._send_canned(
+                "Commands:\n"
+                "/chat - plain chat mode\n"
+                "/adventure [theme] - text adventure\n"
+                "/chars - list character cards\n"
+                "/char <name> - roleplay with a card\n"
+                "/mode - show current mode")
+
+        elif cmd == 'mode':
+            await self._send_canned(f"Current mode: {self.mode.label}")
+
+        elif cmd == 'chat':
+            self._switch_mode(Mode(self.config))
+            await self._send_canned("Chat mode. New conversation started.")
+
+        elif cmd in ('adventure', 'adv'):
+            self._switch_mode(AdventureMode(self.config, theme=arg))
+            await self.send_status("Generating your adventure...")
+            self.stream_task = asyncio.create_task(
+                self._stream_response(hidden_user_msg=self.mode.kickoff()))
+
+        elif cmd == 'chars':
+            cards = find_cards(Path(self.config.cards_dir))
+            if cards:
+                lines = ["Characters:"]
+                lines += [f"- {name}" for name, _ in cards]
+                lines.append("Start with: /char <name>")
+                await self._send_canned("\n".join(lines))
+            else:
+                await self._send_canned(
+                    f"No cards found in {self.config.cards_dir}. "
+                    "Drop SillyTavern .json cards there.")
+
+        elif cmd == 'char':
+            await self._start_roleplay(arg)
+
+        else:
+            await self._send_canned(
+                f"Unknown command: /{cmd} (try /help)")
+
+    def _switch_mode(self, mode):
+        self.mode = mode
+        self.conv_manager.new_conversation()
+        self.logger.info(f"Mode -> {mode.label}")
+
+    async def _start_roleplay(self, query: str):
+        if not query:
+            await self._send_canned("Usage: /char <name> (see /chars)")
+            return
+        cards = find_cards(Path(self.config.cards_dir))
+        match = None
+        q = query.lower()
+        for name, path in cards:
+            if name.lower().startswith(q) or q in name.lower():
+                match = (name, path)
+                break
+        if not match:
+            await self._send_canned(
+                f"No card matching '{query}'. See /chars.")
+            return
+
+        card = CharacterCard.load(match[1], user_name=self.config.user_name)
+        self._switch_mode(RoleplayMode(self.config, card))
+
+        greeting = self.mode.greeting()
+        if greeting:
+            # Stream the card's first_mes as the opening assistant turn
+            self.conv_manager.add_message('assistant', greeting)
+            self.conv_manager.save()
+            await self._send_canned(greeting)
+        else:
+            await self._send_canned(
+                f"You are now talking to {card.name}.")
+
+    async def _send_canned(self, text: str):
+        """Stream local text to the C64 as a normal reply (no API call)."""
+        seq = 0
+        for i in range(0, len(text), 60):
+            payload = bytearray()
+            payload.append(seq)
+            payload.extend(text[i:i + 60].encode('ascii', errors='replace'))
+            payload.append(0x00)
+            await self.send_message(MessageType.CHAT_CHUNK, bytes(payload))
+            seq = (seq + 1) % 256
+            await asyncio.sleep(0.02)
+        await self.send_message(MessageType.CHAT_DONE,
+                                struct.pack('<BH', seq, len(text)))
+
+    async def _stream_response(self, hidden_user_msg: str = None):
         """Stream API response to C64"""
         try:
             await self.send_status("Contacting API...")
@@ -237,10 +345,24 @@ class ProtocolHandler:
             seq = 0
             full_response = ""
 
+            messages = self.conv_manager.get_messages()
+            if hidden_user_msg:
+                # Mode kickoff: sent to the API but not persisted
+                messages = messages + [
+                    {'role': 'user', 'content': hidden_user_msg}]
+
             # Stream from API
-            async for chunk in self.api_client.stream_chat(
-                self.conv_manager.get_messages()
+            thinking_notified = False
+            async for kind, chunk in self.api_client.stream_chat(
+                messages,
+                system_prompt=self.mode.system_prompt(),
+                sampling=self.mode.sampling()
             ):
+                if kind == 'reasoning':
+                    if not thinking_notified:
+                        thinking_notified = True
+                        await self.send_status("Thinking...")
+                    continue
                 if chunk:
                     full_response += chunk
 

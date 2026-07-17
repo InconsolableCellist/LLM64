@@ -8,7 +8,29 @@ base_url = "https://mlboy.tail99c274.ts.net:5000/v1"
 model = "gemma4-26b-a4b-it-qat-q4-mlboy"
 temperature = 0.7
 max_tokens = 800
+# Suppress model thinking blocks (huge pause + token burn on the C64).
+# Set false if you want the model to think; the C64 shows "Thinking...".
+disable_thinking = true
 system_prompt = """You are chatting with a user on a Commodore 64 with a 40-column screen. Keep replies short and conversational. Use plain ASCII only: no markdown, no code fences unless asked, no unicode punctuation, no emoji."""
 
 [storage]
 data_dir = "./data"
+
+[modes]
+# Name used for {{user}} in character cards
+user_name = "You"
+# Directory of SillyTavern .json character cards (see /chars on the C64)
+cards_dir = "./cards"
+
+# Sampling per mode. Defaults are Gemma's recommended settings
+# (temperature 1.0, top_k 64, top_p 0.95); llama.cpp also accepts
+# min_p and repetition_penalty here.
+[modes.adventure]
+temperature = 1.0
+top_k = 64
+top_p = 0.95
+
+[modes.roleplay]
+temperature = 1.0
+top_k = 64
+top_p = 0.95

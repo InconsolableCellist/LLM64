@@ -55,7 +55,19 @@ class MockHandler(BaseHTTPRequestHandler):
             if msg.get('role') == 'user':
                 user_text = msg.get('content', '')
 
-        text = LONG_RESPONSE if 'LONGTEST' in user_text.upper() else DEFAULT_RESPONSE
+        upper = user_text.upper()
+        if 'LONGTEST' in upper:
+            text = LONG_RESPONSE
+        elif 'PARAMTEST' in upper:
+            # Echo the sampling parameters so tests can assert they arrived
+            text = ('params: temp {} topk {} topp {}'.format(
+                request.get('temperature'), request.get('top_k'),
+                request.get('top_p')))
+        elif 'BEGIN THE ADVENTURE' in upper:
+            text = ('You awaken in a dark room smelling of ozone. A single '
+                    'door stands to the north. Your quest awaits.')
+        else:
+            text = DEFAULT_RESPONSE
 
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')

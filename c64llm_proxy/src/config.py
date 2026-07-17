@@ -59,6 +59,12 @@ class Config:
             config.get('api', {}).get('max_tokens', 2000)
         ))
 
+        # Disable model thinking blocks (Gemma/Qwen style) via
+        # chat_template_kwargs - thinking eats the token budget and the C64
+        # user just sees a long pause.
+        self.disable_thinking = bool(
+            config.get('api', {}).get('disable_thinking', True))
+
         self.system_prompt = os.getenv(
             'OPENAI_SYSTEM_PROMPT',
             config.get('api', {}).get('system_prompt', '')
@@ -68,6 +74,25 @@ class Config:
             'data_dir',
             './data'
         )
+
+        # --- interaction modes -----------------------------------------
+        modes = config.get('modes', {})
+        self.user_name = modes.get('user_name', 'You')
+        self.cards_dir = modes.get('cards_dir', './cards')
+
+        # Gemma's recommended sampling (matches the llama-server preset):
+        # temperature 1.0, top-k 64, top-p 0.95. Only keys present are sent;
+        # note llama.cpp's OpenAI endpoint takes "repetition_penalty".
+        gemma_defaults = {'temperature': 1.0, 'top_k': 64, 'top_p': 0.95}
+        sampling_keys = ('temperature', 'top_p', 'top_k', 'min_p',
+                         'repetition_penalty', 'max_tokens')
+
+        def _sampling(section):
+            found = {k: section[k] for k in sampling_keys if k in section}
+            return found if found else dict(gemma_defaults)
+
+        self.adventure_sampling = _sampling(modes.get('adventure', {}))
+        self.roleplay_sampling = _sampling(modes.get('roleplay', {}))
 
         # API key is optional: local servers (llama.cpp, Ollama, ...) accept
         # any bearer token. Cloud providers still need a real key.

@@ -28,6 +28,10 @@ end-to-end by automated tests running in VICE.
 - **Python proxy**: async TCP server, OpenAI SSE streaming, Open
   WebUI-style conversation persistence, ASCII sanitization, C64-aware
   system prompt
+- **Interaction modes**: `/adventure [theme]` text-adventure GM,
+  `/char <name>` roleplay with SillyTavern character cards (v1/v2),
+  `/chat` to return — with per-mode Gemma-tuned sampling
+  ([docs/06-modes.md](docs/06-modes.md))
 - **Automated end-to-end tests in VICE**: the CI-able `make test-all`
   boots mock LLM → proxy → emulated C64 and asserts on actual screen
   contents (including typing into the emulator through VICE's binary
@@ -116,6 +120,7 @@ local servers), `OPENAI_MODEL`, `OPENAI_SYSTEM_PROMPT`.
   [02-c64-client-design.md](docs/02-c64-client-design.md), [03-linux-proxy-design.md](docs/03-linux-proxy-design.md) — original design
 - [04-emulator-setup.md](docs/04-emulator-setup.md) — VICE + automation
 - [05-ultimate-setup.md](docs/05-ultimate-setup.md) — real hardware
+- [06-modes.md](docs/06-modes.md) — adventure & character-card roleplay
 
 ---
 

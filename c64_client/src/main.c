@@ -158,8 +158,11 @@ static void help_open(void) {
     ui_draw_row(12, "  ctrl-k     kill to end", COLOR_CYAN, 0);
     ui_draw_row(13, "  ctrl-d     delete char", COLOR_CYAN, 0);
     ui_draw_row(14, "  clr/home   clear input", COLOR_CYAN, 0);
-    ui_draw_row(16, "  server: " SERVER_IP ":" SERVER_PORT, COLOR_GRAY2, 0);
-    ui_draw_row(18, "  press any key to close", COLOR_WHITE, 0);
+    ui_draw_row(15, "  modes (type as a message):", COLOR_WHITE, 0);
+    ui_draw_row(16, "  /adventure [theme]  /chars", COLOR_CYAN, 0);
+    ui_draw_row(17, "  /char <name>  /chat  /help", COLOR_CYAN, 0);
+    ui_draw_row(18, "  server: " SERVER_IP ":" SERVER_PORT, COLOR_GRAY2, 0);
+    ui_draw_row(19, "  press any key to close", COLOR_WHITE, 0);
 }
 
 /* --- modal: conversation browser ------------------------------------ */

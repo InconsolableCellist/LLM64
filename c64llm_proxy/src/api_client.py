@@ -26,13 +26,20 @@ class APIClient:
             headers={'Authorization': f'Bearer {self.api_key}'}
         )
 
-    async def stream_chat(self, messages: List[Dict]) -> AsyncIterator[str]:
-        """Stream chat completion from API"""
+    async def stream_chat(self, messages: List[Dict],
+                          system_prompt: str = None,
+                          sampling: Dict = None) -> AsyncIterator[str]:
+        """Stream chat completion from API.
 
-        if self.config.system_prompt and (
-                not messages or messages[0].get('role') != 'system'):
-            messages = [{'role': 'system',
-                         'content': self.config.system_prompt}] + messages
+        system_prompt overrides the configured one (None = use config's).
+        sampling is merged into the request: llama.cpp's OpenAI-compatible
+        endpoint accepts extra fields like top_k / min_p / repeat_penalty.
+        """
+
+        prompt = self.config.system_prompt if system_prompt is None \
+            else system_prompt
+        if prompt and (not messages or messages[0].get('role') != 'system'):
+            messages = [{'role': 'system', 'content': prompt}] + messages
 
         payload = {
             'model': self.model,
@@ -41,6 +48,12 @@ class APIClient:
             'temperature': self.temperature,
             'max_tokens': self.max_tokens
         }
+        if sampling:
+            payload.update(sampling)
+        if self.config.disable_thinking:
+            # llama.cpp honors this for thinking-capable chat templates
+            payload.setdefault('chat_template_kwargs', {})[
+                'enable_thinking'] = False
 
         url = f"{self.base_url}/chat/completions"
 
@@ -69,9 +82,14 @@ class APIClient:
 
                             if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
                                 delta = chunk_data['choices'][0].get('delta', {})
-                                if 'content' in delta:
-                                    content = delta['content']
-                                    yield content
+                                # content may be null on role-announcement
+                                # deltas; reasoning models stream thinking
+                                # separately as reasoning_content
+                                if delta.get('reasoning_content'):
+                                    yield ('reasoning',
+                                           delta['reasoning_content'])
+                                if delta.get('content'):
+                                    yield ('content', delta['content'])
 
                         except json.JSONDecodeError as e:
                             self.logger.warning(f"Failed to parse chunk: {e}")

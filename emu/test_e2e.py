@@ -236,8 +236,29 @@ def main():
                 monitor.keyboard_feed('\r')
                 wait_for_screen(monitor, r'conversation loaded', 30,
                                 artifacts, f'{tag}-loadstatus')
-                final = wait_for_screen(monitor, r'> hello computer', 15,
-                                        artifacts, f'{tag}-loaded')
+                wait_for_screen(monitor, r'> hello computer', 15,
+                                artifacts, f'{tag}-loaded')
+
+                # Adventure mode: kickoff goes through the API (mock
+                # answers the hidden 'Begin the adventure' message)
+                monitor.keyboard_feed('/adventure\r')
+                wait_for_screen(monitor, r'dark room', 60,
+                                artifacts, f'{tag}-adventure')
+                wait_for_screen(monitor, r'ready\. type your message', 30,
+                                artifacts, f'{tag}-adventure-ready')
+
+                # Character cards: list, then load the example card
+                monitor.keyboard_feed('/chars\r')
+                wait_for_screen(monitor, r'captain byte', 30,
+                                artifacts, f'{tag}-chars')
+                monitor.keyboard_feed('/char captain\r')
+                wait_for_screen(monitor, r'ahoy', 30,
+                                artifacts, f'{tag}-greeting')
+
+                # Roleplay sampling params reach the API (mock echoes them)
+                monitor.keyboard_feed('paramtest\r')
+                final = wait_for_screen(monitor, r'temp 1\.0 topk 64', 60,
+                                        artifacts, f'{tag}-sampling')
         else:
             # Scripted debug session runs in warp faster than we can poll,
             # so assert on the durable end state: the client parks on
