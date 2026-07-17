@@ -44,6 +44,15 @@ def screen_code_to_char(value):
     return '?'
 
 
+def ascii_to_petscii(c):
+    """ASCII byte -> PETSCII byte for keyboard input."""
+    if 0x61 <= c <= 0x7A:      # a-z
+        return c - 0x20
+    if 0x41 <= c <= 0x5A:      # A-Z
+        return c + 0x80
+    return c
+
+
 class ViceMonitorError(Exception):
     pass
 
@@ -131,9 +140,13 @@ class ViceMonitor:
         return '\n'.join(self.screen_rows())
 
     def keyboard_feed(self, text):
-        """Type text into the emulated keyboard buffer (PETSCII bytes)."""
-        encoded = text.encode('ascii')
-        self._transact(CMD_KEYBOARD_FEED, bytes([len(encoded)]) + encoded)
+        """Type ASCII text into the emulated keyboard (converted to PETSCII)."""
+        self.keyboard_feed_petscii(bytes(ascii_to_petscii(c)
+                                         for c in text.encode('ascii')))
+
+    def keyboard_feed_petscii(self, data):
+        """Feed raw PETSCII bytes (e.g. b'\\x88' for F7)."""
+        self._transact(CMD_KEYBOARD_FEED, bytes([len(data)]) + data)
         self.resume()
 
     def quit(self):

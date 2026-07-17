@@ -25,6 +25,10 @@ CFLAGS += -DSERVER_IP=\"$(SERVER_IP)\" -DSERVER_PORT=\"$(SERVER_PORT)\"
 ifdef TEST_MESSAGE
 CFLAGS += -DTEST_MESSAGE='"$(TEST_MESSAGE)"'
 endif
+# DEBUG_CLIENT=1 builds the scripted diagnostic session instead of the TUI
+ifdef DEBUG_CLIENT
+CFLAGS += -DDEBUG_CLIENT
+endif
 ifeq ($(CONNECT),direct)
 CFLAGS += -DCONNECT_DIRECT
 endif

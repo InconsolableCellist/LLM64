@@ -127,6 +127,9 @@ def main():
                         help='Use the real API from config.toml instead of the mock')
     parser.add_argument('--expect', default='mock llm',
                         help='Text that must appear on the final screen')
+    parser.add_argument('--tui', action='store_true',
+                        help='Drive the interactive TUI via keyboard injection '
+                             'instead of asserting the scripted debug session')
     args = parser.parse_args()
 
     artifacts = REPO / 'emu' / 'artifacts'
@@ -203,16 +206,39 @@ def main():
         time.sleep(4)
         monitor = ViceMonitor(port=mon_port)
 
-        # 5. Assertions. The scripted session runs in warp faster than we can
-        # poll, so assert on the durable end state: the client parks on
-        # "Test complete!" with the streamed response still on screen.
-        final = wait_for_screen(monitor, r'test complete', args.timeout,
-                                artifacts, f'{args.mode}-complete')
-        if not args.live:
-            final = wait_for_screen(monitor, re.escape(args.expect), 10,
-                                    artifacts, f'{args.mode}-content')
-            wait_for_screen(monitor, r'crc fails: 00', 10,
-                            artifacts, f'{args.mode}-crc')
+        # 5. Assertions
+        tag = f'{args.mode}-tui' if args.tui else args.mode
+        if args.tui:
+            # Interactive TUI: wait for the ready prompt, type a message,
+            # watch it echo, stream, and return to ready.
+            wait_for_screen(monitor, r'ready\. type your message',
+                            args.timeout, artifacts, f'{tag}-ready')
+            monitor.keyboard_feed('hello computer\r')
+            wait_for_screen(monitor, r'> hello computer', 30,
+                            artifacts, f'{tag}-echo')
+            if not args.live:
+                wait_for_screen(monitor, re.escape(args.expect), 60,
+                                artifacts, f'{tag}-content')
+            final = wait_for_screen(monitor, r'ready\. type your message',
+                                    args.timeout, artifacts, f'{tag}-done')
+            # Help overlay round-trip (F7, then any key to close)
+            monitor.keyboard_feed_petscii(b'\x88')
+            wait_for_screen(monitor, r'press any key to close', 15,
+                            artifacts, f'{tag}-help')
+            monitor.keyboard_feed(' ')
+            final = wait_for_screen(monitor, r'> hello computer', 15,
+                                    artifacts, f'{tag}-restore')
+        else:
+            # Scripted debug session runs in warp faster than we can poll,
+            # so assert on the durable end state: the client parks on
+            # "Test complete!" with the streamed response still on screen.
+            final = wait_for_screen(monitor, r'test complete', args.timeout,
+                                    artifacts, f'{tag}-complete')
+            if not args.live:
+                final = wait_for_screen(monitor, re.escape(args.expect), 10,
+                                        artifacts, f'{tag}-content')
+                wait_for_screen(monitor, r'crc fails: 00', 10,
+                                artifacts, f'{tag}-crc')
 
         (artifacts / f'{args.mode}-final.txt').write_text(final)
         print(f"\n--- final screen ---\n{final}\n--------------------")

@@ -15,6 +15,13 @@
 uint8_t petscii_to_ascii(uint8_t c);
 uint8_t ascii_to_petscii(uint8_t c);
 
+/* ASCII -> C64 screen code (for direct screen RAM writes; assumes the
+   shifted charset so lowercase renders as lowercase) */
+uint8_t ascii_to_screen(uint8_t c);
+
+/* PETSCII -> screen code (via ASCII) */
+uint8_t petscii_to_screen(uint8_t c);
+
 /* In-place conversion of null-terminated strings */
 void petscii_to_ascii_str(char* s);
 void ascii_to_petscii_str(char* s);

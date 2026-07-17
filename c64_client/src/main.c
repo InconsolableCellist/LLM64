@@ -1,17 +1,26 @@
 /**
- * C64 LLM Client - Main Entry Point
+ * C64 LLM Client - interactive TUI
+ *
+ * Full-screen chat interface: scrollable chat area (rows 1-19), 3-row
+ * input editor (21-23), status bar (24). Keys: F1/Return send, F2 new
+ * conversation, F3 cancel a streaming reply, F5 conversation browser,
+ * F7 help, cursor up/down scroll the chat area.
+ *
+ * Built out when DEBUG_CLIENT is defined (debug_main.c takes over).
  */
 
-#include <c64.h>
-#include <conio.h>
-#include <stdio.h>
+#ifndef DEBUG_CLIENT
+
 #include <string.h>
+#include <conio.h>
+#include <c64.h>
 #include "common.h"
 #include "serial.h"
 #include "protocol.h"
 #include "text.h"
+#include "ui.h"
+#include "editor.h"
 
-/* Server configuration - override with -DSERVER_IP=\"x.x.x.x\" at build time */
 #ifndef SERVER_IP
 #define SERVER_IP   "192.168.1.39"
 #endif
@@ -19,636 +28,433 @@
 #define SERVER_PORT "6400"
 #endif
 
-/* Message the scripted debug session sends */
-#ifndef TEST_MESSAGE
-#define TEST_MESSAGE "Hello from C64!"
-#endif
+#define KEY_F2 137
+#define KEY_STOP 3
 
-/* Global protocol context */
-ProtoContext proto;
-uint8_t payload_buffer[MAX_PAYLOAD];
+/* App state */
+#define ST_IDLE      0
+#define ST_WAITING   1  /* message sent, reply not started */
+#define ST_STREAMING 2
 
-/* Debug row for modem output */
-static uint8_t debug_row = 3;
+/* Modal overlays */
+#define MODAL_NONE 0
+#define MODAL_CONV 1
+#define MODAL_HELP 2
 
-/* Status display */
-void show_status(const char* msg) {
+static ProtoContext proto;
+static uint8_t payload_buffer[MAX_PAYLOAD];
+
+static uint8_t state = ST_IDLE;
+static uint8_t modal = MODAL_NONE;
+
+/* What the next ACK acknowledges */
+#define PA_NONE    0
+#define PA_NEWCONV 1
+#define PA_CANCEL  2
+static uint8_t pending_ack = PA_NONE;
+
+/* Conversation browser */
+#define MAX_CONVS 17
+typedef struct {
+    uint32_t id;
+    char title[37];  /* PETSCII, null-terminated */
+} ConvEntry;
+static ConvEntry convs[MAX_CONVS];
+static uint8_t conv_count;
+static uint8_t conv_sel;
+static uint8_t conv_loading;
+
+/* ------------------------------------------------------------------ */
+
+static void pump_serial(void);
+
+/* Busy-wait roughly n "ticks" while still draining serial */
+static uint8_t wait_for_ack(uint16_t tries) {
+    uint16_t t;
     uint8_t i;
-    gotoxy(0, STATUS_ROW);
-    textcolor(COLOR_YELLOW);
-    bgcolor(COLOR_BLUE);
-    cputs(msg);
-    /* Clear to end of line manually */
-    for (i = wherex(); i < SCREEN_WIDTH; i++) {
-        cputc(' ');
+    for (t = 0; t < tries; ++t) {
+        while (serial_available()) {
+            if (proto_process_byte(&proto, serial_read()) == MSG_ACK) {
+                return 1;
+            }
+        }
+        for (i = 0; i < 200; ++i);
     }
+    return 0;
 }
 
-/* Debug: show a line of modem output */
-void debug_print(const char* prefix, const char* msg) {
+#ifndef CONNECT_DIRECT
+/* Minimal Hayes dial: send command, wait for terminator, check result */
+static uint8_t at_command(const char* cmd, char* resp, uint8_t max_len) {
     uint8_t i;
-    gotoxy(0, debug_row);
-    textcolor(COLOR_WHITE);
-    bgcolor(COLOR_BLACK);
-    cputs(prefix);
-    cputs(msg);
-    /* Clear to end of line */
-    for (i = wherex(); i < SCREEN_WIDTH; i++) {
-        cputc(' ');
+    uint16_t idle = 0;
+    uint8_t n = 0;
+
+    for (i = 0; cmd[i]; ++i) {
+        while (!serial_can_write());
+        serial_write(petscii_to_ascii((uint8_t)cmd[i]));
     }
-    debug_row++;
-    if (debug_row > 20) debug_row = 3;  /* Wrap around */
-}
-
-/* Debug: show a hex byte */
-void debug_hex(uint8_t byte) {
-    static const char hex[] = "0123456789ABCDEF";
-    cputc(hex[(byte >> 4) & 0x0F]);
-    cputc(hex[byte & 0x0F]);
-    cputc(' ');
-}
-
-/* Clear screen and setup */
-void init_screen(void) {
-    clrscr();
-    bordercolor(COLOR_BLUE);
-    bgcolor(COLOR_BLACK);
-    textcolor(COLOR_LIGHTGREEN);
-    *(uint8_t*)0xD018 = 0x17;  /* shifted charset: mixed-case text */
-
-    /* Title */
-    gotoxy(0, 0);
-    cputs("C64 LLM CLIENT v0.1 - DEBUG MODE");
-    
-    /* Server info */
-    gotoxy(0, 1);
-    textcolor(COLOR_CYAN);
-    cputs("Server: ");
-    cputs(SERVER_IP);
-    cputs(":");
-    cputs(SERVER_PORT);
-    cputs(" @ 9600 baud");
-
-    /* Debug area header */
-    gotoxy(0, 2);
-    textcolor(COLOR_YELLOW);
-    cputs("--- MODEM I/O ---");
-
-    /* Status line */
-    show_status("Initializing...");
-}
-
-/* Send AT command with debug output and capture response */
-uint8_t send_at_debug(const char* cmd, char* response, uint8_t max_len) {
-    uint8_t i;
-    uint16_t timeout;
-    uint8_t resp_idx = 0;
-    uint8_t byte;
-    uint8_t cmd_len;
-    uint8_t echo_skip = 0;
-    
-    /* Show command being sent */
-    debug_print("TX> ", cmd);
-    
-    /* Calculate command length for echo detection */
-    for (cmd_len = 0; cmd[cmd_len] != 0; cmd_len++);
-    
-    /* Send the command character by character (modem wants ASCII) */
-    for (i = 0; cmd[i] != 0; i++) {
-        while (!serial_can_write());  /* Wait for TX ready */
-        serial_write(petscii_to_ascii(cmd[i]));
-    }
-    
-    /* Send CR */
     while (!serial_can_write());
     serial_write(13);
-    
-    /* Flush */
     serial_flush();
-    
-    /* Wait for response with timeout */
-    timeout = 0;
-    resp_idx = 0;
-    
-    /* Longer delay for modem to process */
-    {
-        uint16_t j;
-        for (j = 0; j < 30000; j++);
-    }
-    
-    /* Read response - skip echo of command if present */
-    while (timeout < 5000 && resp_idx < max_len - 1) {
+
+    while (idle < 12000 && n < max_len - 1) {
         if (serial_available()) {
-            byte = serial_read();
-            
-            /* Skip echo of the command we sent (echo arrives as ASCII) */
-            if (echo_skip < cmd_len && byte == petscii_to_ascii(cmd[echo_skip])) {
-                echo_skip++;
-                timeout = 0;
-                continue;
+            uint8_t b = serial_read();
+            idle = 0;
+            if (b >= 32 && b < 127) {
+                resp[n++] = ascii_to_petscii(b);
             }
-
-            /* Store printable chars that aren't part of echo */
-            if (byte >= 32 && byte < 127) {
-                response[resp_idx++] = ascii_to_petscii(byte);
-            } else if (byte == 13 || byte == 10) {
-                /* CR/LF - could be end of response line */
-                if (resp_idx > 0) {
-                    /* Got a real response, wait a bit more for additional data */
-                    uint16_t extra_wait;
-                    for (extra_wait = 0; extra_wait < 1000; extra_wait++) {
-                        if (serial_available()) {
-                            byte = serial_read();
-                            if (byte >= 32 && byte < 127) {
-                                response[resp_idx++] = ascii_to_petscii(byte);
-                            } else if ((byte == 13 || byte == 10) && resp_idx > 0) {
-                                break;
-                            }
-                            extra_wait = 0;
-                        }
-                    }
-                    break;
-                }
-            }
-            timeout = 0;  /* Reset timeout on data */
         } else {
-            timeout++;
-            /* Small delay */
-            {
-                uint8_t j;
-                for (j = 0; j < 50; j++);
-            }
+            ++idle;
         }
     }
-    
-    response[resp_idx] = 0;  /* Null terminate */
-    
-    /* Show response */
-    if (resp_idx > 0) {
-        debug_print("RX< ", response);
-    } else {
-        debug_print("RX< ", "(no response)");
-    }
-    
-    return resp_idx;
+    resp[n] = 0;
+    return n;
 }
 
-/* Check if response contains a string */
-uint8_t response_contains(const char* response, const char* search) {
-    uint8_t i, j;
-    for (i = 0; response[i] != 0; i++) {
-        for (j = 0; search[j] != 0; j++) {
-            if (response[i + j] != search[j]) break;
-        }
-        if (search[j] == 0) return 1;  /* Found */
-    }
-    return 0;
-}
+static uint8_t modem_connect(void) {
+    char resp[64];
 
-/* Wait for a specific message type with timeout */
-uint8_t wait_for_message(uint8_t expected_type, uint16_t timeout_frames) {
-    uint16_t frames = 0;
+    ui_status("Resetting modem...");
+    at_command("ATZ", resp, sizeof(resp));
+    at_command("ATE0", resp, sizeof(resp));
+    at_command("ATV1", resp, sizeof(resp));
 
-    while (frames < timeout_frames) {
-        /* Check for serial data */
-        if (serial_available()) {
-            uint8_t byte = serial_read();
-            uint8_t msg_type = proto_process_byte(&proto, byte);
+    ui_status("Dialing " SERVER_IP ":" SERVER_PORT "...");
+    at_command("ATDT" SERVER_IP ":" SERVER_PORT, resp, sizeof(resp));
 
-            if (msg_type != 0) {
-                /* Got a complete message */
-                if (msg_type == expected_type) {
-                    return 1;  /* Success */
-                }
-            }
-        }
-
-        /* Small delay (approximate frame) */
-        {
-            uint8_t i;
-            for (i = 0; i < 100; i++);
-        }
-        frames++;
+    if (strstr(resp, "CONNECT") == 0 && strstr(resp, "connect") == 0) {
+        return 0;
     }
 
-    return 0;  /* Timeout */
-}
-
-/* Main program */
-int main(void) {
-    uint8_t result;
-    char response[64];
-    char dial_cmd[48];
-
-    /* Initialize screen */
-    init_screen();
-
-    /* Initialize protocol */
-    proto_init(&proto, payload_buffer, MAX_PAYLOAD);
-
-    /* Show status */
-    show_status("Initializing ACIA hardware...");
-
-    /* Initialize ACIA hardware directly (don't use serial_init's AT commands) */
-    acia_init_hw();
-    
-    debug_print("INFO", "ACIA initialized at $DE00 (9600 baud)");
-    
-    /* Show ACIA status register */
+    /* Drain any modem chatter after CONNECT */
     {
-        uint8_t status = acia_get_status();
-        gotoxy(0, debug_row);
-        textcolor(COLOR_CYAN);
-        cputs("ACIA Status: ");
-        debug_hex(status);
-        /* Decode status bits */
-        cputs(" [");
-        if (status & 0x08) cputs("RDRF ");  /* Receive Data Register Full */
-        if (status & 0x10) cputs("TDRE ");  /* Transmit Data Register Empty */
-        if (!(status & 0x20)) cputs("DCD ");  /* Data Carrier Detect (active low) */
-        if (!(status & 0x40)) cputs("DSR ");  /* Data Set Ready (active low) */
-        if (status & 0x80) cputs("IRQ");    /* Interrupt */
-        cputs("]");
-        debug_row++;
-        if (debug_row > 20) debug_row = 3;
-    }
-    
-    /* Check status again after delay */
-    {
-        uint8_t status = acia_get_status();
-        gotoxy(0, debug_row);
-        textcolor(COLOR_CYAN);
-        cputs("Status after delay: ");
-        debug_hex(status);
-        debug_row++;
-        if (debug_row > 20) debug_row = 3;
-    }
-
-#ifdef CONNECT_DIRECT
-    /* Direct mode: the ACIA pipe IS the connection (VICE rsdev -> proxy).
-       No modem in the loop, so skip the Hayes AT handshake entirely. */
-    debug_print("INFO", "Direct mode: no modem handshake");
-#else
-    /* Send ATZ (reset modem) with debug */
-    show_status("Resetting modem...");
-    send_at_debug("ATZ", response, sizeof(response));
-
-    /* Send ATE0 (echo OFF - critical!) */
-    show_status("Disabling echo...");
-    send_at_debug("ATE0", response, sizeof(response));
-    
-    /* Send ATV1 (verbose responses - "OK" instead of "0") */
-    show_status("Setting verbose mode...");
-    send_at_debug("ATV1", response, sizeof(response));
-
-    /* Build dial command with correct server IP */
-    strcpy(dial_cmd, "ATDT");
-    strcat(dial_cmd, SERVER_IP);
-    strcat(dial_cmd, ":");
-    strcat(dial_cmd, SERVER_PORT);
-    
-    /* Dial the server */
-    show_status("Dialing server...");
-    send_at_debug(dial_cmd, response, sizeof(response));
-    
-    /* Check for CONNECT in response */
-    if (response_contains(response, "CONNECT")) {
-        show_status("CONNECT received!");
-    } else if (response_contains(response, "OK")) {
-        /* Some modems return OK first, then CONNECT */
-        debug_print("INFO", "Got OK, waiting for CONNECT...");
-        
-        /* Wait for CONNECT */
-        {
-            uint16_t timeout;
-            uint8_t idx = 0;
-            
-            for (timeout = 0; timeout < 5000 && idx < sizeof(response) - 1; timeout++) {
-                if (serial_available()) {
-                    uint8_t byte = serial_read();
-                    if (byte >= 32 && byte < 127) {
-                        response[idx++] = ascii_to_petscii(byte);
-                    }
-                    timeout = 0;
-                }
-            }
-            response[idx] = 0;
-            
-            if (idx > 0) {
-                debug_print("RX< ", response);
-            }
-        }
-        
-        if (!response_contains(response, "CONNECT")) {
-            show_status("ERROR: No CONNECT received!");
-            goto error;
-        }
-        show_status("CONNECT received!");
-    } else if (response_contains(response, "NO CARRIER") || 
-               response_contains(response, "ERROR") ||
-               response_contains(response, "BUSY")) {
-        show_status("ERROR: Connection failed!");
-        goto error;
-    } else if (response[0] == 0) {
-        /* No response at all - modem might not be responding */
-        show_status("ERROR: No modem response!");
-        debug_print("ERR ", "Check ACIA at $DE00");
-        goto error;
-    } else {
-        /* Unknown response - show it and continue anyway */
-        debug_print("WARN", "Unexpected response, continuing...");
-    }
-
-    /* Drain any remaining modem output thoroughly */
-    debug_print("INFO", "Draining modem buffer...");
-    {
-        uint16_t timeout;
-        uint8_t drain_count = 0;
-        for (timeout = 0; timeout < 2000; timeout++) {
+        uint16_t idle;
+        for (idle = 0; idle < 8000; ++idle) {
             if (serial_available()) {
-                uint8_t b = serial_read();
-                drain_count++;
-                /* Show drained bytes for debugging */
-                if (drain_count <= 10) {
-                    gotoxy(0, debug_row);
-                    textcolor(COLOR_GRAY1);
-                    cputs("Drain: ");
-                    debug_hex(b);
-                    if (b >= 32 && b < 127) {
-                        cputc('\''); cputc(b); cputc('\'');
-                    }
-                    debug_row++;
-                    if (debug_row > 20) debug_row = 3;
-                }
-                timeout = 0;
+                serial_read();
+                idle = 0;
             }
         }
-        if (drain_count > 0) {
-            gotoxy(0, debug_row);
-            cputs("Drained ");
-            {
-                char buf[8];
-                uint8_t idx = 0;
-                uint8_t n = drain_count;
-                if (n == 0) buf[idx++] = '0';
-                else while (n > 0) { buf[idx++] = '0' + (n % 10); n /= 10; }
-                buf[idx] = 0;
-                /* Reverse */
-                {
-                    uint8_t i;
-                    for (i = 0; i < idx / 2; i++) {
-                        char t = buf[i]; buf[i] = buf[idx-1-i]; buf[idx-1-i] = t;
-                    }
-                }
-                cputs(buf);
+    }
+    return 1;
+}
+#endif
+
+/* --- modal: help ---------------------------------------------------- */
+
+static void help_open(void) {
+    modal = MODAL_HELP;
+    chat_area_clear_screen();
+    ui_draw_row(2,  "  C64 LLM client - help", COLOR_WHITE, 0);
+    ui_draw_row(4,  "  F1/Return  send message", COLOR_CYAN, 0);
+    ui_draw_row(5,  "  F2         new conversation", COLOR_CYAN, 0);
+    ui_draw_row(6,  "  F3         cancel reply", COLOR_CYAN, 0);
+    ui_draw_row(7,  "  F5         conversation browser", COLOR_CYAN, 0);
+    ui_draw_row(8,  "  F7         this help", COLOR_CYAN, 0);
+    ui_draw_row(10, "  crsr up/dn scroll chat", COLOR_CYAN, 0);
+    ui_draw_row(11, "  ctrl-a/e   start/end of input", COLOR_CYAN, 0);
+    ui_draw_row(12, "  ctrl-k     kill to end", COLOR_CYAN, 0);
+    ui_draw_row(13, "  ctrl-d     delete char", COLOR_CYAN, 0);
+    ui_draw_row(14, "  clr/home   clear input", COLOR_CYAN, 0);
+    ui_draw_row(16, "  server: " SERVER_IP ":" SERVER_PORT, COLOR_GRAY2, 0);
+    ui_draw_row(18, "  press any key to close", COLOR_WHITE, 0);
+}
+
+/* --- modal: conversation browser ------------------------------------ */
+
+static void conv_draw(void) {
+    uint8_t i;
+    chat_area_clear_screen();
+    ui_draw_row(1, " Conversations (return=load, f5=close)",
+                COLOR_WHITE, 0);
+    if (conv_loading) {
+        ui_draw_row(3, "  loading...", COLOR_GRAY2, 0);
+        return;
+    }
+    if (conv_count == 0) {
+        ui_draw_row(3, "  (none found)", COLOR_GRAY2, 0);
+        return;
+    }
+    for (i = 0; i < conv_count; ++i) {
+        ui_draw_row(2 + i, convs[i].title, COLOR_CYAN, i == conv_sel);
+    }
+}
+
+static void conv_open(void) {
+    modal = MODAL_CONV;
+    conv_count = 0;
+    conv_sel = 0;
+    conv_loading = 1;
+    conv_draw();
+    proto_send_list_conversations();
+}
+
+static void conv_close(void) {
+    modal = MODAL_NONE;
+    chat_redraw();
+}
+
+static void conv_load_selected(void) {
+    uint32_t id = convs[conv_sel].id;
+    conv_close();
+    chat_clear();
+    ui_status("Loading conversation...");
+    proto_send_message(MSG_LOAD_CONVERSATION, (uint8_t*)&id, 4);
+}
+
+/* Parse a CONVERSATION_LIST frame: count, more, then
+   [id(4) timestamp(4) title\0] per entry */
+static void conv_list_frame(void) {
+    uint8_t* p = proto_get_payload(&proto);
+    uint16_t plen = proto_get_length(&proto);
+    uint8_t n = p[0];
+    uint8_t more = p[1];
+    uint16_t off = 2;
+    uint8_t i;
+
+    for (i = 0; i < n && conv_count < MAX_CONVS && off + 8 < plen; ++i) {
+        ConvEntry* e = &convs[conv_count];
+        uint8_t t = 0;
+        memcpy(&e->id, p + off, 4);
+        off += 8;  /* id + timestamp */
+        while (off < plen && p[off] && t < sizeof(e->title) - 1) {
+            e->title[t++] = ascii_to_petscii(p[off++]);
+        }
+        e->title[t] = 0;
+        ++off;  /* null */
+        ++conv_count;
+    }
+    if (!more || conv_count >= MAX_CONVS) {
+        conv_loading = 0;
+    }
+    if (modal == MODAL_CONV) conv_draw();
+}
+
+/* Parse a CONVERSATION_DATA frame: count, more, then [role text\0] */
+static void conv_data_frame(void) {
+    uint8_t* p = proto_get_payload(&proto);
+    uint16_t plen = proto_get_length(&proto);
+    uint8_t n = p[0];
+    uint8_t more = p[1];
+    uint16_t off = 2;
+    uint8_t i;
+
+    for (i = 0; i < n && off < plen; ++i) {
+        uint8_t role = p[off++];
+        chat_start(role ? 1 : 0);
+        if (!role) chat_append_petscii("> ");
+        while (off < plen && p[off]) {
+            chat_append_ascii_char(p[off++]);
+        }
+        ++off;
+        chat_finish();
+    }
+    if (!more) {
+        ui_status("Conversation loaded. Ready.");
+    }
+}
+
+/* --- protocol dispatch ---------------------------------------------- */
+
+static void handle_message(uint8_t msg_type) {
+    switch (msg_type) {
+        case MSG_STATUS: {
+            char* p = (char*)proto_get_payload(&proto);
+            ascii_to_petscii_str(p);
+            ui_status(p);
+            break;
+        }
+        case MSG_CHAT_CHUNK: {
+            uint8_t* p = proto_get_payload(&proto);
+            if (state != ST_STREAMING) {
+                state = ST_STREAMING;
+                chat_start(1);
+                ui_status("Receiving... (F3 to cancel)");
             }
-            cputs(" bytes");
-            debug_row++;
+            chat_append_ascii((char*)(p + 1));  /* skip sequence byte */
+            chat_redraw();
+            break;
+        }
+        case MSG_CHAT_DONE:
+            if (state != ST_IDLE) {
+                chat_finish();
+                state = ST_IDLE;
+                ui_status("Ready. Type your message.");
+            }
+            break;
+        case MSG_CHAT_ERROR: {
+            char* p = (char*)proto_get_payload(&proto);
+            chat_start(2);
+            chat_append_petscii("error: ");
+            chat_append_ascii(p);
+            chat_finish();
+            state = ST_IDLE;
+            ui_status("Error from server. Ready.");
+            break;
+        }
+        case MSG_ACK:
+            if (pending_ack == PA_NEWCONV) {
+                chat_clear();
+                ui_status("New conversation. Ready.");
+            } else if (pending_ack == PA_CANCEL) {
+                ui_status("Cancelled. Ready.");
+            }
+            pending_ack = PA_NONE;
+            break;
+        case MSG_CONVERSATION_LIST:
+            conv_list_frame();
+            break;
+        case MSG_CONVERSATION_DATA:
+            conv_data_frame();
+            break;
+        default:
+            break;
+    }
+}
+
+static void pump_serial(void) {
+    while (serial_available()) {
+        uint8_t msg = proto_process_byte(&proto, serial_read());
+        if (msg && msg != PROTO_CRC_FAIL) {
+            handle_message(msg);
         }
     }
-    
-#endif /* !CONNECT_DIRECT */
+}
 
-    show_status("Connection established!");
+/* --- actions --------------------------------------------------------- */
 
-    /* Longer delay to ensure connection is stable */
-    {
-        uint32_t i;
-        for (i = 0; i < 50000UL; i++);
+static void send_message(void) {
+    if (state != ST_IDLE) {
+        ui_status("Busy - wait or press F3 to cancel.");
+        return;
     }
+    if (editor_len() == 0) return;
 
-    /* Send PING */
-    show_status("Sending PING...");
-    debug_print("PROTO", "Sending PING message");
-    proto_send_ping();
-    
-    /* Small delay after sending */
-    {
-        uint16_t i;
-        for (i = 0; i < 5000; i++);
-    }
+    chat_start(0);
+    chat_append_petscii("> ");
+    chat_append_petscii(editor_text());
+    chat_finish();
 
-    /* Debug: show bytes being received */
-    debug_print("PROTO", "Waiting for PONG (ACK)...");
-    
-    /* Wait for ACK with debug */
-    {
-        uint16_t frames = 0;
-        uint8_t got_pong = 0;
-        uint8_t rx_count = 0;
-        
-        while (frames < 600 && !got_pong) {  /* 10 second timeout */
-            if (serial_available()) {
-                uint8_t byte = serial_read();
-                uint8_t msg_type;
-                
-                /* Show raw bytes received */
-                gotoxy(0, debug_row);
-                textcolor(COLOR_GRAY2);
-                cputs("RX byte: ");
-                debug_hex(byte);
-                if (byte >= 32 && byte < 127) {
-                    cputc('\'');
-                    cputc(byte);
-                    cputc('\'');
-                }
-                debug_row++;
-                if (debug_row > 20) debug_row = 3;
-                
-                rx_count++;
-                
-                msg_type = proto_process_byte(&proto, byte);
-                if (msg_type != 0) {
-                    if (msg_type == MSG_ACK) {
-                        got_pong = 1;
-                        debug_print("PROTO", "Got ACK (PONG)!");
-                    } else {
-                        /* Show what message type we got */
-                        gotoxy(0, debug_row);
-                        textcolor(COLOR_LIGHTRED);
-                        cputs("Got msg type: ");
-                        debug_hex(msg_type);
-                        if (msg_type == MSG_PING) cputs("(PING-echo!)");
-                        else if (msg_type == MSG_NAK) cputs("(NAK)");
-                        debug_row++;
-                    }
-                }
-            }
-            
-            /* Small delay */
-            {
-                uint8_t i;
-                for (i = 0; i < 100; i++);
-            }
-            frames++;
-        }
-        
-        if (got_pong) {
-            show_status("PONG! Server responded!");
-        } else {
-            gotoxy(0, debug_row);
-            textcolor(COLOR_LIGHTRED);
-            cputs("Timeout! RX bytes: ");
-            /* Print rx_count */
-            {
-                char buf[8];
-                uint8_t idx = 0;
-                uint8_t n = rx_count;
-                if (n == 0) {
-                    buf[idx++] = '0';
-                } else {
-                    while (n > 0) {
-                        buf[idx++] = '0' + (n % 10);
-                        n /= 10;
-                    }
-                }
-                buf[idx] = 0;
-                /* Reverse */
-                {
-                    uint8_t i;
-                    for (i = 0; i < idx / 2; i++) {
-                        char t = buf[i];
-                        buf[i] = buf[idx - 1 - i];
-                        buf[idx - 1 - i] = t;
-                    }
-                }
-                cputs(buf);
-            }
-            debug_row++;
-            show_status("Timeout waiting for PONG");
-            goto error;
-        }
-    }
+    proto_send_chat(editor_text());
+    editor_clear();
+    state = ST_WAITING;
+    ui_status("Sending...");
+}
 
-    /* Small delay */
-    {
-        uint16_t i;
-        for (i = 0; i < 30000; i++);
-    }
-
-    /* Create new conversation */
-    show_status("Creating new conversation...");
+static void new_conversation(void) {
+    if (state != ST_IDLE) return;
+    pending_ack = PA_NEWCONV;
     proto_send_new_conversation();
+    ui_status("Starting new conversation...");
+}
 
-    if (wait_for_message(MSG_ACK, 300)) {
-        show_status("Conversation created!");
-    } else {
-        show_status("Timeout creating conversation");
-        goto error;
+static void cancel_stream(void) {
+    if (state == ST_IDLE) return;
+    pending_ack = PA_CANCEL;
+    proto_send_cancel();
+    ui_status("Cancelling...");
+}
+
+/* --- key handling ----------------------------------------------------- */
+
+static void handle_key(uint8_t k) {
+    if (modal == MODAL_HELP) {
+        modal = MODAL_NONE;
+        chat_redraw();
+        return;
     }
-
-    /* Small delay */
-    {
-        uint16_t i;
-        for (i = 0; i < 30000; i++);
-    }
-
-    /* Send a test message */
-    show_status("Sending test message...");
-    proto_send_chat(TEST_MESSAGE);
-
-    /* Wait for ACK */
-    if (!wait_for_message(MSG_ACK, 300)) {
-        show_status("Timeout waiting for ACK");
-        goto error;
-    }
-
-    /* Wait for response chunks */
-    show_status("Receiving response...");
-
-    {
-        uint8_t done = 0;
-        uint16_t timeout = 0;
-        uint16_t chunk_count = 0;
-        uint8_t crc_fails = 0;
-        uint8_t cx = 0, cy = 21;  /* chunk text area: rows 21-23 */
-
-        while (!done && timeout < 1800) {  /* 30 second timeout */
-            if (serial_available()) {
-                uint8_t byte = serial_read();
-                uint8_t msg_type = proto_process_byte(&proto, byte);
-
-                if (msg_type == MSG_STATUS) {
-                    /* Status message (arrives as ASCII) */
-                    uint8_t* payload = proto_get_payload(&proto);
-                    ascii_to_petscii_str((char*)payload);
-                    show_status((char*)payload);
-
-                } else if (msg_type == MSG_CHAT_CHUNK) {
-                    /* Chat chunk - skip sequence number byte */
-                    uint8_t* payload = proto_get_payload(&proto);
-                    ++chunk_count;
-                    ascii_to_petscii_str((char*)(payload + 1));
-                    gotoxy(cx, cy);
-                    textcolor(COLOR_WHITE);
-                    cputs((char*)(payload + 1));
-                    cx = wherex();
-                    cy = wherey();
-                    if (cy > 23) cy = 21;  /* wrap within chunk area */
-
-                } else if (msg_type == MSG_CHAT_DONE) {
-                    /* Done! */
-                    done = 1;
-                    show_status("Response complete!");
-
-                } else if (msg_type == MSG_CHAT_ERROR) {
-                    /* Error */
-                    uint8_t* payload = proto_get_payload(&proto);
-                    ascii_to_petscii_str((char*)payload);
-                    show_status((char*)payload);
-                    done = 1;
-
-                } else if (msg_type == PROTO_CRC_FAIL) {
-                    ++crc_fails;
-                }
-
-                timeout = 0;  /* Reset timeout on any data */
-            }
-
-            /* Small delay */
-            {
-                uint8_t i;
-                for (i = 0; i < 100; i++);
-            }
-            timeout++;
+    if (modal == MODAL_CONV) {
+        switch (k) {
+            case KEY_CRSR_UP:
+                if (conv_sel > 0) { --conv_sel; conv_draw(); }
+                break;
+            case KEY_CRSR_DOWN:
+                if (conv_sel + 1 < conv_count) { ++conv_sel; conv_draw(); }
+                break;
+            case KEY_RETURN:
+                if (conv_count) conv_load_selected();
+                break;
+            case KEY_F5:
+            case KEY_STOP:
+                conv_close();
+                break;
         }
-
-        /* Show receive statistics in the debug area */
-        gotoxy(0, debug_row);
-        textcolor(COLOR_CYAN);
-        cputs("Chunks: ");
-        debug_hex((uint8_t)(chunk_count >> 8));
-        debug_hex((uint8_t)chunk_count);
-        cputs(" CRC fails: ");
-        debug_hex(crc_fails);
-        debug_row++;
-
-        if (!done) {
-            show_status("Timeout waiting for response");
-        }
+        return;
     }
 
-    /* Success! */
-    {
-        uint16_t i;
-        for (i = 0; i < 30000; i++);
+    switch (k) {
+        case 133: /* F1 */
+        case KEY_RETURN:
+            send_message();
+            break;
+        case KEY_F2:
+            new_conversation();
+            break;
+        case 134: /* F3 */
+            cancel_stream();
+            break;
+        case KEY_F5:
+            if (state == ST_IDLE) conv_open();
+            break;
+        case 136: /* F7 */
+            help_open();
+            break;
+        case KEY_CRSR_UP:
+            chat_scroll(1);
+            break;
+        case KEY_CRSR_DOWN:
+            chat_scroll(-1);
+            break;
+        default:
+            editor_key(k);
     }
-    show_status("Test complete! Press any key...");
-    while (kbhit()) cgetc();  /* drop leftover autostart keystrokes */
-    cgetc();
-    goto cleanup;
+}
 
-error:
-    {
-        uint16_t i;
-        for (i = 0; i < 30000; i++);
+/* --------------------------------------------------------------------- */
+
+int main(void) {
+    proto_init(&proto, payload_buffer, MAX_PAYLOAD);
+    ui_init();
+    editor_init();
+    ui_status("Initializing ACIA...");
+    acia_init_hw();
+
+#ifndef CONNECT_DIRECT
+    if (!modem_connect()) {
+        ui_status("Connect failed! Check server/modem.");
+        for (;;) { if (kbhit()) cgetc(); }
     }
-    cputs("\n\nPress any key to exit...");
+#endif
+
+    ui_status("Contacting server...");
+    proto_send_ping();
+    if (!wait_for_ack(8000)) {
+        ui_status("No server response! Check proxy.");
+        for (;;) { if (kbhit()) cgetc(); }
+    }
+
+    proto_send_new_conversation();
+    wait_for_ack(4000);
+
+    chat_start(2);
+    chat_append_petscii("Connected to " SERVER_IP ":" SERVER_PORT);
+    chat_finish();
+
+    /* Drop any autostart leftovers before accepting input; the harness
+       waits for the Ready status, so drain first */
     while (kbhit()) cgetc();
-    cgetc();
+    ui_status("Ready. Type your message.");
 
-cleanup:
-    serial_disconnect();
-    clrscr();
+    for (;;) {
+        pump_serial();
+        if (kbhit()) {
+            handle_key(cgetc());
+        }
+    }
+
     return 0;
 }
+
+#endif /* !DEBUG_CLIENT */

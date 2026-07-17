@@ -1,0 +1,51 @@
+/**
+ * C64 LLM Client - TUI display (chat area, status bar, title)
+ *
+ * All rendering is done with direct screen/color RAM writes; the chat
+ * scrollback stores pre-wrapped 40-column lines as screen codes.
+ */
+
+#ifndef UI_H
+#define UI_H
+
+#include "common.h"
+
+void ui_init(void);
+
+/* Full redraw of the static frame (title, separator) + chat + status */
+void ui_redraw_all(void);
+
+/* Status bar (row 24). Takes a PETSCII string (i.e. a C literal). */
+void ui_status(const char* msg);
+
+/* Chat area ------------------------------------------------------- */
+
+/* Begin a new message; sets color and optional prefix by role */
+void chat_start(uint8_t role);
+
+/* Append incoming ASCII text to the current message (word-wrapped) */
+void chat_append_ascii(const char* s);
+void chat_append_ascii_char(uint8_t c);
+
+/* Append a PETSCII string (C literal or editor text) */
+void chat_append_petscii(const char* s);
+
+/* End the current message (flush pending word, blank separator line) */
+void chat_finish(void);
+
+/* Clear all scrollback */
+void chat_clear(void);
+
+/* Scroll view: positive = toward older lines. Resets on new content. */
+void chat_scroll(int8_t lines_up);
+
+void chat_redraw(void);
+
+/* Modal overlays (conversation list, help) draw over the chat area;
+   call chat_redraw() to restore. Helper to blank the area: */
+void chat_area_clear_screen(void);
+
+/* Draw one line of text (PETSCII) at a chat-area row, optional reverse */
+void ui_draw_row(uint8_t row, const char* petscii, uint8_t color, uint8_t reverse);
+
+#endif /* UI_H */
