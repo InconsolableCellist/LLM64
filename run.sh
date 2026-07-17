@@ -5,6 +5,9 @@
 #   ./run.sh proxy-bg    start the proxy in the background (log: proxy-live.log)
 #   ./run.sh c64         build 40-col client, deploy to the C64U and run it
 #   ./run.sh c64-80      same, 80-column build
+#   ./run.sh install     build 80-col client and store it in the C64U's
+#                        persistent /Flash (survives power-off; day-to-day
+#                        deploys use the /Temp RAM disk to spare flash wear)
 #   ./run.sh emu         local VICE session against the running proxy
 #   ./run.sh stop        stop a background proxy
 #   ./run.sh status      show proxy + C64 connection state
@@ -36,6 +39,13 @@ case "${1:-help}" in
   c64-80)
     proxy_running || "$0" proxy-bg
     make deploy-c64u-80
+    ;;
+  install)
+    make -C c64_client clean
+    make -C c64_client CONNECT=hayes SERVER_IP=192.168.1.39 MODE80=1
+    curl -sS --max-time 20 -T c64_client/build/c64llm.prg \
+        "ftp://192.168.1.64/Flash/c64llm.prg" --user anonymous:
+    echo "installed to /Flash/c64llm.prg (run it from the Ultimate menu)"
     ;;
   emu)
     proxy_running || "$0" proxy-bg
