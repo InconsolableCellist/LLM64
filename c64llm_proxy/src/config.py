@@ -16,6 +16,7 @@ class Config:
     data_dir: str
     temperature: float = 0.7
     max_tokens: int = 2000
+    system_prompt: str = ''
 
     def __init__(self, config_file: Optional[str] = None):
         """Load configuration from file and environment variables"""
@@ -58,17 +59,20 @@ class Config:
             config.get('api', {}).get('max_tokens', 2000)
         ))
 
+        self.system_prompt = os.getenv(
+            'OPENAI_SYSTEM_PROMPT',
+            config.get('api', {}).get('system_prompt', '')
+        )
+
         self.data_dir = config.get('storage', {}).get(
             'data_dir',
             './data'
         )
 
-        # Validate required fields
+        # API key is optional: local servers (llama.cpp, Ollama, ...) accept
+        # any bearer token. Cloud providers still need a real key.
         if not self.api_key:
-            raise ValueError(
-                "API key not configured. Set OPENAI_API_KEY environment variable "
-                "or add to config.toml"
-            )
+            self.api_key = 'none'
 
         # Ensure data directory exists
         Path(self.data_dir).mkdir(parents=True, exist_ok=True)

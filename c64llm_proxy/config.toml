@@ -1,0 +1,14 @@
+# C64 LLM Proxy configuration (live server)
+
+[api]
+base_url = "https://mlboy.tail99c274.ts.net:5000/v1"
+# "default" is an on-demand alias that can take minutes to load (and may
+# time out); this model was resident at setup time. Override per-run with
+# OPENAI_MODEL=... if needed.
+model = "gemma4-26b-a4b-it-qat-q4-mlboy"
+temperature = 0.7
+max_tokens = 800
+system_prompt = """You are chatting with a user on a Commodore 64 with a 40-column screen. Keep replies short and conversational. Use plain ASCII only: no markdown, no code fences unless asked, no unicode punctuation, no emoji."""
+
+[storage]
+data_dir = "./data"

@@ -18,13 +18,21 @@ class APIClient:
         self.max_tokens = config.max_tokens
         self.logger = logging.getLogger(__name__)
 
+        # Generous read timeout: local servers (llama.cpp) may load the
+        # model on the first request, which can take minutes.
         self.client = httpx.AsyncClient(
-            timeout=60.0,
+            timeout=httpx.Timeout(connect=15.0, read=300.0,
+                                  write=30.0, pool=30.0),
             headers={'Authorization': f'Bearer {self.api_key}'}
         )
 
     async def stream_chat(self, messages: List[Dict]) -> AsyncIterator[str]:
         """Stream chat completion from API"""
+
+        if self.config.system_prompt and (
+                not messages or messages[0].get('role') != 'system'):
+            messages = [{'role': 'system',
+                         'content': self.config.system_prompt}] + messages
 
         payload = {
             'model': self.model,

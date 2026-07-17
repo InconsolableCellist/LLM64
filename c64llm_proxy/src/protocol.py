@@ -28,6 +28,18 @@ class MessageType(IntEnum):
     STATUS = 0x55  # 'U' - was 0x25
 
 
+# Common Unicode punctuation -> ASCII approximations, applied before the
+# ascii/replace encode so LLM typography doesn't become '?' on the C64.
+UNICODE_TO_ASCII = str.maketrans({
+    '‘': "'", '’': "'", '‚': "'", '‛': "'",
+    '“': '"', '”': '"', '„': '"',
+    '–': '-', '—': '-', '―': '-', '−': '-',
+    '…': '...', '•': '*', '·': '*',
+    ' ': ' ', '→': '->', '←': '<-',
+    '×': 'x', '÷': '/', '°': ' deg',
+})
+
+
 class ProtocolState(IntEnum):
     """Protocol parsing state"""
     SYNC_SEARCHING = 0
@@ -235,15 +247,16 @@ class ProtocolHandler:
                     # Send chunk to C64
                     payload = bytearray()
                     payload.append(seq)
-                    payload.extend(chunk.encode('ascii', errors='replace'))
+                    ascii_chunk = chunk.translate(UNICODE_TO_ASCII)
+                    payload.extend(ascii_chunk.encode('ascii', errors='replace'))
                     payload.append(0x00)  # Null terminator
 
                     await self.send_message(MessageType.CHAT_CHUNK, bytes(payload))
 
                     seq = (seq + 1) % 256
 
-                    # Small delay to avoid overwhelming C64
-                    await asyncio.sleep(0.05)
+                    # Brief pacing so the C64's RX ring buffer never backs up
+                    await asyncio.sleep(0.02)
 
             # Send completion
             payload = struct.pack('<BH', seq, len(full_response))

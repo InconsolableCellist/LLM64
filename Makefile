@@ -45,9 +45,13 @@ test-emu-tui: client-tui-direct
 
 test-all: test-emu test-emu-long test-emu-hayes test-emu-tui
 
-# Interactive session against the real API configured in c64llm_proxy/config.toml
-run-live: client-direct
-	$(PYTHON) emu/test_e2e.py --mode direct --live --timeout 300
+# Interactive TUI session against the real API from c64llm_proxy/config.toml
+run-live: client-tui-direct
+	./emu/run_live.sh
+
+# Automated smoke test against the real API (model may need time to load)
+test-live: client-tui-direct
+	$(PYTHON) emu/test_e2e.py --mode direct --tui --live --timeout 300
 
 clean:
 	$(MAKE) -C c64_client clean
