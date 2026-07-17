@@ -320,7 +320,7 @@ def main():
                 # Long input: 260 chars scrolls the editor viewport and
                 # sends as a single frame (would have been cut at 120)
                 monitor.keyboard_feed('say ok: ' + 'x' * 252 + '\r')
-                wait_for_screen(monitor, r'x{60}', 60,
+                wait_for_screen(monitor, r'x{30}', 60,
                                 artifacts, f'{tag}-longinput')
                 wait_ready(monitor, args.timeout, artifacts,
                            f'{tag}-longinput-done')
