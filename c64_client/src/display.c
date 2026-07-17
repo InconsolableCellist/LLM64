@@ -290,7 +290,13 @@ void chat_redraw_stream(void) {
     }
 
     if (lines_dirty) {
-#if defined(SOFT80) && !defined(NO_SCROLL_OPT)
+/* The scroll-blit fast path is DISABLED pending investigation: the
+   banked-ROM bitmap copy provokes a serial-delivery stall + phantom
+   RX ingestion under real-time streaming (see repo memory / commit
+   log). Full redraws fit comfortably within the proxy pacing.
+   Re-enable with -DSCROLL_OPT once the banked-window interaction is
+   understood. */
+#if defined(SOFT80) && defined(SCROLL_OPT)
         /* Lines committed while full: scroll the bitmap up and render
            only the freshly exposed tail rows. Requires the previous
            drawn state to have been full too. */

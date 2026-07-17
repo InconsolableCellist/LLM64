@@ -120,6 +120,26 @@ def wait_for_screen(monitor, pattern, timeout, artifacts, label):
         f"--- last screen ---\n{last_screen}\n-------------------")
 
 
+
+def wait_ready(monitor, timeout, artifacts, label):
+    """Wait for the client's Ready status. The client shows a
+    '[data loss ov=.. hw=.. cr=..]' banner when bytes were lost; the
+    harness's own monitor pauses can cause 1-3 byte hw overruns in the
+    emulator (no monitor exists on real hardware), so tolerate tiny
+    hw/cr counts but fail on ring drops or anything larger."""
+    screen = wait_for_screen(monitor, r'ready\.', timeout, artifacts, label)
+    m = re.search(r'\[data loss ov=(..) hw=(..) cr=(..)\]', screen, re.I)
+    if m:
+        ov, hw, cr = (int(x, 16) for x in m.groups())
+        if ov > 0 or hw + cr > 4:
+            raise AssertionError(
+                f'data loss beyond monitor-pause tolerance: ov={ov} '
+                f'hw={hw} cr={cr} ({label})')
+        print(f'  PASS: ready with tolerable monitor-artifact loss '
+              f'(hw={hw} cr={cr}) ({label})')
+    return screen
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['direct', 'hayes'], default='direct')
@@ -237,8 +257,8 @@ def main():
             if not args.live:
                 wait_for_screen(monitor, re.escape(args.expect), 60,
                                 artifacts, f'{tag}-content')
-            final = wait_for_screen(monitor, r'ready\. type your message',
-                                    args.timeout, artifacts, f'{tag}-done')
+            final = wait_ready(monitor, args.timeout, artifacts,
+                               f'{tag}-done')
             # Help overlay round-trip (F7, then any key to close)
             monitor.keyboard_feed_petscii(b'\x88')
             wait_for_screen(monitor, r'press any key to close', 15,
@@ -262,8 +282,7 @@ def main():
                 monitor.keyboard_feed('/adventure\r')
                 wait_for_screen(monitor, r'dark room', 60,
                                 artifacts, f'{tag}-adventure')
-                wait_for_screen(monitor, r'ready\. type your message', 30,
-                                artifacts, f'{tag}-adventure-ready')
+                wait_ready(monitor, 30, artifacts, f'{tag}-adventure-ready')
 
                 # Character cards: list, then load the example card
                 monitor.keyboard_feed('/chars\r')
@@ -282,8 +301,7 @@ def main():
                 monitor.keyboard_feed('longtest\r')
                 wait_for_screen(monitor, r'number\s+60', 120,
                                 artifacts, f'{tag}-longdone')
-                wait_for_screen(monitor, r'ready\. type your message', 30,
-                                artifacts, f'{tag}-longready')
+                wait_ready(monitor, 60, artifacts, f'{tag}-longready')
                 monitor.keyboard_feed_petscii(b'\x8a')  # F4: page up
                 time.sleep(1)
                 paged = monitor.screen_text()

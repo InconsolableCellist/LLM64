@@ -58,6 +58,7 @@ row:     .res 1
 colrev:  .res 1
 pairs:   .res 1
 revmask: .res 1
+bank01:  .res 1
 
         .code
 
@@ -378,6 +379,15 @@ _soft80_scroll_chat:
         sta tmp4                ; n
         beq @done
 
+        ; The bitmap lives UNDER the KERNAL ROM: writes always reach the
+        ; RAM the VIC displays, but READS fetch ROM - so the copy below
+        ; must bank the ROM out (HIRAM=0; IO stays mapped so the serial
+        ; IRQ still works via the raw RAM vectors serial.s installed).
+        lda $01
+        sta bank01
+        and #%11111101
+        sta $01
+
         ; bitmap: move (CHAT_ROWS-n)*320 bytes from row (1+n) to row 1
         ldx tmp4
         lda bmp_lo+CHAT_TOP,x   ; src = row 1+n
@@ -395,6 +405,9 @@ _soft80_scroll_chat:
         sta tmp1                ; rows to move
         jsr mul320_to_tmp23     ; tmp2/tmp3 = tmp1*320
         jsr copy_fwd
+
+        lda bank01              ; KERNAL ROM back in
+        sta $01
 
         ; matrix: (19-n)*40
         ldx tmp4

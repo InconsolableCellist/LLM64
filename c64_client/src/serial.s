@@ -55,12 +55,12 @@ IRQ_VECTOR = $0314
 NMI_VECTOR = $0318
 
         .bss
-; 1KB RX ring: ~1.1s of backlog tolerance at 9600 baud (the old 256-byte
-; ring gave 266ms, which redraw spikes and emulator-monitor pauses could
-; exceed, dropping bytes and shredding frames). Access goes through
+; 8KB RX ring: bigger than any single response burst can be, so the ACIA
+; data register never has to wait on a full ring (VICE's RX delivery can
+; stall unrecoverably if RDRF sits unread). Access goes through
 ; self-modifying absolute-address stubs (below, in DATA) with a 16-bit
 ; fill counter; the reader masks IRQs around its non-atomic updates.
-RX_RING_SIZE = 1024
+RX_RING_SIZE = 8192
 rx_used:        .res 2          ; bytes currently buffered
 connected:      .res 1
 vectors_saved:  .res 1
@@ -175,6 +175,15 @@ _acia_init_hw:
         lda #>acia_nmi_entry
         sta NMI_VECTOR+1
 
+        lda #<raw_irq_entry
+        sta $FFFE
+        lda #>raw_irq_entry
+        sta $FFFF
+        lda #<raw_nmi_entry
+        sta $FFFA
+        lda #>raw_nmi_entry
+        sta $FFFB
+
         lda #1
         sta vectors_saved
         cli
@@ -201,30 +210,38 @@ _acia_init_hw:
 ; ACIA bytes take the ~50 cycle fast path below; CIA1 timer ticks (60Hz)
 ; run our own matrix scanner (keyboard.s) instead of the KERNAL's.
 ;---------------------------------------
-acia_irq_entry:
-        lda ACIA_STATUS         ; bit7 = this ACIA caused the interrupt
-        bpl @not_acia
-@drain: tax                     ; keep status
+drain_sub:
+@chk:   lda ACIA_STATUS
+        tax
         and #$04                ; overrun flag: a byte was lost in hardware
         beq @no_ovr
         inc overruns
 @no_ovr:
         txa
         and #ACIA_SR_RDRF
-        beq @exit
+        beq @rts
         lda rx_used+1
         cmp #>RX_RING_SIZE      ; ring full?
         bcs @full
         lda ACIA_DATA
         jsr ring_write
         inc rx_used
-        bne @more
+        bne @chk
         inc rx_used+1
-@more:  lda ACIA_STATUS         ; another byte already waiting?
-        jmp @drain
-@full:
-        lda ACIA_DATA           ; discard to release the register
-        inc overflows
+        jmp @chk
+@full:  inc overflows
+        lda #ACIA_CMD_VALUE | 2 ; ring full: mask the RX interrupt (the
+        sta ACIA_COMMAND        ; line is level-asserted while RDRF sits,
+        rts                     ; so just returning would storm) and leave
+                                ; the byte unread - delivery pauses behind
+                                ; it. serial_available's pickup unmasks
+                                ; and reads it once the ring drains.
+@rts:   rts
+
+acia_irq_entry:
+        lda ACIA_STATUS         ; bit7 = this ACIA caused the interrupt
+        bpl @not_acia
+        jsr drain_sub
         jmp @exit
 
 @not_acia:
@@ -237,6 +254,39 @@ acia_irq_entry:
         pla                     ; unwind the KERNAL stub's saves
         tay
         pla
+        tax
+        pla
+        rti
+
+;---------------------------------------
+; Raw CPU-vector entries, used while the KERNAL ROM is banked out
+; (the soft-80 scroll must read the bitmap under the ROM). Written to
+; RAM at $FFFE/$FFFA by acia_init_hw; the CPU fetches them from RAM
+; whenever HIRAM is off, so serial keeps flowing during the copy.
+; The 60Hz keyboard scan is skipped here - its decode tables are in ROM.
+;---------------------------------------
+raw_irq_entry:
+        pha
+        txa
+        pha
+        lda ACIA_STATUS
+        bpl @cia
+        jsr drain_sub
+        jmp @out
+@cia:   lda CIA1_ICR            ; ack the timer tick, skip the scan
+@out:   pla
+        tax
+        pla
+        rti
+
+raw_nmi_entry:
+        pha
+        txa
+        pha
+        lda ACIA_STATUS
+        bpl @out
+        jsr drain_sub
+@out:   pla
         tax
         pla
         rti
@@ -265,8 +315,9 @@ acia_nmi_entry:
         inc rx_used+1
 @nmore: lda ACIA_STATUS
         jmp @drain
-@nfull: lda ACIA_DATA
-        inc overflows
+@nfull: inc overflows           ; ring full: mask RX IRQ (see drain_sub)
+        lda #ACIA_CMD_VALUE | 2
+        sta ACIA_COMMAND
 @ours:
         pla
         tax
@@ -295,6 +346,8 @@ _serial_available:
         bne @yes
         php
         sei
+        lda #ACIA_CMD_VALUE     ; ring is empty: make sure the RX IRQ is
+        sta ACIA_COMMAND        ; unmasked again (idempotent)
         lda ACIA_STATUS
         and #ACIA_SR_RDRF
         beq @none
