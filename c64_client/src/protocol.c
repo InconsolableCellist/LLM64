@@ -4,6 +4,7 @@
 
 #include "protocol.h"
 #include "serial.h"
+#include "text.h"
 #include <string.h>
 
 /* Initialize protocol handler */
@@ -157,13 +158,15 @@ void proto_send_ping(void) {
     proto_send_message(MSG_PING, NULL, 0);
 }
 
-/* Helper: Send chat message */
+/* Helper: Send chat message (converts PETSCII text to ASCII for the wire) */
 void proto_send_chat(const char* text) {
     uint16_t len = strlen(text);
+    uint16_t i;
     uint8_t buffer[256];  /* Temporary buffer */
 
-    /* Copy text + null terminator */
-    memcpy(buffer, text, len);
+    for (i = 0; i < len; i++) {
+        buffer[i] = petscii_to_ascii((uint8_t)text[i]);
+    }
     buffer[len] = 0;
 
     proto_send_message(MSG_CHAT_REQUEST, buffer, len + 1);

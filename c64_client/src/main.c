@@ -9,6 +9,7 @@
 #include "common.h"
 #include "serial.h"
 #include "protocol.h"
+#include "text.h"
 
 /* Server configuration - override with -DSERVER_IP=\"x.x.x.x\" at build time */
 #ifndef SERVER_IP
@@ -68,6 +69,7 @@ void init_screen(void) {
     bordercolor(COLOR_BLUE);
     bgcolor(COLOR_BLACK);
     textcolor(COLOR_LIGHTGREEN);
+    *(uint8_t*)0xD018 = 0x17;  /* shifted charset: mixed-case text */
 
     /* Title */
     gotoxy(0, 0);
@@ -106,10 +108,10 @@ uint8_t send_at_debug(const char* cmd, char* response, uint8_t max_len) {
     /* Calculate command length for echo detection */
     for (cmd_len = 0; cmd[cmd_len] != 0; cmd_len++);
     
-    /* Send the command character by character */
+    /* Send the command character by character (modem wants ASCII) */
     for (i = 0; cmd[i] != 0; i++) {
         while (!serial_can_write());  /* Wait for TX ready */
-        serial_write(cmd[i]);
+        serial_write(petscii_to_ascii(cmd[i]));
     }
     
     /* Send CR */
@@ -134,16 +136,16 @@ uint8_t send_at_debug(const char* cmd, char* response, uint8_t max_len) {
         if (serial_available()) {
             byte = serial_read();
             
-            /* Skip echo of the command we sent */
-            if (echo_skip < cmd_len && byte == cmd[echo_skip]) {
+            /* Skip echo of the command we sent (echo arrives as ASCII) */
+            if (echo_skip < cmd_len && byte == petscii_to_ascii(cmd[echo_skip])) {
                 echo_skip++;
                 timeout = 0;
                 continue;
             }
-            
+
             /* Store printable chars that aren't part of echo */
             if (byte >= 32 && byte < 127) {
-                response[resp_idx++] = byte;
+                response[resp_idx++] = ascii_to_petscii(byte);
             } else if (byte == 13 || byte == 10) {
                 /* CR/LF - could be end of response line */
                 if (resp_idx > 0) {
@@ -153,7 +155,7 @@ uint8_t send_at_debug(const char* cmd, char* response, uint8_t max_len) {
                         if (serial_available()) {
                             byte = serial_read();
                             if (byte >= 32 && byte < 127) {
-                                response[resp_idx++] = byte;
+                                response[resp_idx++] = ascii_to_petscii(byte);
                             } else if ((byte == 13 || byte == 10) && resp_idx > 0) {
                                 break;
                             }
@@ -320,7 +322,7 @@ int main(void) {
                 if (serial_available()) {
                     uint8_t byte = serial_read();
                     if (byte >= 32 && byte < 127) {
-                        response[idx++] = byte;
+                        response[idx++] = ascii_to_petscii(byte);
                     }
                     timeout = 0;
                 }
@@ -562,14 +564,16 @@ int main(void) {
                 uint8_t msg_type = proto_process_byte(&proto, byte);
 
                 if (msg_type == MSG_STATUS) {
-                    /* Status message */
+                    /* Status message (arrives as ASCII) */
                     uint8_t* payload = proto_get_payload(&proto);
+                    ascii_to_petscii_str((char*)payload);
                     show_status((char*)payload);
 
                 } else if (msg_type == MSG_CHAT_CHUNK) {
                     /* Chat chunk - skip sequence number byte */
                     uint8_t* payload = proto_get_payload(&proto);
                     ++chunk_count;
+                    ascii_to_petscii_str((char*)(payload + 1));
                     gotoxy(cx, cy);
                     textcolor(COLOR_WHITE);
                     cputs((char*)(payload + 1));
@@ -585,6 +589,7 @@ int main(void) {
                 } else if (msg_type == MSG_CHAT_ERROR) {
                     /* Error */
                     uint8_t* payload = proto_get_payload(&proto);
+                    ascii_to_petscii_str((char*)payload);
                     show_status((char*)payload);
                     done = 1;
 

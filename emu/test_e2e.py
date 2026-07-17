@@ -168,6 +168,7 @@ def main():
         if args.mode == 'hayes':
             stack.start('tcpser', [
                 'tcpser', '-v', str(TCPSER_PORT), '-s', str(args.baud),
+                '-p', str(find_free_port()),  # inbound-call port; default 6400 collides
                 '-tSs'])
             if not wait_for_port(TCPSER_PORT):
                 raise AssertionError('tcpser did not start')
@@ -176,10 +177,13 @@ def main():
         else:
             rsdev = ['-rsdev1', f'127.0.0.1:{PROXY_PORT}', '+rsdev1ip232']
 
-        # 4. VICE
+        # 4. VICE. No warp in hayes mode: the client's AT-response timeouts
+        # are cycle-based, but tcpser answers in wall-clock time, so a warped
+        # C64 gives up long before the modem replies.
         mon_port = find_free_port()
+        speed = [] if args.mode == 'hayes' else ['-warp']
         stack.start('vice', [
-            'x64sc', '-default', '-warp', '-sounddev', 'dummy',
+            'x64sc', '-default', *speed, '-sounddev', 'dummy',
             '+confirmonexit',
             '-acia1', '-acia1mode', '0', '-acia1base', '0xDE00',
             '-acia1irq', '2', '-myaciadev', '0',

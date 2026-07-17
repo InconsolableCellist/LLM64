@@ -25,8 +25,8 @@
 	.export		_proto_calc_crc
 	.import		_serial_write
 	.import		_serial_flush
+	.import		_petscii_to_ascii
 	.import		_strlen
-	.import		_memcpy
 
 ; ---------------------------------------------------------------
 ; void __near__ proto_init (__near__ struct $anon-struct-0001 *, __near__ unsigned char *, unsigned int)
@@ -137,10 +137,10 @@ L006E:
 	jeq     L005D
 	cmp     #$04
 	jeq     L0066
-	jmp     L00D4
+	jmp     L00DE
 L0030:	lda     (sp,x)
 	cmp     #$42
-	jne     L00D4
+	jne     L00DE
 	ldy     #$02
 	jsr     ldaxysp
 	sta     ptr1
@@ -210,9 +210,9 @@ L003E:	tay
 	sbc     #$00
 	lda     #$00
 	tax
-	bcs     L00D6
+	bcs     L00E0
 	jmp     incsp3
-L00D6:	lda     L002A
+L00E0:	lda     L002A
 	ldy     #$20
 	jsr     decaxy
 	sta     L0044
@@ -244,10 +244,10 @@ L00D6:	lda     L002A
 	ldy     #$04
 	jsr     ldaxidx
 	cpx     #$00
-	bne     L00D5
+	bne     L00DF
 	cmp     #$00
 	beq     L004F
-L00D5:	ldy     #$02
+L00DF:	ldy     #$02
 	jsr     ldaxysp
 	ldy     #$04
 	jsr     pushwidx
@@ -389,7 +389,7 @@ L006C:	ldy     #$02
 	lda     #$FE
 	jmp     incsp3
 L002E:	ldx     #$00
-L00D4:	txa
+L00DE:	txa
 	jmp     incsp3
 
 .endproc
@@ -578,7 +578,9 @@ L0091:	ldy     #$04
 
 L00B3:
 	.res	2,$00
-L00B7:
+L00B6:
+	.res	2,$00
+L00B8:
 	.res	256,$00
 
 .segment	"CODE"
@@ -588,19 +590,47 @@ L00B7:
 	jsr     _strlen
 	sta     L00B3
 	stx     L00B3+1
-	lda     #<(L00B7)
-	ldx     #>(L00B7)
+	lda     #$00
+	sta     L00B6
+	sta     L00B6+1
+L00B9:	lda     L00B6
+	cmp     L00B3
+	lda     L00B6+1
+	sbc     L00B3+1
+	bcs     L00BA
+	lda     #<(L00B8)
+	clc
+	adc     L00B6
+	tay
+	lda     #>(L00B8)
+	adc     L00B6+1
+	tax
+	tya
 	jsr     pushax
-	ldy     #$05
-	jsr     pushwysp
-	lda     L00B3
-	ldx     L00B3+1
-	jsr     _memcpy
-	lda     #<(L00B7)
+	ldy     #$03
+	jsr     ldaxysp
+	clc
+	adc     L00B6
+	sta     ptr1
+	txa
+	adc     L00B6+1
+	sta     ptr1+1
+	ldy     #$00
+	lda     (ptr1),y
+	jsr     _petscii_to_ascii
+	ldy     #$00
+	jsr     staspidx
+	lda     L00B6
+	ldx     L00B6+1
+	jsr     incax1
+	sta     L00B6
+	stx     L00B6+1
+	jmp     L00B9
+L00BA:	lda     #<(L00B8)
 	clc
 	adc     L00B3
 	sta     ptr1
-	lda     #>(L00B7)
+	lda     #>(L00B8)
 	adc     L00B3+1
 	sta     ptr1+1
 	lda     #$00
@@ -608,8 +638,8 @@ L00B7:
 	sta     (ptr1),y
 	lda     #$31
 	jsr     pusha
-	lda     #<(L00B7)
-	ldx     #>(L00B7)
+	lda     #<(L00B8)
+	ldx     #>(L00B8)
 	jsr     pushax
 	lda     L00B3
 	ldx     L00B3+1
