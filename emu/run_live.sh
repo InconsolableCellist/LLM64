@@ -5,8 +5,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PY=c64llm_proxy/.venv/bin/python
-[ -x "$PY" ] || PY=python3
+# Absolute path: the proxy is launched from inside c64llm_proxy/, so a
+# relative venv path would resolve to c64llm_proxy/c64llm_proxy/...
+PY="$PWD/c64llm_proxy/.venv/bin/python"
+if ! "$PY" -c 'import httpx' 2>/dev/null; then
+  PY=python3
+  if ! "$PY" -c 'import httpx' 2>/dev/null; then
+    echo "No Python with httpx found. Rebuild the proxy venv:" >&2
+    echo "  cd c64llm_proxy && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt" >&2
+    exit 1
+  fi
+fi
 
 (cd c64llm_proxy && exec "$PY" -m src.main --host 127.0.0.1 --port 6400) &
 PROXY_PID=$!
