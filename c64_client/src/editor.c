@@ -47,7 +47,37 @@ static uint8_t is_printable(uint8_t c) {
     return 0;
 }
 
+/* Repaint editor cells [from, to] (logical indices across the 3 rows) */
+static void redraw_range(uint8_t from, uint8_t to) {
+    uint8_t row;
+    uint8_t i;
+    uint16_t idx;
+    uint16_t row_start;
+
+    if (to > EDIT_ROWS * TEXT_COLS - 1) to = EDIT_ROWS * TEXT_COLS - 1;
+    for (row = 0; row < EDIT_ROWS; ++row) {
+        uint8_t s, e;
+        row_start = (uint16_t)row * TEXT_COLS;
+        if (row_start > to || row_start + TEXT_COLS <= from) continue;
+        idx = row_start;
+        for (i = 0; i < TEXT_COLS; ++i, ++idx) {
+            uint8_t code = (idx < len)
+                ? ui_cell_from_petscii((uint8_t)buf[idx])
+                : 0x20;
+            if (idx == cur) code |= 0x80;
+            rowcells[i] = code;
+        }
+        s = (from > row_start) ? (uint8_t)(from - row_start) : 0;
+        e = (to < row_start + TEXT_COLS - 1)
+            ? (uint8_t)(to - row_start) : TEXT_COLS - 1;
+        ui_blit_span(EDIT_ROW_FIRST + row, rowcells, s, e - s + 1);
+    }
+}
+
 uint8_t editor_key(uint8_t key) {
+    uint8_t old_cur = cur;
+    uint8_t old_len = len;
+    uint8_t lo, hi;
     switch (key) {
         case KEY_DEL:
             if (cur > 0) {
@@ -92,7 +122,15 @@ uint8_t editor_key(uint8_t key) {
                 return 0;  /* not consumed */
             }
     }
-    editor_redraw();
+
+    /* Repaint only what changed: from the leftmost affected cell to the
+       furthest of (old/new end, old/new cursor). Typing at the end of
+       the line touches ~2 cells instead of all 240. */
+    lo = (cur < old_cur) ? cur : old_cur;
+    hi = (len > old_len) ? len : old_len;
+    if (old_cur > hi) hi = old_cur;
+    if (cur > hi) hi = cur;
+    redraw_range(lo, hi);
     return 1;
 }
 

@@ -48,11 +48,13 @@
 #define MODAL_MENU 3
 #define MODAL_MODEL 4
 
-static ProtoContext proto;
+ProtoContext proto;
 static uint8_t payload_buffer[MAX_PAYLOAD];
 
 static uint8_t state = ST_IDLE;
 static uint8_t modal = MODAL_NONE;
+uint8_t crc_fail_count;
+uint16_t chunk_frames;
 
 /* What the next ACK acknowledges */
 #define PA_NONE    0
@@ -362,6 +364,7 @@ static void handle_message(uint8_t msg_type) {
         }
         case MSG_CHAT_CHUNK: {
             uint8_t* p = proto_get_payload(&proto);
+            ++chunk_frames;
             if (state != ST_STREAMING) {
                 state = ST_STREAMING;
                 chat_start(1);
@@ -375,7 +378,25 @@ static void handle_message(uint8_t msg_type) {
             if (state != ST_IDLE) {
                 chat_finish();
                 state = ST_IDLE;
-                ui_status("Ready. Type your message.");
+                if (serial_overflows() || serial_overruns()
+                        || crc_fail_count) {
+                    /* Data was lost - a bug if it ever shows. Counters:
+                       ring drops / hw overruns / crc failures (hex). */
+                    static char dm[41];
+                    static const char hx[] = "0123456789abcdef";
+                    uint8_t v;
+                    strcpy(dm, "Ready. [data loss ov=?? hw=?? cr=??]");
+                    v = serial_overflows();
+                    dm[21] = hx[v >> 4]; dm[22] = hx[v & 15];
+                    v = serial_overruns();
+                    dm[27] = hx[v >> 4]; dm[28] = hx[v & 15];
+                    v = crc_fail_count;
+                    dm[33] = hx[v >> 4]; dm[34] = hx[v & 15];
+                    ui_status(dm);
+                } else {
+                    ui_status("Ready. Type your message.");
+                }
+                chunk_frames = 0;
             }
             break;
         case MSG_CHAT_ERROR: {
@@ -419,7 +440,9 @@ static void pump_serial(void) {
             continue;
         }
         msg = proto_process_byte(&proto, serial_read());
-        if (msg && msg != PROTO_CRC_FAIL) {
+        if (msg == PROTO_CRC_FAIL) {
+            ++crc_fail_count;
+        } else if (msg) {
             handle_message(msg);
         }
     }

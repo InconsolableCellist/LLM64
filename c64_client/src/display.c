@@ -39,6 +39,8 @@ static uint8_t wlen;
 static uint8_t view_scroll;  /* 0 = pinned to bottom */
 static uint8_t lines_dirty;  /* a line committed since last full redraw */
 static uint8_t commits_pending;  /* commits since last full draw (scroll opt) */
+static int16_t stream_drawn_total;  /* total lines at last stream draw */
+static uint8_t stream_partial_end;  /* drawn length of the partial line */
 
 static uint8_t rowbuf[TEXT_COLS];
 
@@ -76,6 +78,22 @@ void ui_blit_row(uint8_t row, const uint8_t* cells, uint8_t color) {
 #else
     memcpy(SCREEN + (uint16_t)row * 40, cells, 40);
     memset(COLORS + (uint16_t)row * 40, color, 40);
+#endif
+}
+
+/* Repaint only cells [first, first+count) of a row whose color hasn't
+   changed. Much cheaper than a full row in SOFT80 (~0.2ms/cell). */
+void ui_blit_span(uint8_t row, const uint8_t* cells, uint8_t first,
+                  uint8_t count) {
+    if (count == 0) return;
+#ifdef SOFT80
+    {
+        uint8_t fp = first >> 1;
+        uint8_t lp = (uint8_t)(first + count - 1) >> 1;
+        soft80_span(row, cells, fp, lp - fp + 1);
+    }
+#else
+    memcpy(SCREEN + (uint16_t)row * 40 + first, cells + first, count);
 #endif
 }
 
@@ -225,27 +243,59 @@ void chat_redraw(void) {
     }
     lines_dirty = 0;
     commits_pending = 0;
+    stream_drawn_total = line_count + ((cur_len || wlen) ? 1 : 0);
+    stream_partial_end = cur_len + wlen;
 }
 
 void chat_redraw_stream(void) {
-    /* Streaming fast path: rendering all 19 rows is far slower than a
-       chunk's wire time (especially in SOFT80), so repaint as little as
-       possible. */
+    /* Streaming fast path: a full 19-row repaint costs far more than a
+       chunk's wire time in SOFT80 and starves the serial consumer, so
+       repaint the minimum: before the screen fills, only rows that
+       changed; afterwards, scroll the bitmap and paint the tail; when
+       just the partial line grew, only its new cells. */
     uint8_t r;
     uint8_t color;
+    uint8_t partial = (cur_len || wlen) ? 1 : 0;
+    int16_t total = line_count + partial;
+    uint8_t new_end = cur_len + wlen;
+
+    /* An overlong pending word isn't overlaid by build_view_row, and a
+       span computed past TEXT_COLS would blit into the next row */
+    if (new_end > TEXT_COLS) new_end = TEXT_COLS;
 
     if (view_scroll) {
         chat_redraw();
+        stream_partial_end = new_end;
+        return;
+    }
+
+    if (total <= CHAT_HEIGHT) {
+        /* Not scrolling yet: rows above the previous total are unchanged */
+        int16_t from = stream_drawn_total - 1;
+        if (lines_dirty || from < 0) {
+            if (from < 0) from = 0;
+        } else {
+            from = total - 1;  /* only the partial row */
+        }
+        if (from < 0) from = 0;
+        for (r = (uint8_t)from; r < (uint8_t)total; ++r) {
+            color = build_view_row(r);
+            ui_blit_row(CHAT_START_ROW + r, rowbuf, color);
+        }
+        lines_dirty = 0;
+        commits_pending = 0;
+        stream_drawn_total = total;
+        stream_partial_end = new_end;
         return;
     }
 
     if (lines_dirty) {
-#ifdef SOFT80
-        /* Lines committed: scroll the bitmap up and render only the
-           freshly exposed tail rows. */
+#if defined(SOFT80) && !defined(NO_SCROLL_OPT)
+        /* Lines committed while full: scroll the bitmap up and render
+           only the freshly exposed tail rows. Requires the previous
+           drawn state to have been full too. */
         if (commits_pending <= 3
-                && line_count + 1 > CHAT_HEIGHT
-                && line_count - commits_pending + 1 >= CHAT_HEIGHT) {
+                && stream_drawn_total >= CHAT_HEIGHT) {
             uint8_t n = commits_pending;
             soft80_scroll_chat(n);
             for (r = CHAT_HEIGHT - n - 1; r < CHAT_HEIGHT; ++r) {
@@ -254,24 +304,33 @@ void chat_redraw_stream(void) {
             }
             lines_dirty = 0;
             commits_pending = 0;
+            stream_drawn_total = total;
+            stream_partial_end = new_end;
             return;
         }
 #endif
         chat_redraw();
+        stream_drawn_total = total;
+        stream_partial_end = new_end;
         return;
     }
 
-    /* Only the line under construction changed */
+    /* Only the line under construction grew: repaint just its new cells.
+       (cur_len never shrinks within a line, and cells finalized out of
+       the word buffer keep the same glyphs, so earlier cells are valid.) */
     r = CHAT_HEIGHT - 1;
-    {
-        uint8_t partial = (cur_len || wlen) ? 1 : 0;
-        int16_t total = line_count + partial;
-        if (total < CHAT_HEIGHT) {
-            r = (uint8_t)total - 1;
-        }
-    }
     color = build_view_row(r);
+#ifndef NO_SPAN
+    if (new_end > stream_partial_end) {
+        uint8_t from = stream_partial_end ? stream_partial_end - 1 : 0;
+        ui_blit_span(CHAT_START_ROW + r, rowbuf, from, new_end - from);
+    } else {
+        ui_blit_row(CHAT_START_ROW + r, rowbuf, color);
+    }
+#else
     ui_blit_row(CHAT_START_ROW + r, rowbuf, color);
+#endif
+    stream_partial_end = new_end;
 }
 
 void chat_area_clear_screen(void) {

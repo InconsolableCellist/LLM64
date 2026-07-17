@@ -56,6 +56,10 @@ void ui_draw_row(uint8_t row, const char* petscii, uint8_t color, uint8_t revers
    SOFT80; bit7 = reverse in both). cells must be TEXT_COLS long. */
 void ui_blit_row(uint8_t row, const uint8_t* cells, uint8_t color);
 
+/* Repaint only cells [first, first+count) of a row (same color) */
+void ui_blit_span(uint8_t row, const uint8_t* cells, uint8_t first,
+                  uint8_t count);
+
 /* Convert one PETSCII char to a display cell for the current mode */
 uint8_t ui_cell_from_petscii(uint8_t c);
 

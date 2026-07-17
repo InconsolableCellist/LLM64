@@ -14,6 +14,7 @@
 
         .export _soft80_init
         .export _soft80_row
+        .export _soft80_span
         .export _soft80_scroll_chat
         .import _font48, _font48lo
         .import popa, popax
@@ -164,18 +165,116 @@ _soft80_row:
         ; render 40 pairs
         lda #40
         sta pairs
+        jmp render_pairs
+
+;---------------------------------------
+; void __fastcall__ soft80_span(uint8_t row, const uint8_t* cells,
+;                               uint8_t first_pair, uint8_t pair_count)
+; Re-render only pairs [first_pair, first_pair+pair_count) of a row.
+; cells points at the FULL row buffer; shadow is updated for the span;
+; the matrix color is left untouched (same-color row assumed).
+;---------------------------------------
+_soft80_span:
+        sta pairs               ; pair_count
+        jsr popa
+        sta tmp3                ; first_pair
+        jsr popax
+        sta ptr1                ; cells (full row)
+        stx ptr1+1
+        jsr popa
+        sta row
+        tax
+
+        lda pairs
+        beq @done
+
+        ; cells += first_pair*2
+        lda tmp3
+        asl
+        clc
+        adc ptr1
+        sta ptr1
+        bcc :+
+        inc ptr1+1
+:
+        ; shadow span update: 2*pair_count ASCII bytes at offset first*2
+        lda shd_lo,x
+        clc
+        adc tmp3
+        sta ptr2
+        lda shd_hi,x
+        adc #0
+        sta ptr2+1
+        lda tmp3                ; add first_pair again (total 2*first)
+        clc
+        adc ptr2
+        sta ptr2
+        bcc :+
+        inc ptr2+1
+:       lda pairs
+        asl
+        tay                     ; 2*count (max 80)
+        dey
+@shd2:  lda (ptr1),y
+        and #$7F
+        sta (ptr2),y
+        dey
+        cpy #$FF
+        bne @shd2
+
+        ; bitmap dst = rowbase + first_pair*8
+        lda bmp_lo,x
+        sta ptr4
+        lda bmp_hi,x
+        sta ptr4+1
+        lda tmp3
+        sta tmp1
+        lda #0
+        sta tmp2
+        ldx #3
+:       asl tmp1
+        rol tmp2
+        dex
+        bne :-
+        clc
+        lda ptr4
+        adc tmp1
+        sta ptr4
+        lda ptr4+1
+        adc tmp2
+        sta ptr4+1
+        jmp render_pairs
+@done:  rts
+
+;---------------------------------------
+; Core: render `pairs` pairs from (ptr1) cells to (ptr4) bitmap
+;---------------------------------------
+render_pairs:
 @pair:
         ldy #0
         lda (ptr1),y            ; left cell
-        jsr font_hi_ptr         ; -> ptr2, sets revmask high nibble
         iny
-        lda (ptr1),y            ; right cell
-        jsr font_lo_ptr         ; -> ptr3, ors revmask low nibble
+        ora (ptr1),y            ; both space, no reverse?
+        cmp #$20
+        beq @blank
+        lda (ptr1),y            ; right cell (Y=1)
+        jsr font_lo_ptr2        ; -> ptr3, revmask low nibble
+        ldy #0
+        lda (ptr1),y
+        jsr font_hi_ptr         ; -> ptr2, revmask high nibble ORed
 
         ; blit 8 rows: byte = fontHI[l] | fontLO[r], then reverse mask
-        ldy #0
         jsr blit8
+        jmp @next
 
+@blank: ; both cells are plain spaces: 8 zero bytes
+        lda #0
+.repeat 8, I
+        ldy #I
+        sta (ptr4),y
+.endrep
+
+@next:
         ; advance: cells += 2, bitmap dst += 8
         clc
         lda ptr1
@@ -203,14 +302,15 @@ blit8:
 .endrep
         rts
 
-; A = cell -> ptr2 = _font48 + (cell-$20)*8; revmask high nibble from bit7
+; A = cell -> ptr2 = _font48 + (cell-$20)*8; revmask |= $F0 if bit7
 font_hi_ptr:
         tax
         and #$80
         beq :+
-        lda #$F0
-:       sta revmask
-        txa
+        lda revmask
+        ora #$F0
+        sta revmask
+:       txa
         and #$7F
         sec
         sbc #$20
@@ -234,13 +334,16 @@ font_hi_ptr:
         sta ptr2+1
         rts
 
-; A = cell -> ptr3 = _font48lo + (cell-$20)*8; revmask |= low nibble
-font_lo_ptr:
+; A = cell -> ptr3 = _font48lo + (cell-$20)*8; INITIALIZES revmask
+; (called first for each pair; low nibble set if bit7)
+font_lo_ptr2:
         tax
+        lda #0
+        sta revmask
+        txa
         and #$80
         beq :+
-        lda revmask
-        ora #$0F
+        lda #$0F
         sta revmask
 :       txa
         and #$7F

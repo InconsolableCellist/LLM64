@@ -402,13 +402,14 @@ class ProtocolHandler:
     # rate, so sustained streams can never outrun it - LLM APIs emit
     # arbitrarily large chunks, which is exactly what corrupted long
     # responses before.
-    # Pacing must leave real headroom below the wire rate: a frame of n
-    # payload bytes occupies (n+6)*1.04ms of 9600-baud wire time, and the
-    # C64 needs idle gaps to drain hiccup backlog. These values hold the
-    # link at ~80% duty (~700 chars/s - far faster than reading speed).
+    # Pacing must stay below the C64's real consumption rate, which is
+    # set by rendering, not the wire: the soft-80 build needs ~20-30ms
+    # per frame plus ~130ms per scrolled line. These values yield ~480
+    # chars/s - still several times faster than reading speed - with
+    # comfortable headroom for both screen modes.
     CHUNK_TEXT_MAX = 60
-    CHUNK_PACE_BASE = 0.008       # covers the 6-byte frame header + margin
-    CHUNK_PACE_PER_BYTE = 0.0013  # vs 1.04ms/byte wire time
+    CHUNK_PACE_BASE = 0.016       # per frame
+    CHUNK_PACE_PER_BYTE = 0.0018  # per payload byte
 
     async def _send_text_chunk(self, seq: int, piece: bytes) -> int:
         """Send one CHAT_CHUNK frame and pace; returns next seq."""

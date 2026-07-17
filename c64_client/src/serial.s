@@ -24,6 +24,7 @@
         .export _serial_rx_count
         .export _serial_overflows
         .export _serial_overruns
+        .export rx_used
 
         .import popa, popax
         .import _kb_scan
@@ -54,19 +55,65 @@ IRQ_VECTOR = $0314
 NMI_VECTOR = $0318
 
         .bss
-rx_head:        .res 1          ; write index (IRQ handler)
-rx_tail:        .res 1          ; read index (main program)
+; 1KB RX ring: ~1.1s of backlog tolerance at 9600 baud (the old 256-byte
+; ring gave 266ms, which redraw spikes and emulator-monitor pauses could
+; exceed, dropping bytes and shredding frames). Access goes through
+; self-modifying absolute-address stubs (below, in DATA) with a 16-bit
+; fill counter; the reader masks IRQs around its non-atomic updates.
+RX_RING_SIZE = 1024
+rx_used:        .res 2          ; bytes currently buffered
 connected:      .res 1
 vectors_saved:  .res 1
 overflows:      .res 1          ; ring-full drops (consumer too slow)
 overruns:       .res 1          ; ACIA overrun flags seen (IRQ too late)
-rx_buffer:      .res 256        ; ring buffer (8-bit indices wrap naturally)
+rx_buffer:      .res RX_RING_SIZE
+rx_buffer_end:
 
         .data
 ; Chain to the previous NMI handler via a patched absolute JMP. An
 ; indirect "jmp (vector)" would hit the 6502 page-boundary bug if the
 ; vector byte ever landed at $xxFF.
 nmi_chain:      jmp $0000       ; operand patched in acia_init_hw
+
+; Self-modifying ring access stubs (operands = current write/read
+; position inside rx_buffer; initialized by acia_init_hw)
+ring_write:                     ; A -> ring, advances write ptr (IRQ ctx)
+wr_st:  sta rx_buffer
+        inc wr_st+1
+        bne @nowrap
+        inc wr_st+2
+@nowrap:
+        lda wr_st+2
+        cmp #>rx_buffer_end
+        bne @done
+        lda wr_st+1
+        cmp #<rx_buffer_end
+        bne @done
+        lda #<rx_buffer
+        sta wr_st+1
+        lda #>rx_buffer
+        sta wr_st+2
+@done:  rts
+
+ring_read:                      ; ring -> A, advances read ptr
+rd_st:  lda rx_buffer
+        inc rd_st+1
+        bne @nowrap
+        inc rd_st+2
+@nowrap:
+        pha
+        lda rd_st+2
+        cmp #>rx_buffer_end
+        bne @done
+        lda rd_st+1
+        cmp #<rx_buffer_end
+        bne @done
+        lda #<rx_buffer
+        sta rd_st+1
+        lda #>rx_buffer
+        sta rd_st+2
+@done:  pla
+        rts
 
         .code
 
@@ -99,9 +146,15 @@ _acia_init_hw:
 
         ; Reset ring buffer
         lda #0
-        sta rx_head
-        sta rx_tail
+        sta rx_used
+        sta rx_used+1
         sta connected
+        lda #<rx_buffer
+        sta wr_st+1
+        sta rd_st+1
+        lda #>rx_buffer
+        sta wr_st+2
+        sta rd_st+2
 
         ; Install interrupt handlers (once)
         lda vectors_saved
@@ -159,17 +212,20 @@ acia_irq_entry:
         txa
         and #ACIA_SR_RDRF
         beq @exit
+        lda rx_used+1
+        cmp #>RX_RING_SIZE      ; ring full?
+        bcs @full
         lda ACIA_DATA
-        ldx rx_head
-        sta rx_buffer,x
-        inx
-        cpx rx_tail             ; full? drop newest rather than corrupt ring
-        beq @full
-        stx rx_head
-        lda ACIA_STATUS         ; another byte already waiting?
+        jsr ring_write
+        inc rx_used
+        bne @more
+        inc rx_used+1
+@more:  lda ACIA_STATUS         ; another byte already waiting?
         jmp @drain
 @full:
+        lda ACIA_DATA           ; discard to release the register
         inc overflows
+        jmp @exit
 
 @not_acia:
         lda CIA1_ICR            ; read acks ALL CIA1 int flags
@@ -199,15 +255,18 @@ acia_nmi_entry:
         bpl @chain              ; not the ACIA: RESTORE etc.
 @drain: and #ACIA_SR_RDRF
         beq @ours
+        lda rx_used+1
+        cmp #>RX_RING_SIZE
+        bcs @nfull
         lda ACIA_DATA
-        ldx rx_head
-        sta rx_buffer,x
-        inx
-        cpx rx_tail
-        beq @ours
-        stx rx_head
-        lda ACIA_STATUS
+        jsr ring_write
+        inc rx_used
+        bne @nmore
+        inc rx_used+1
+@nmore: lda ACIA_STATUS
         jmp @drain
+@nfull: lda ACIA_DATA
+        inc overflows
 @ours:
         pla
         tax
@@ -221,15 +280,35 @@ acia_nmi_entry:
 
 ;---------------------------------------
 ; uint8_t serial_available(void)
+;
+; When the ring is empty, also poll the ACIA directly: if a byte's
+; interrupt was lost to a status-read race (the 6551 clears its IRQ
+; flag on any status read), the byte sits in the data register and -
+; with delivery paused behind it - would deadlock the stream. The main
+; loop calls this constantly, so a stranded byte heals within
+; microseconds. IRQs are masked around the pickup to keep the ring
+; writer single-threaded.
 ;---------------------------------------
 _serial_available:
-        lda rx_head
-        cmp rx_tail
-        beq @empty
-        lda #1
+        lda rx_used
+        ora rx_used+1
+        bne @yes
+        php
+        sei
+        lda ACIA_STATUS
+        and #ACIA_SR_RDRF
+        beq @none
+        lda ACIA_DATA           ; stranded byte: pick it up ourselves
+        jsr ring_write
+        inc rx_used
+        bne @up
+        inc rx_used+1
+@up:    plp
+@yes:   lda #1
         ldx #0
         rts
-@empty:
+@none:
+        plp
         lda #0
         ldx #0
         rts
@@ -239,11 +318,17 @@ _serial_available:
 ; Returns next buffered byte (0 if empty - call serial_available first)
 ;---------------------------------------
 _serial_read:
-        ldx rx_tail
-        cpx rx_head
+        lda rx_used
+        ora rx_used+1
         beq @empty
-        lda rx_buffer,x
-        inc rx_tail
+        php
+        sei
+        lda rx_used             ; 16-bit decrement (IRQ-safe)
+        bne @dl
+        dec rx_used+1
+@dl:    dec rx_used
+        jsr ring_read
+        plp
         ldx #0
         rts
 @empty:
@@ -256,9 +341,12 @@ _serial_read:
 ; Bytes currently waiting in the ring buffer
 ;---------------------------------------
 _serial_rx_count:
-        lda rx_head
-        sec
-        sbc rx_tail
+        lda rx_used+1
+        beq @small
+        lda #255                ; clamp to the uint8 API
+        ldx #0
+        rts
+@small: lda rx_used
         ldx #0
         rts
 
@@ -276,12 +364,18 @@ _serial_read_block:
         ldy #0
 @loop:  cpy tmp1
         bcs @done
-        ldx rx_tail
-        cpx rx_head
+        lda rx_used
+        ora rx_used+1
         beq @done               ; ring empty
-        lda rx_buffer,x
+        php
+        sei
+        lda rx_used
+        bne @dl
+        dec rx_used+1
+@dl:    dec rx_used
+        jsr ring_read
+        plp
         sta (ptr1),y
-        inc rx_tail
         iny
         bne @loop
 @done:  tya

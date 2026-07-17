@@ -29,6 +29,13 @@ endif
 ifdef DEBUG_CLIENT
 CFLAGS += -DDEBUG_CLIENT
 endif
+ifeq ($(CONNECT),direct)
+CFLAGS += -DCONNECT_DIRECT
+endif
+CFLAGS += $(CFLAGS_EXTRA)
+ASFLAGS = -t c64 -I include
+LDFLAGS = -t c64 -m $(TARGETDIR)/$(TARGET).map -Ln $(TARGETDIR)/labels.txt
+
 # MODE80=1 builds the soft-80-column bitmap UI instead of 40-column text.
 # Custom linker config caps the program at $C000: above it live the ASCII
 # shadow ($C000), the color matrix ($CC00) and (under the KERNAL ROM) the
@@ -38,11 +45,6 @@ CFLAGS += -DSOFT80
 ASFLAGS += -D SOFT80
 LDFLAGS += -C c64-soft80.cfg
 endif
-ifeq ($(CONNECT),direct)
-CFLAGS += -DCONNECT_DIRECT
-endif
-ASFLAGS = -t c64 -I include
-LDFLAGS = -t c64 -m $(TARGETDIR)/$(TARGET).map
 
 # Source files
 C_SOURCES = $(wildcard src/*.c)
