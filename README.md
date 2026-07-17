@@ -1,246 +1,122 @@
 # C64 LLM Interface
 
-A complete LLM chat interface for the Commodore 64, featuring a native TUI client and Python proxy server.
+Chat with modern LLMs from a Commodore 64. A native TUI client (cc65
+C + 6502 assembly) talks through a 6551 ACIA to a Python proxy that
+bridges to any OpenAI-compatible API — and the whole stack is verified
+end-to-end by automated tests running in VICE.
 
-![Status](https://img.shields.io/badge/status-design%20complete-blue)
-![Platform](https://img.shields.io/badge/platform-C64%20Ultimate-red)
-![Language](https://img.shields.io/badge/c64-C%2FASM-orange)
+![Status](https://img.shields.io/badge/status-working-brightgreen)
+![Platform](https://img.shields.io/badge/platform-C64%20%2F%20VICE%20%2F%20C64%20Ultimate-red)
+![Language](https://img.shields.io/badge/c64-C%2FASM%20(cc65)-orange)
 ![Language](https://img.shields.io/badge/proxy-Python%203.10%2B-green)
 
-## Overview
-
-Chat with modern LLMs (GPT-3.5, GPT-4, local models) directly from your Commodore 64! This project provides:
-
-- **C64 TUI Client** - Full-screen interface with text editing, scrolling, and conversation management
-- **Linux TCP Proxy** - Bridges C64 to OpenAI-compatible APIs with conversation persistence
-- **WiFi Connectivity** - Uses C64 Ultimate's modem emulation (no cables!)
-- **Fast Performance** - 9600 baud ACIA communication for responsive streaming
-
-## Features
-
-### C64 Client
-- ✨ Full-screen TUI with 19-line scrollable chat area
-- ⌨️ Multi-line text editor with Emacs keybindings (Ctrl-A/E/K)
-- 📜 Conversation history browser
-- 🎮 F-key shortcuts (F1: Send, F3: Cancel, F5: Sidebar, F7: Help)
-- ⚡ Real-time streaming responses
-- 🎨 Native PETSCII graphics and colors
-
-### Linux Proxy
-- 🌐 TCP server (no serial cables needed!)
-- 🤖 OpenAI-compatible API integration
-- 💾 Open WebUI-compatible JSON storage
-- 👥 Multi-client support
-- 🚀 Async architecture for performance
-
-## Architecture
-
 ```
-┌─────────────────┐         ┌──────────────┐         ┌─────────────┐
-│  C64 Ultimate   │  WiFi   │ Linux Server │  HTTPS  │  OpenAI API │
-│  ┌───────────┐  │ ◄─────► │ ┌──────────┐ │ ◄─────► │             │
-│  │ TUI Client│  │  TCP    │ │TCP Proxy │ │   API   │ GPT-3.5/4   │
-│  │  (C/ASM)  │  │ 9600bd  │ │ (Python) │ │         │ Local LLMs  │
-│  └───────────┘  │         │ └──────────┘ │         │             │
-└─────────────────┘         └──────────────┘         └─────────────┘
+┌─────────────────┐         ┌──────────────┐         ┌──────────────────┐
+│  C64 / VICE /   │  TCP    │ Linux proxy  │  HTTPS  │ OpenAI-compatible│
+│  C64 Ultimate   │ ◄─────► │  (Python,    │ ◄─────► │ API (llama.cpp,  │
+│  TUI client     │ 9600bd  │   asyncio)   │   SSE   │ OpenAI, Ollama…) │
+└─────────────────┘         └──────────────┘         └──────────────────┘
 ```
 
-## Quick Start
+## What works today
 
-### Prerequisites
-- Commodore 64 with C64 Ultimate (configured for WiFi)
-- Linux server on same network
-- OpenAI API key (or compatible endpoint)
+- **Interactive TUI on the C64**: scrollable word-wrapped chat, streaming
+  responses, 120-char input editor with Emacs bindings, conversation
+  browser, help overlay
+- **Interrupt-driven serial**: 6551 ACIA driver with an IRQ/NMI RX ring
+  buffer — no dropped bytes at 9600 baud while the screen updates
+- **Python proxy**: async TCP server, OpenAI SSE streaming, Open
+  WebUI-style conversation persistence, ASCII sanitization, C64-aware
+  system prompt
+- **Automated end-to-end tests in VICE**: the CI-able `make test-all`
+  boots mock LLM → proxy → emulated C64 and asserts on actual screen
+  contents (including typing into the emulator through VICE's binary
+  monitor). Verified against a real llama.cpp server too.
 
-### Setup Linux Proxy
+## Quick start (emulator)
+
+Prereqs: `cc65`, `vice` (x64sc), `python3`, and `tcpser` for the
+Hayes-mode test.
+
 ```bash
-# Clone repository
-git clone <repo-url>
-cd c64_llm
+# one-time proxy setup
+cd c64llm_proxy && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && cd ..
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Configure API key
-export OPENAI_API_KEY=sk-your-key-here
-
-# Start server
-python -m src.main --host 0.0.0.0 --port 6400
+make test-all       # run the four automated suites
+make run-live       # interactive TUI against the API in c64llm_proxy/config.toml
 ```
 
-### Run on C64
-```
-LOAD"C64LLM",8,1
-RUN
-```
+See [docs/04-emulator-setup.md](docs/04-emulator-setup.md) for the VICE
+wiring details (and the archaeology of why naive VICE setups fail).
 
-The client will connect to the server via Hayes AT commands and you're ready to chat!
+## Quick start (real C64 Ultimate)
 
-## Documentation
-
-Comprehensive design documentation is available in the `docs/` directory:
-
-- **[00-overview.md](docs/00-overview.md)** - Project overview and FAQ
-- **[01-system-architecture.md](docs/01-system-architecture.md)** - Protocol specification, message formats
-- **[02-c64-client-design.md](docs/02-c64-client-design.md)** - C64 implementation details, memory layout, modules
-- **[03-linux-proxy-design.md](docs/03-linux-proxy-design.md)** - Python server design, API integration
-
-## Technology Stack
-
-| Component | Technology |
-|-----------|------------|
-| C64 Compiler | cc65 |
-| C64 Language | C + 6502 Assembly |
-| Communication | 6551 ACIA (SwiftLink compatible) |
-| Transport | TCP/IP over WiFi (Hayes AT) |
-| Baud Rate | 9600 (up to 19200) |
-| Proxy Language | Python 3.10+ |
-| Proxy Framework | asyncio |
-| API Protocol | OpenAI-compatible |
-| Storage Format | Open WebUI JSON |
-
-## Performance
-
-- **Throughput**: ~960 bytes/sec (9600 baud)
-- **Latency**: ~100ms per 100 bytes transfer
-- **API Response**: 1-3 seconds for first token
-- **Streaming**: Real-time display as chunks arrive
-- **Message Size**: Up to 1024 bytes
-- **Scrollback**: 16 messages in C64 memory
-
-## Development Status
-
-**Current Phase**: Design Complete ✅
-
-All design documents are finished and ready for implementation.
-
-### Roadmap
-- [x] System architecture design
-- [x] C64 client design
-- [x] Linux proxy design
-- [ ] Implement Linux proxy
-- [ ] Implement C64 ACIA driver
-- [ ] Implement C64 protocol layer
-- [ ] Implement C64 UI/editor
-- [ ] Integration testing
-- [ ] Hardware testing
-- [ ] Documentation
-- [ ] Release v1.0
-
-## Building (Once Implemented)
-
-### C64 Client
 ```bash
-cd c64
-make clean
-make
-# Creates c64llm.prg
+make -C c64_client clean
+make -C c64_client CONNECT=hayes SERVER_IP=<proxy-lan-ip>
+# copy build/c64llm.prg to the Ultimate, run the proxy, LOAD"C64LLM",8,1
 ```
 
-### Linux Proxy
-No build required - pure Python!
+Checklist: [docs/05-ultimate-setup.md](docs/05-ultimate-setup.md)
+(ACIA/SwiftLink at $DE00 + modem emulation enabled).
 
-## Configuration
+## Keys (TUI client)
 
-### Server Configuration (`config.toml`)
+| Key | Action |
+|-----|--------|
+| F1 / Return | Send message |
+| F2 | New conversation |
+| F3 | Cancel streaming reply |
+| F5 | Conversation browser (Return loads, F5 closes) |
+| F7 | Help |
+| CRSR up/down | Scroll chat |
+| Ctrl-A / Ctrl-E | Start / end of input |
+| Ctrl-K / Ctrl-D | Kill to end / delete char |
+| CLR/HOME | Clear input |
+
+## Repository layout
+
+```
+c64_client/     cc65 client (src/main.c TUI, src/debug_main.c scripted
+                diagnostics, serial.s ACIA driver, display/editor/protocol)
+c64llm_proxy/   Python proxy (src/, config.toml, .venv)
+emu/            VICE automation: e2e harness, mock LLM, binary-monitor client
+docs/           design docs (00-03) + setup guides (04-05)
+```
+
+## Build modes
+
+| Flag | Meaning |
+|------|---------|
+| `CONNECT=direct` | No modem handshake; ACIA pipe is the connection (VICE) |
+| `CONNECT=hayes` | AT-command dial (C64 Ultimate, or VICE+tcpser) |
+| `SERVER_IP=` / `SERVER_PORT=` | Proxy address baked into the PRG |
+| `DEBUG_CLIENT=1` | Scripted diagnostic session instead of the TUI |
+
+## Configuration (proxy)
+
+`c64llm_proxy/config.toml`:
+
 ```toml
 [api]
-base_url = "https://api.openai.com/v1"
-model = "gpt-3.5-turbo"
+base_url = "https://your-server:5000/v1"
+model = "your-model"
+system_prompt = "You are chatting with a user on a Commodore 64..."
 
 [storage]
 data_dir = "./data"
 ```
 
-### Environment Variables
-```bash
-export OPENAI_API_KEY=sk-...        # Required
-export OPENAI_MODEL=gpt-4           # Optional
-export OPENAI_API_BASE=https://...  # Optional
-```
+Environment overrides: `OPENAI_API_BASE`, `OPENAI_API_KEY` (optional for
+local servers), `OPENAI_MODEL`, `OPENAI_SYSTEM_PROMPT`.
 
-## Usage
+## Documentation
 
-### Keyboard Controls
-
-| Key | Action |
-|-----|--------|
-| F1 | Send message |
-| F3 | Cancel current request |
-| F5 | Toggle conversation sidebar |
-| F7 | Show help |
-| Ctrl-A | Beginning of line |
-| Ctrl-E | End of line |
-| Ctrl-K | Kill to end of line |
-| Ctrl-D | Delete character |
-| Cursor Keys | Navigate |
-| Return | New line in editor |
-
-### Example Session
-```
-[Chat window shows previous messages]
-You: What is BASIC?
-AI: BASIC (Beginner's All-purpose Symbolic
-Instruction Code) is a high-level programming
-language designed in 1964...
-
-[Type your next message in editor area]
-> How do I use FOR loops?_
-
-[Press F1 to send]
-```
-
-## API Compatibility
-
-Works with any OpenAI-compatible API:
-- ✅ OpenAI (GPT-3.5, GPT-4)
-- ✅ Anthropic Claude (via proxy)
-- ✅ Local models (Ollama, LM Studio, text-generation-webui)
-- ✅ Azure OpenAI
-- ✅ Any other OpenAI-compatible endpoint
-
-## Hardware Requirements
-
-### Required
-- Commodore 64
-- C64 Ultimate cartridge or Ultimate 64 (with WiFi configured)
-
-### Alternative (Without Ultimate)
-- Commodore 64
-- SwiftLink, Turbo232, or compatible ACIA cartridge
-- Network connection via:
-  - WiFi adapter connected to ACIA, OR
-  - Serial cable to Linux machine with ser2net/socat
-
-## Contributing
-
-Contributions welcome! Areas of interest:
-- Bug fixes and testing
-- Feature enhancements
-- Documentation improvements
-- Support for other platforms (C128, VIC-20, etc.)
-- UI/UX improvements
-
-## License
-
-TBD - Will be open source
-
-## Credits
-
-- **cc65** - C compiler for 6502
-- **C64 Ultimate** - FPGA C64 platform with WiFi
-- **VICE** - C64 emulator for development
-- **OpenAI** - API platform
-
-## See Also
-
-- [cc65 Documentation](https://cc65.github.io/)
-- [C64 Ultimate Manual](https://ultimate64.com/)
-- [OpenAI API Docs](https://platform.openai.com/docs)
-- [Open WebUI](https://github.com/open-webui/open-webui)
+- [00-overview.md](docs/00-overview.md), [01-system-architecture.md](docs/01-system-architecture.md),
+  [02-c64-client-design.md](docs/02-c64-client-design.md), [03-linux-proxy-design.md](docs/03-linux-proxy-design.md) — original design
+- [04-emulator-setup.md](docs/04-emulator-setup.md) — VICE + automation
+- [05-ultimate-setup.md](docs/05-ultimate-setup.md) — real hardware
 
 ---
-
-**Made with ❤️ for the C64 community**
 
 *"Bringing 1980s hardware into the 2020s AI era"*
