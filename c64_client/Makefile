@@ -22,6 +22,9 @@ SERVER_PORT ?= 6400
 # Compiler flags
 CFLAGS = -t c64 -O -Or -Cl -I include
 CFLAGS += -DSERVER_IP=\"$(SERVER_IP)\" -DSERVER_PORT=\"$(SERVER_PORT)\"
+ifdef TEST_MESSAGE
+CFLAGS += -DTEST_MESSAGE='"$(TEST_MESSAGE)"'
+endif
 ifeq ($(CONNECT),direct)
 CFLAGS += -DCONNECT_DIRECT
 endif

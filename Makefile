@@ -27,6 +27,12 @@ test-emu: client-direct
 test-emu-hayes: client-hayes-local
 	$(PYTHON) emu/test_e2e.py --mode hayes
 
+# Sustained streaming: ~3KB response at full speed, asserts zero CRC failures
+test-emu-long:
+	$(MAKE) -C c64_client clean
+	$(MAKE) -C c64_client CONNECT=direct TEST_MESSAGE=LONGTEST
+	$(PYTHON) emu/test_e2e.py --mode direct --expect "streaming test" --timeout 180
+
 # Interactive session against the real API configured in c64llm_proxy/config.toml
 run-live: client-direct
 	$(PYTHON) emu/test_e2e.py --mode direct --live --timeout 300

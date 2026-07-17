@@ -125,6 +125,8 @@ def main():
     parser.add_argument('--baud', type=int, default=9600)
     parser.add_argument('--live', action='store_true',
                         help='Use the real API from config.toml instead of the mock')
+    parser.add_argument('--expect', default='mock llm',
+                        help='Text that must appear on the final screen')
     args = parser.parse_args()
 
     artifacts = REPO / 'emu' / 'artifacts'
@@ -207,8 +209,10 @@ def main():
         final = wait_for_screen(monitor, r'test complete', args.timeout,
                                 artifacts, f'{args.mode}-complete')
         if not args.live:
-            final = wait_for_screen(monitor, r'mock llm', 10,
+            final = wait_for_screen(monitor, re.escape(args.expect), 10,
                                     artifacts, f'{args.mode}-content')
+            wait_for_screen(monitor, r'crc fails: 00', 10,
+                            artifacts, f'{args.mode}-crc')
 
         (artifacts / f'{args.mode}-final.txt').write_text(final)
         print(f"\n--- final screen ---\n{final}\n--------------------")

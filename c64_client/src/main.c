@@ -19,6 +19,11 @@
 #define SERVER_PORT "6400"
 #endif
 
+/* Message the scripted debug session sends */
+#ifndef TEST_MESSAGE
+#define TEST_MESSAGE "Hello from C64!"
+#endif
+
 /* Global protocol context */
 ProtoContext proto;
 uint8_t payload_buffer[MAX_PAYLOAD];
@@ -540,7 +545,7 @@ int main(void) {
 
     /* Send a test message */
     show_status("Sending test message...");
-    proto_send_chat("Hello from C64!");
+    proto_send_chat(TEST_MESSAGE);
 
     /* Wait for ACK */
     if (!wait_for_message(MSG_ACK, 300)) {
@@ -554,7 +559,7 @@ int main(void) {
     {
         uint8_t done = 0;
         uint16_t timeout = 0;
-        uint8_t chunk_count = 0;
+        uint16_t chunk_count = 0;
         uint8_t crc_fails = 0;
         uint8_t cx = 0, cy = 21;  /* chunk text area: rows 21-23 */
 
@@ -612,7 +617,8 @@ int main(void) {
         gotoxy(0, debug_row);
         textcolor(COLOR_CYAN);
         cputs("Chunks: ");
-        debug_hex(chunk_count);
+        debug_hex((uint8_t)(chunk_count >> 8));
+        debug_hex((uint8_t)chunk_count);
         cputs(" CRC fails: ");
         debug_hex(crc_fails);
         debug_row++;
