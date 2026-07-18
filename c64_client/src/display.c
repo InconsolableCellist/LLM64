@@ -19,7 +19,15 @@
 #define SCREEN ((uint8_t*)0x0400)
 #define COLORS ((uint8_t*)0xD800)
 
+#ifdef SOFT80
+/* 132 (not 160): ~2.3KB of BSS traded for the $B000 SID window + image
+   + indicator code - see c64-soft80.cfg (the hayes build is the tight
+   one). When this number stops feeling like scrollback and starts
+   feeling like rent, it's time for the overlay/module system. */
+#define MAX_LINES 132
+#else
 #define MAX_LINES 160
+#endif
 
 /* Committed, pre-wrapped lines (cells, space padded) */
 static uint8_t line_text[MAX_LINES][TEXT_COLS];
@@ -73,7 +81,13 @@ uint8_t ui_cell_from_petscii(uint8_t c) {
 
 /* --- low-level row output ------------------------------------------- */
 
+/* Hard freeze: while a fullscreen image owns the bitmap, every draw
+   primitive becomes a no-op so stray status/editor updates can't paint
+   over it. Cleared by the image dismiss, which redraws everything. */
+uint8_t ui_frozen;
+
 void ui_blit_row(uint8_t row, const uint8_t* cells, uint8_t color) {
+    if (ui_frozen) return;
 #ifdef SOFT80
     soft80_row(row, cells, color);
 #else
@@ -86,6 +100,7 @@ void ui_blit_row(uint8_t row, const uint8_t* cells, uint8_t color) {
    changed. Much cheaper than a full row in SOFT80 (~0.2ms/cell). */
 void ui_blit_span(uint8_t row, const uint8_t* cells, uint8_t first,
                   uint8_t count) {
+    if (ui_frozen) return;
     if (count == 0) return;
 #ifdef SOFT80
     {
@@ -403,8 +418,41 @@ void ui_draw_row(uint8_t row, const char* petscii, uint8_t color,
     ui_blit_row(row, rowbuf, color);
 }
 
+/* Persistent indicator flags (bit0: unviewed pic suggestion). Drawn in
+   the status row's last cells so ordinary status messages can't clobber
+   them - every status repaint re-draws the indicators on top. */
+uint8_t ui_hints;
+
+static void draw_hints(void) {
+    /* bit7 = reverse video, matching the status row */
+    if (ui_hints & 1) {
+#ifdef SOFT80
+        rowbuf[TEXT_COLS - 2] = '!' | 0x80;
+        rowbuf[TEXT_COLS - 1] = 'P' | 0x80;
+#else
+        rowbuf[TEXT_COLS - 2] = 0x21 | 0x80;   /* '!' screen code */
+        rowbuf[TEXT_COLS - 1] = 0x10 | 0x80;   /* 'P' screen code */
+#endif
+    } else {
+#ifdef SOFT80
+        rowbuf[TEXT_COLS - 2] = ' ' | 0x80;
+        rowbuf[TEXT_COLS - 1] = ' ' | 0x80;
+#else
+        rowbuf[TEXT_COLS - 2] = 0x20 | 0x80;
+        rowbuf[TEXT_COLS - 1] = 0x20 | 0x80;
+#endif
+    }
+    ui_blit_span(STATUS_ROW, rowbuf, TEXT_COLS - 2, 2);
+}
+
+void ui_set_hints(uint8_t flags) {
+    ui_hints = flags;
+    draw_hints();
+}
+
 void ui_status(const char* msg) {
     ui_draw_row(STATUS_ROW, msg, COLOR_WHITE, 1);
+    if (ui_hints & 1) draw_hints();
 }
 
 static void draw_frame(void) {

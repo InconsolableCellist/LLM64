@@ -24,6 +24,30 @@
 /* music.s */
 void music_next(void);
 extern uint8_t music_state;
+extern uint16_t music_ext_init;
+extern uint16_t music_ext_play_addr;
+extern uint8_t music_ext_song;
+extern uint8_t music_ext_vol;
+void music_ext_begin(void);
+void music_ext_stop(void);
+
+#ifdef SOFT80
+/* Streamed-SID window (see c64-soft80.cfg) */
+#define SID_WIN_START 0xB000u
+#define SID_WIN_END   0xC000u
+/* Fullscreen image. Two formats share the streaming path:
+   hires (bitmap 8000 + matrix 1000; soft-80's own VIC mode) and
+   multicolor (bitmap 8000 + matrix 1000 + color RAM 1000; needs the
+   VIC multicolor bit and the background register during display). */
+#define IMG_BITMAP    ((uint8_t*)0xE000)
+#define IMG_MATRIX    ((uint8_t*)0xCC00)
+#define IMG_COLRAM    ((uint8_t*)0xD800)
+#define IMG_BITMAP_SZ 8000u
+#define IMG_HIRES_SZ  9000u
+#define IMG_MC_SZ     10000u
+#define VIC_CTRL2     (*(volatile uint8_t*)0xD016)
+#define VIC_BG        (*(volatile uint8_t*)0xD021)
+#endif
 
 #ifndef SERVER_IP
 #define SERVER_IP   "192.168.1.39"
@@ -60,6 +84,29 @@ static uint8_t state = ST_IDLE;
 static uint8_t modal = MODAL_NONE;
 uint8_t crc_fail_count;
 uint16_t chunk_frames;
+
+#ifdef SOFT80
+/* Streamed-SID transfer progress */
+static uint8_t sid_active;
+static uint16_t sid_expect, sid_got;
+static uint8_t* sid_dst;
+static char sid_name[25];
+/* Fullscreen image state. img_shown is non-static so tests can watch
+   transfer completion via the label file. */
+static uint8_t img_active;   /* transfer in progress */
+uint8_t img_shown;           /* displayed; next key dismisses */
+static uint8_t img_mc;       /* multicolor: VIC state to restore */
+static uint8_t img_d021_save;
+static uint16_t img_got, img_expect;
+
+static void img_restore_vic(void) {
+    if (img_mc) {
+        VIC_CTRL2 &= (uint8_t)~0x10;
+        VIC_BG = img_d021_save;
+        img_mc = 0;
+    }
+}
+#endif
 
 /* Response watchdog. keyboard.s _sys_ticks is a free-running 16-bit ~60Hz
    counter; we read only the HIGH byte (atomic vs the IRQ, ~4.3s/unit). */
@@ -223,8 +270,10 @@ static void menu_open(void) {
         ui_draw_row(11, "  S  music (off)", COLOR_CYAN, 0);
     } else if (music_state == 1) {
         ui_draw_row(11, "  S  music: dungeon depths", COLOR_CYAN, 0);
-    } else {
+    } else if (music_state == 2) {
         ui_draw_row(11, "  S  music: northward road", COLOR_CYAN, 0);
+    } else {
+        ui_draw_row(11, "  S  music: streamed (s stops)", COLOR_CYAN, 0);
     }
     ui_draw_row(13, "  F1 or stop: close", COLOR_GRAY2, 0);
 }
@@ -476,6 +525,135 @@ static void handle_message(uint8_t msg_type) {
         case MSG_CONVERSATION_DATA:
             conv_data_frame();
             break;
+        case MSG_HINT:
+            ui_set_hints(proto_get_payload(&proto)[0]);
+            break;
+#ifdef SOFT80
+        case MSG_SID_BEGIN: {
+            /* load(2) init(2) play(2) song(1) size(2) vol(1) name(nul) */
+            uint8_t* p = proto_get_payload(&proto);
+            uint16_t load = p[0] | ((uint16_t)p[1] << 8);
+            uint16_t size = p[7] | ((uint16_t)p[8] << 8);
+            if (load < SID_WIN_START || load + size > SID_WIN_END
+                    || proto_get_length(&proto) < 11) {
+                proto_send_nak();
+                break;
+            }
+            music_ext_stop();       /* silence during the transfer */
+            music_ext_init = p[2] | ((uint16_t)p[3] << 8);
+            music_ext_play_addr = p[4] | ((uint16_t)p[5] << 8);
+            music_ext_song = p[6];
+            music_ext_vol = p[9];
+            sid_dst = (uint8_t*)load;
+            sid_expect = size;
+            sid_got = 0;
+            sid_active = 1;
+            strncpy(sid_name, (char*)(p + 10), 24);
+            sid_name[24] = 0;
+            ascii_to_petscii_str(sid_name);
+            /* Arm the watchdog: a dropped tail must not hang us */
+            if (state == ST_IDLE) {
+                state = ST_LOADING;
+                watchdog_reset();
+            }
+            break;
+        }
+        case MSG_SID_DATA: {
+            uint16_t len = proto_get_length(&proto);
+            if (!sid_active || sid_got + len > sid_expect) {
+                sid_active = 0;
+                break;
+            }
+            memcpy(sid_dst + sid_got, proto_get_payload(&proto), len);
+            sid_got += len;
+            break;
+        }
+        case MSG_SID_END:
+            if (sid_active && sid_got == sid_expect) {
+                music_ext_begin();
+                proto_send_ack();
+                ui_status(sid_name);
+            } else {
+                proto_send_nak();
+                ui_status("Music transfer failed.");
+            }
+            sid_active = 0;
+            if (state == ST_LOADING) state = ST_IDLE;
+            break;
+        case MSG_IMG_BEGIN: {
+            /* Payload: format byte (1 = multicolor) + bg color. The
+               image streams straight onto the live screen; freeze all
+               text drawing until the user dismisses it. Scrollback is
+               untouched, so dismissing is a local redraw - no reload. */
+            uint8_t* p = proto_get_payload(&proto);
+            img_restore_vic();       /* a retry may follow a failed mc */
+            img_active = 1;
+            img_shown = 0;
+            img_got = 0;
+            ui_frozen = 1;
+            if (proto_get_length(&proto) >= 2 && p[0] == 1) {
+                img_expect = IMG_MC_SZ;
+                img_d021_save = VIC_BG;
+                img_mc = 1;
+                VIC_BG = p[1];
+                VIC_CTRL2 |= 0x10;   /* progressive paint in mc mode */
+            } else {
+                img_expect = IMG_HIRES_SZ;
+            }
+            if (state == ST_IDLE) {
+                state = ST_LOADING;   /* watchdog covers the transfer */
+                watchdog_reset();
+            }
+            break;
+        }
+        case MSG_IMG_DATA: {
+            /* memcpy, not a per-byte loop: at 19200 baud the consumer
+               must stay well under ~520 cycles/byte or the RX ring backs
+               up and the C64U modem drops the burst tail */
+            uint16_t len = proto_get_length(&proto);
+            uint8_t* p = proto_get_payload(&proto);
+            uint16_t n;
+            if (!img_active || img_got + len > img_expect) {
+                img_active = 0;
+                break;
+            }
+            if (img_got < IMG_BITMAP_SZ) {
+                n = IMG_BITMAP_SZ - img_got;
+                if (n > len) n = len;
+                memcpy(IMG_BITMAP + img_got, p, n);
+                img_got += n;
+                p += n;
+                len -= n;
+            }
+            if (len && img_got < IMG_HIRES_SZ) {
+                n = IMG_HIRES_SZ - img_got;
+                if (n > len) n = len;
+                memcpy(IMG_MATRIX + (img_got - IMG_BITMAP_SZ), p, n);
+                img_got += n;
+                p += n;
+                len -= n;
+            }
+            if (len) {
+                memcpy(IMG_COLRAM + (img_got - IMG_HIRES_SZ), p, len);
+                img_got += len;
+            }
+            break;
+        }
+        case MSG_IMG_END:
+            if (img_active && img_got == img_expect) {
+                img_shown = 1;   /* key handler dismisses + redraws */
+                proto_send_ack();
+            } else {
+                img_restore_vic();
+                ui_frozen = 0;
+                ui_redraw_all();
+                proto_send_nak();
+                ui_status("Image transfer failed.");
+            }
+            img_active = 0;
+            if (state == ST_LOADING) state = ST_IDLE;
+            break;
+#endif
         default:
             break;
     }
@@ -552,6 +730,15 @@ static void cancel_stream(void) {
 /* --- key handling ----------------------------------------------------- */
 
 static void handle_key(uint8_t k) {
+#ifdef SOFT80
+    if (img_shown) {   /* any key dismisses the fullscreen image */
+        img_shown = 0;
+        img_restore_vic();
+        ui_frozen = 0;
+        ui_redraw_all();
+        return;
+    }
+#endif
     if (modal == MODAL_HELP) {
         modal = MODAL_NONE;
         chat_redraw();
@@ -573,8 +760,10 @@ static void handle_key(uint8_t k) {
                     ui_status("Music off.");
                 } else if (music_state == 1) {
                     ui_status("Music: Dungeon Depths");
-                } else {
+                } else if (music_state == 2) {
                     ui_status("Music: Northward Road");
+                } else {
+                    ui_status("Music: streamed tune");
                 }
                 break;
             case 'h': help_open(); break;
@@ -702,6 +891,20 @@ int main(void) {
         } else if (state != ST_IDLE && watchdog_expired()) {
             uint8_t was_loading = (state == ST_LOADING);
             state = ST_IDLE;
+#ifdef SOFT80
+            if (sid_active || img_active) {  /* transfer lost its tail */
+                sid_active = 0;
+                if (img_active) {
+                    img_active = 0;
+                    img_restore_vic();
+                    ui_frozen = 0;
+                    ui_redraw_all();
+                }
+                proto_init(&proto, payload_buffer, MAX_PAYLOAD);
+                ui_status("Transfer timed out. Ready.");
+                continue;
+            }
+#endif
             proto_init(&proto, payload_buffer, MAX_PAYLOAD);  /* resync */
             if (was_loading) chat_freeze(0);
             chat_start(2);

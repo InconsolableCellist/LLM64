@@ -15,6 +15,12 @@
         .export _music_play
         .export _music_next
         .export _music_state
+        .export _music_ext_init
+        .export _music_ext_play_addr
+        .export _music_ext_song
+        .export _music_ext_vol
+        .export _music_ext_begin
+        .export _music_ext_stop
 
 SID       = $D400
 SID_V1    = SID
@@ -22,9 +28,15 @@ SID_VOL   = SID+$18
 ZP_PTR    = $FB          ; 2 bytes, free on stock C64 + cc65
 
 NUM_TUNES = 2
+EXT_STATE = $FF          ; _music_state value: streamed SID at $B000 active
 
         .bss
-_music_state: .res 1     ; 0 = off, 1..NUM_TUNES = tune playing
+_music_state: .res 1     ; 0 = off, 1..NUM_TUNES = pattern tune, $FF = ext SID
+_music_ext_init:      .res 2   ; relocated PSID init address
+_music_ext_play_addr: .res 2   ; relocated PSID play address
+_music_ext_song:      .res 1   ; 0-based subtune for the init call
+_music_ext_vol:       .res 1   ; $D418 override (loudness normalization,
+                               ; filter bits included); 0 = no override
 vseq_lo:  .res 3         ; current sequence position per voice
 vseq_hi:  .res 3
 vbase_lo: .res 3         ; loop restart position
@@ -127,11 +139,46 @@ voff:        .byte 0, 7, 14
         .code
 
 ;---------------------------------------
+; Streamed-SID control. The tune was relocated server-side (sidreloc) to
+; $B000-$BFFF with zero page confined to $FB-$FE, so it coexists with
+; cc65 and the pattern player (which is never active at the same time).
+;---------------------------------------
+
+; void music_ext_begin(void) - call from mainline AFTER the window is
+; filled and _music_ext_init/_music_ext_play_addr/_music_ext_song are set
+_music_ext_begin:
+        jsr music_silence       ; stop pattern player / previous tune
+        sei
+        lda _music_ext_song
+        jsr call_init           ; PSID init: A = 0-based song
+        lda #EXT_STATE
+        sta _music_state
+        cli
+        rts
+
+call_init:
+        jmp (_music_ext_init)
+
+call_play:
+        jmp (_music_ext_play_addr)
+
+; void music_ext_stop(void)
+_music_ext_stop:
+        lda #0
+        sta _music_state
+        jmp music_silence
+
+;---------------------------------------
 ; void music_next(void)
 ; Cycle: off -> tune1 -> tune2 -> off
+; While a streamed SID plays, S stops it (back to off).
 ;---------------------------------------
 _music_next:
         lda _music_state
+        cmp #EXT_STATE
+        bne @cycle
+        jmp _music_ext_stop
+@cycle: lda _music_state
         clc
         adc #1
         cmp #NUM_TUNES+1
@@ -212,7 +259,17 @@ _music_play:
         lda _music_state
         bne :+
         rts
-:       ldx #0                  ; voice
+:       cmp #EXT_STATE
+        bne @pattern
+        jsr call_play           ; streamed SID's own play routine
+        ; loudness normalization: our volume byte wins over whatever the
+        ; tune wrote (vetted server-side: skipped for $D418-live tunes)
+        lda _music_ext_vol
+        beq @novol
+        sta SID_VOL
+@novol: rts
+@pattern:
+        ldx #0                  ; voice
 @voice: dec vdur,x
         beq @advance
         lda vdur,x

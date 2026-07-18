@@ -12,6 +12,12 @@
 
 void ui_init(void);
 
+/* Nonzero = all draw primitives are no-ops (fullscreen image showing) */
+extern uint8_t ui_frozen;
+
+/* Persistent status-row indicators (bit0: unviewed pic suggestion) */
+void ui_set_hints(uint8_t flags);
+
 /* Full redraw of the static frame (title, separator) + chat + status */
 void ui_redraw_all(void);
 

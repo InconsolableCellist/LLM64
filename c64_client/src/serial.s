@@ -67,6 +67,7 @@ connected:      .res 1
 vectors_saved:  .res 1
 overflows:      .res 1          ; ring-full drops (consumer too slow)
 overruns:       .res 1          ; ACIA overrun flags seen (IRQ too late)
+in_music:       .res 1          ; music_play reentrancy guard (see tick)
 rx_buffer:      .res RX_RING_SIZE
 rx_buffer_end:
 
@@ -250,7 +251,18 @@ acia_irq_entry:
         and #$01                ; timer A (the 60Hz system tick)?
         beq @exit
         jsr _kb_scan
+        ; Let the ACIA preempt the music routine: a streamed SID's play
+        ; call can exceed the one-byte grace period at 9600 baud, and
+        ; with I set that drops RX bytes mid-response. The CIA flag is
+        ; already acked (ICR read above); the guard skips a tick that
+        ; lands while music is still running rather than nesting it.
+        lda in_music
+        bne @exit
+        inc in_music
+        cli
         jsr _music_play
+        sei
+        dec in_music
 
 @exit:
         pla                     ; unwind the KERNAL stub's saves

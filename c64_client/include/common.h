@@ -114,6 +114,13 @@ typedef enum {
 #define MSG_CONVERSATION_DATA   0x54  /* 'T' - was 0x24 */
 #define MSG_STATUS              0x55  /* 'U' - was 0x25 */
 #define MSG_MODEL_LIST          0x56  /* 'V' */
+#define MSG_SID_BEGIN           0x57  /* 'W' - streamed SID: metadata */
+#define MSG_SID_DATA            0x58  /* 'X' - streamed SID: raw bytes */
+#define MSG_SID_END             0x59  /* 'Y' - streamed SID: start play */
+#define MSG_IMG_BEGIN           0x5A  /* 'Z' - fullscreen image incoming */
+#define MSG_IMG_DATA            0x5B  /* '[' - image bytes (bitmap+matrix) */
+#define MSG_IMG_END             0x5C  /* '\' - image complete, show it */
+#define MSG_HINT                0x5D  /* ']' - status flags (bit0: pic) */
 
 /* Pseudo message type returned by proto_process_byte on checksum failure
    (not a wire value - chosen outside the protocol's type range) */
