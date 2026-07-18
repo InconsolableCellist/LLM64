@@ -44,6 +44,7 @@ extern uint8_t music_state;
 #define ST_IDLE      0
 #define ST_WAITING   1  /* message sent, reply not started */
 #define ST_STREAMING 2
+#define ST_LOADING   3  /* bulk conversation load, chat frozen */
 
 /* Modal overlays */
 #define MODAL_NONE 0
@@ -328,6 +329,10 @@ static void conv_load_selected(void) {
     chat_clear();
     chat_freeze(1);  /* render once at the end: jump straight to the bottom */
     load_count = 0;
+    /* Arm the watchdog: a frame lost in transit would otherwise leave the
+       chat frozen at 'Loading... NN' forever */
+    state = ST_LOADING;
+    watchdog_reset();
     ui_status("Loading conversation...");
     proto_send_message(MSG_LOAD_CONVERSATION, (uint8_t*)&id, 4);
 }
@@ -389,6 +394,7 @@ static void conv_data_frame(void) {
         }
     }
     if (!more) {
+        state = ST_IDLE;
         chat_freeze(0);
         ui_status("Conversation loaded. Ready.");
     }
@@ -536,7 +542,8 @@ static void send_command(const char* cmd) {
 }
 
 static void cancel_stream(void) {
-    if (state == ST_IDLE) return;
+    /* Loads aren't cancellable server-side; the watchdog covers them */
+    if (state != ST_WAITING && state != ST_STREAMING) return;
     pending_ack = PA_CANCEL;
     proto_send_cancel();
     ui_status("Cancelling...");
@@ -693,11 +700,14 @@ int main(void) {
         if (pump_serial()) {
             watchdog_reset();
         } else if (state != ST_IDLE && watchdog_expired()) {
+            uint8_t was_loading = (state == ST_LOADING);
             state = ST_IDLE;
             proto_init(&proto, payload_buffer, MAX_PAYLOAD);  /* resync */
+            if (was_loading) chat_freeze(0);
             chat_start(2);
-            chat_append_petscii("(no response - message may be lost; "
-                                "try again)");
+            chat_append_petscii(was_loading
+                ? "(load incomplete - press F5 to retry)"
+                : "(no response - message may be lost; try again)");
             chat_finish();
             ui_status("Timed out. Ready.");
         }

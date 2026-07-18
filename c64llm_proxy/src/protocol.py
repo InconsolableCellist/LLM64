@@ -404,11 +404,10 @@ class ProtocolHandler:
                 f"You are now talking to {card.name}.")
 
     # The C64 spends ~0.7ms of CPU per received byte (protocol parsing +
-    # rendering) against a 1.04ms/byte wire rate at 9600 baud, and its RX
-    # ring is 256 bytes. Send small frames, paced slightly below the wire
-    # rate, so sustained streams can never outrun it - LLM APIs emit
-    # arbitrarily large chunks, which is exactly what corrupted long
-    # responses before.
+    # rendering) against a 1.04ms/byte wire rate at 9600 baud. Send small
+    # frames, paced slightly below the wire rate, so sustained streams can
+    # never outrun it - LLM APIs emit arbitrarily large chunks, which is
+    # exactly what corrupted long responses before.
     # Pacing must stay below the C64's real consumption rate, which is
     # set by rendering, not the wire: the soft-80 build needs ~20-30ms
     # per frame plus ~130ms per scrolled line. These values yield ~480
@@ -417,6 +416,20 @@ class ProtocolHandler:
     CHUNK_TEXT_MAX = 60
     CHUNK_PACE_BASE = 0.016       # per frame
     CHUNK_PACE_PER_BYTE = 0.0018  # per payload byte
+
+    # Bulk frames (conversation list/load) are wire-bound: pace each frame
+    # at just over its 9600-baud transmit time so the burst never piles up
+    # in the modem's TCP->serial buffer. The C64U bridge drops the tail
+    # when that buffer fills - losing the final more=0 frame left the
+    # client frozen at 'Loading... NN' forever.
+    BULK_PACE_BASE = 0.01
+    BULK_PACE_PER_BYTE = 0.0012   # ~15% over the 1.04ms/byte wire rate
+
+    async def _send_bulk(self, msg_type: MessageType, payload: bytes):
+        """Send one bulk frame and sleep out its wire time."""
+        await self.send_message(msg_type, payload)
+        await asyncio.sleep(self.BULK_PACE_BASE
+                            + len(payload) * self.BULK_PACE_PER_BYTE)
 
     async def _send_text_chunk(self, seq: int, piece: bytes) -> int:
         """Send one CHAT_CHUNK frame and pace; returns next seq."""
@@ -586,8 +599,7 @@ class ProtocolHandler:
                 count += 1
             payload[0] = count
 
-            await self.send_message(MessageType.CONVERSATION_LIST, bytes(payload))
-            await asyncio.sleep(0.1)  # Give C64 time to process
+            await self._send_bulk(MessageType.CONVERSATION_LIST, bytes(payload))
 
     async def handle_load_conversation(self):
         """Load a conversation"""
@@ -647,8 +659,8 @@ class ProtocolHandler:
                 payload.extend(text.encode('ascii', errors='replace'))
                 payload.append(0x00)
 
-                await self.send_message(MessageType.CONVERSATION_DATA, bytes(payload))
-                await asyncio.sleep(0.05)
+                await self._send_bulk(MessageType.CONVERSATION_DATA,
+                                      bytes(payload))
         else:
             error = b"Conversation not found\x00"
             await self.send_message(MessageType.CHAT_ERROR, error)
