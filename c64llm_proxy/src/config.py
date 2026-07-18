@@ -59,6 +59,14 @@ class Config:
             config.get('api', {}).get('max_tokens', 2000)
         ))
 
+        # Fallback context window (tokens) for models that don't report a
+        # --ctx-size via /v1/models. Conservative so an unknown small model
+        # isn't overflowed; models that report their real size override it.
+        self.max_context_tokens = int(os.getenv(
+            'OPENAI_MAX_CONTEXT',
+            config.get('api', {}).get('max_context_tokens', 8192)
+        ))
+
         # Disable model thinking blocks (Gemma/Qwen style) via
         # chat_template_kwargs - thinking eats the token budget and the C64
         # user just sees a long pause.

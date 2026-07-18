@@ -25,12 +25,81 @@ class APIClient:
                                   write=30.0, pool=30.0),
             headers={'Authorization': f'Bearer {self.api_key}'}
         )
+        self._ctx_cache: Dict[str, int] = {}
+
+    async def _fetch_models_raw(self) -> List[Dict]:
+        resp = await self.client.get(f"{self.base_url}/models")
+        resp.raise_for_status()
+        return resp.json().get('data', [])
 
     async def list_models(self) -> List[str]:
         """Model ids reported by the server"""
-        resp = await self.client.get(f"{self.base_url}/models")
-        resp.raise_for_status()
-        return [m['id'] for m in resp.json().get('data', [])]
+        return [m['id'] for m in await self._fetch_models_raw()]
+
+    async def context_window(self, model: str) -> int:
+        """The model's context size in tokens.
+
+        llama.cpp's /v1/models exposes each model's launch args, which
+        carry --ctx-size; use that when present, else the configured
+        fallback. Cached per model. (The router's /props reports 0, so it
+        is no help here.)"""
+        if model in self._ctx_cache:
+            return self._ctx_cache[model]
+        ctx = self.config.max_context_tokens  # fallback
+        try:
+            for m in await self._fetch_models_raw():
+                if m.get('id') != model:
+                    continue
+                args = m.get('status', {}).get('args', []) or []
+                for i, a in enumerate(args):
+                    if a in ('--ctx-size', '-c') and i + 1 < len(args):
+                        ctx = int(args[i + 1])
+                        break
+                break
+        except Exception as e:
+            self.logger.warning(f"context_window probe failed: {e}")
+        self._ctx_cache[model] = ctx
+        self.logger.info(f"Context window for {model}: {ctx} tokens")
+        return ctx
+
+    # Rough token estimate. English averages ~4 chars/token; using a
+    # smaller divisor over-estimates, which is the safe direction (we
+    # trim a little early rather than overflow a --no-context-shift
+    # server, which would error instead of sliding the window).
+    _CHARS_PER_TOKEN = 3.5
+    _PER_MSG_TOKENS = 8   # chat-template wrapper overhead per message
+
+    def _estimate_tokens(self, messages: List[Dict]) -> int:
+        total = 0
+        for m in messages:
+            total += int(len(m.get('content', '')) / self._CHARS_PER_TOKEN)
+            total += self._PER_MSG_TOKENS
+        return total
+
+    async def _fit_context(self, messages: List[Dict], model: str,
+                           reserve: int) -> List[Dict]:
+        """Drop the oldest turns (never the leading system message) until
+        the estimated prompt fits ctx - reserve. Returns the trimmed list;
+        logs when anything was dropped."""
+        ctx = await self.context_window(model)
+        budget = max(ctx - reserve, 512)
+        if self._estimate_tokens(messages) <= budget:
+            return messages
+
+        head = []
+        body = list(messages)
+        if body and body[0].get('role') == 'system':
+            head = [body.pop(0)]
+
+        # Keep newest; drop from the front of the conversation body.
+        dropped = 0
+        while body and self._estimate_tokens(head + body) > budget:
+            body.pop(0)
+            dropped += 1
+        self.logger.info(
+            f"Context trim: dropped {dropped} oldest messages to fit "
+            f"~{budget} tokens (ctx={ctx}, reserve={reserve})")
+        return head + body
 
     async def stream_chat(self, messages: List[Dict],
                           system_prompt: str = None,
@@ -47,6 +116,15 @@ class APIClient:
             else system_prompt
         if prompt and (not messages or messages[0].get('role') != 'system'):
             messages = [{'role': 'system', 'content': prompt}] + messages
+
+        # Keep the prompt inside the model's context window: reserve room
+        # for the reply plus template overhead, then drop oldest turns if
+        # needed. Almost always a no-op (131k models); only bites on very
+        # long sessions or small-context models.
+        max_toks = (sampling or {}).get('max_tokens', self.max_tokens)
+        reserve = max_toks + 256
+        messages = await self._fit_context(
+            messages, model or self.model, reserve)
 
         payload = {
             'model': model or self.model,

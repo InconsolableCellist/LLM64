@@ -11,6 +11,10 @@ max_tokens = 800
 # Suppress model thinking blocks (huge pause + token burn on the C64).
 # Set false if you want the model to think; the C64 shows "Thinking...".
 disable_thinking = true
+# Fallback context window for models that don't report --ctx-size via
+# /v1/models. Models that do (e.g. the gemma builds report 131072) are
+# auto-detected and override this.
+max_context_tokens = 8192
 system_prompt = """You are chatting with a user on a Commodore 64 with a 40-column screen. Keep replies short and conversational. Use plain ASCII only: no markdown, no code fences unless asked, no unicode punctuation, no emoji."""
 
 [storage]
