@@ -19,6 +19,7 @@ PY=c64llm_proxy/.venv/bin/python
 [ -x "$PY" ] || PY=python3
 
 proxy_running() { ss -tln 2>/dev/null | grep -q ":6400 "; }
+mlboy_proxy_up() { timeout 3 bash -c "exec 3<>/dev/tcp/192.168.1.21/6400" 2>/dev/null; }
 
 case "${1:-help}" in
   proxy)
@@ -33,16 +34,16 @@ case "${1:-help}" in
                   || { echo "proxy failed to start - see c64llm_proxy/proxy-live.log"; exit 1; }
     ;;
   c64)
-    proxy_running || "$0" proxy-bg
+    mlboy_proxy_up || echo "warning: mlboy proxy (192.168.1.21:6400) unreachable"
     make deploy-c64u
     ;;
   c64-80)
-    proxy_running || "$0" proxy-bg
+    mlboy_proxy_up || echo "warning: mlboy proxy (192.168.1.21:6400) unreachable"
     make deploy-c64u-80
     ;;
   install)
     make -C c64_client clean
-    make -C c64_client CONNECT=hayes SERVER_IP=192.168.1.39 MODE80=1
+    make -C c64_client CONNECT=hayes SERVER_IP=192.168.1.21 MODE80=1
     curl -sS --max-time 20 -T c64_client/build/c64llm.prg \
         "ftp://192.168.1.64/Flash/c64llm.prg" --user anonymous:
     echo "installed to /Flash/c64llm.prg (run it from the Ultimate menu)"
@@ -56,9 +57,12 @@ case "${1:-help}" in
     pkill -f "src.main --host" && echo "proxy stopped" || echo "no proxy running"
     ;;
   status)
-    proxy_running && echo "proxy: running on :6400" || echo "proxy: not running"
-    ss -tn state established 2>/dev/null | grep ":6400" | grep -q "192.168.1.64" \
-        && echo "c64u: connected" || echo "c64u: not connected"
+    mlboy_proxy_up && echo "mlboy proxy: up (192.168.1.21:6400)" \
+        || echo "mlboy proxy: DOWN"
+    proxy_running && echo "local dev proxy: running on :6400" \
+        || echo "local dev proxy: not running"
+    ssh -o ConnectTimeout=4 mlboy "ss -tn state established 2>/dev/null | grep -q \"192.168.1.64\"" \
+        && echo "c64u: connected to mlboy" || echo "c64u: not connected"
     ;;
   *)
     grep '^#   ' "$0" | sed 's/^#   //'

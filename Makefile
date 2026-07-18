@@ -72,11 +72,13 @@ clean:
 	$(MAKE) -C c64_client clean
 	rm -rf emu/artifacts
 
-# Build for real hardware and run it on the C64 Ultimate over the network
+# Build for real hardware and run it on the C64 Ultimate over the network.
+# The proxy lives on mlboy (192.168.1.21), colocated with llama.cpp.
 C64U_IP ?= 192.168.1.64
+C64_PROXY_IP ?= 192.168.1.21
 deploy-c64u:
 	$(MAKE) -C c64_client clean
-	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=192.168.1.39
+	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP)
 	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm.prg
 
 # Soft-80-column variants
@@ -89,5 +91,5 @@ test-emu-tui-80: client-tui-direct-80
 
 deploy-c64u-80:
 	$(MAKE) -C c64_client clean
-	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=192.168.1.39 MODE80=1
+	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
 	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm.prg
