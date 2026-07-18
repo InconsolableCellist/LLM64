@@ -58,7 +58,14 @@ test-emu-tui: client-tui-direct
 test-emu-matrix: client-tui-direct
 	$(PYTHON) emu/test_matrix.py
 
-test-all: test-emu test-emu-long test-emu-long-rt test-emu-hayes test-emu-tui test-emu-tui-80
+# Response watchdog: a request that gets no reply must time out, not hang.
+# Short watchdog build so the test is quick.
+test-emu-watchdog:
+	$(MAKE) -C c64_client clean
+	$(MAKE) -C c64_client CONNECT=direct MODE80=1 CFLAGS_EXTRA=-DWATCHDOG_UNITS=1
+	$(PYTHON) emu/test_watchdog.py
+
+test-all: test-emu test-emu-long test-emu-long-rt test-emu-hayes test-emu-tui test-emu-tui-80 test-emu-watchdog
 
 # Interactive TUI session against the real API from c64llm_proxy/config.toml
 run-live: client-tui-direct

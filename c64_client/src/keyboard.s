@@ -17,6 +17,8 @@
 
         .export _kb_scan
         .export joy_mask
+        .export _sys_ticks      ; free-running 60Hz counter (KERNAL jiffy
+                                ; clock is dead since we own the IRQ)
 
 CIA1_PA   = $DC00
 CIA1_PB   = $DC01
@@ -52,6 +54,7 @@ mods:     .res 1
 code:     .res 1
 gcol:     .res 1        ; scratch: column of key being handled
 growbit:  .res 1        ; scratch: row bit of key being handled
+_sys_ticks: .res 2      ; free-running 60Hz counter
 joy_mask: .res 1        ; rows pulled low by a control-port device
 not_joy:  .res 1        ; its complement
 rpt_code: .res 1        ; matrix code of the repeat candidate
@@ -69,6 +72,10 @@ bitmask:  .byte $01,$02,$04,$08,$10,$20,$40,$80
 ; void kb_scan(void) - one 60Hz tick
 ;---------------------------------------
 _kb_scan:
+        inc _sys_ticks          ; 16-bit tick, ~60Hz
+        bne :+
+        inc _sys_ticks+1
+:
         ; --- joystick rejection ---
         ; A joystick/mouse on control port 1 pulls CIA1 PB lines low
         ; independently of the column select, which reads as an entire

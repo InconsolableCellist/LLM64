@@ -57,6 +57,15 @@ class MockHandler(BaseHTTPRequestHandler):
                 user_text = msg.get('content', '')
 
         upper = user_text.upper()
+        if 'STALLTEST' in upper:
+            # Accept the request but never stream anything: exercises the
+            # client's response watchdog (a request that gets no reply).
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream')
+            self.end_headers()
+            import time as _t
+            _t.sleep(120)
+            return
         if 'LONGTEST' in upper:
             text = LONG_RESPONSE
         elif 'PARAMTEST' in upper:

@@ -60,6 +60,24 @@ static uint8_t modal = MODAL_NONE;
 uint8_t crc_fail_count;
 uint16_t chunk_frames;
 
+/* Response watchdog. keyboard.s _sys_ticks is a free-running 16-bit ~60Hz
+   counter; we read only the HIGH byte (atomic vs the IRQ, ~4.3s/unit). */
+extern volatile uint8_t sys_ticks[2];
+static uint8_t watchdog_at;
+/* ~40s. Prompt-eval on a long context can delay the first frame, but the
+   proxy ACKs a received request within ~1s, so quiet this long means the
+   request or a frame was lost in transit. */
+#ifndef WATCHDOG_UNITS
+#define WATCHDOG_UNITS 10         /* * ~4.3s */
+#endif
+
+static void watchdog_reset(void) {
+    watchdog_at = sys_ticks[1];
+}
+static uint8_t watchdog_expired(void) {
+    return (uint8_t)(sys_ticks[1] - watchdog_at) >= WATCHDOG_UNITS;
+}
+
 /* What the next ACK acknowledges */
 #define PA_NONE    0
 #define PA_NEWCONV 1
@@ -87,7 +105,7 @@ static uint8_t model_loading;
 
 /* ------------------------------------------------------------------ */
 
-static void pump_serial(void);
+static uint8_t pump_serial(void);
 
 /* Busy-wait roughly n "ticks" while still draining serial */
 static uint8_t wait_for_ack(uint16_t tries) {
@@ -457,9 +475,12 @@ static void handle_message(uint8_t msg_type) {
     }
 }
 
-static void pump_serial(void) {
+/* Returns 1 if any serial byte was processed this call */
+static uint8_t pump_serial(void) {
+    uint8_t saw = 0;
     while (serial_available()) {
         uint8_t msg;
+        saw = 1;
         if (proto_in_payload(&proto)) {
             proto_fill_payload(&proto);  /* bulk path keeps up with 9600 */
             continue;
@@ -471,6 +492,7 @@ static void pump_serial(void) {
             handle_message(msg);
         }
     }
+    return saw;
 }
 
 /* --- actions --------------------------------------------------------- */
@@ -490,6 +512,7 @@ static void send_message(void) {
     proto_send_chat(editor_text());
     editor_clear();
     state = ST_WAITING;
+    watchdog_reset();
     ui_status("Sending...");
 }
 
@@ -508,6 +531,7 @@ static void send_command(const char* cmd) {
     }
     proto_send_chat(cmd);
     state = ST_WAITING;
+    watchdog_reset();
     ui_status("Working...");
 }
 
@@ -661,8 +685,22 @@ int main(void) {
     while (kbhit()) cgetc();
     ui_status("Ready. Type your message.");
 
+    /* Response watchdog: while awaiting/receiving a reply, track the last
+       time serial data arrived. If the link goes quiet for too long the
+       request or a frame was lost in transit (no client-side ACK exists
+       for the request itself), so abort to idle instead of hanging. */
     for (;;) {
-        pump_serial();
+        if (pump_serial()) {
+            watchdog_reset();
+        } else if (state != ST_IDLE && watchdog_expired()) {
+            state = ST_IDLE;
+            proto_init(&proto, payload_buffer, MAX_PAYLOAD);  /* resync */
+            chat_start(2);
+            chat_append_petscii("(no response - message may be lost; "
+                                "try again)");
+            chat_finish();
+            ui_status("Timed out. Ready.");
+        }
         if (kbhit()) {
             handle_key(cgetc());
         }
