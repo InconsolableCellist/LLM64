@@ -317,6 +317,25 @@ def main():
                 wait_for_screen(monitor, r'number\s+60', 15,
                                 artifacts, f'{tag}-pagedown')
 
+                # Editor must be VISIBLE: glyph colors live in the matrix,
+                # which the ASCII shadow can't see - check color RAM/matrix
+                # for the editor rows directly (yellow = 7)
+                monitor.keyboard_feed('q')
+                time.sleep(1)
+                if args.cols80:
+                    mrow = monitor.read_memory(0xCC00 + 21 * 40,
+                                               0xCC00 + 21 * 40 + 4)
+                    ok = all((b >> 4) == 0x07 for b in mrow)
+                else:
+                    mrow = monitor.read_memory(0xD800 + 21 * 40,
+                                               0xD800 + 21 * 40 + 4)
+                    ok = all((b & 0x0F) == 0x07 for b in mrow)
+                if not ok:
+                    raise AssertionError(
+                        f'editor color wrong (not yellow): {bytes(mrow).hex()}')
+                print('  PASS: editor color is yellow (visible)')
+                monitor.keyboard_feed_petscii(b'\x14')  # DEL the q
+
                 # Long input: 260 chars scrolls the editor viewport and
                 # sends as a single frame (would have been cut at 120)
                 monitor.keyboard_feed('say ok: ' + 'x' * 252 + '\r')

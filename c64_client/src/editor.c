@@ -83,10 +83,30 @@ static void redraw_range(uint16_t from, uint16_t to) {
     }
 }
 
+/* Full repaint via ui_blit_row: unlike the span path, this also sets
+   the editor's color - spans alone leave color RAM untouched, which on
+   the 80-col matrix means invisible black-on-black glyphs. */
+static void full_repaint(void) {
+    uint8_t row;
+    uint8_t i;
+    uint16_t idx;
+
+    for (row = 0; row < EDIT_ROWS; ++row) {
+        idx = (view_row + row) * TEXT_COLS;
+        for (i = 0; i < TEXT_COLS; ++i, ++idx) {
+            uint8_t code = (idx < len)
+                ? ui_cell_from_petscii((uint8_t)buf[idx])
+                : 0x20;
+            if (idx == cur) code |= 0x80;
+            rowcells[i] = code;
+        }
+        ui_blit_row(EDIT_ROW_FIRST + row, rowcells, COLOR_YELLOW);
+    }
+}
+
 void editor_redraw(void) {
     track_cursor();
-    redraw_range(view_row * TEXT_COLS,
-                 (view_row + EDIT_ROWS) * TEXT_COLS - 1);
+    full_repaint();
 }
 
 void editor_clear(void) {
@@ -148,9 +168,8 @@ uint8_t editor_key(uint8_t key) {
     }
 
     if (track_cursor()) {
-        /* view scrolled: repaint the whole window */
-        redraw_range(view_row * TEXT_COLS,
-                     (view_row + EDIT_ROWS) * TEXT_COLS - 1);
+        /* view scrolled: repaint the whole window (and its color) */
+        full_repaint();
         return 1;
     }
 
