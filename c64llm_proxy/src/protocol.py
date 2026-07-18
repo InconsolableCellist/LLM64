@@ -612,22 +612,43 @@ class ProtocolHandler:
         if self.conv_manager.load_conversation(conv_id):
             messages = self.conv_manager.get_messages()
 
+            # Window to what the client can actually keep: its scrollback
+            # holds ~160 wrapped lines, so send only the NEWEST messages
+            # fitting a ~5KB budget instead of replaying a whole epic at
+            # 9600 baud (a long roleplay used to take minutes and looked
+            # like a hang).
+            budget = 5000
+            window = []
+            for m in reversed(messages):
+                cost = min(len(m['content']), 400) + 2
+                if budget - cost < 0 and window:
+                    break
+                budget -= cost
+                window.append(m)
+            window.reverse()
+            omitted = len(messages) - len(window)
+
+            frames = []
+            if omitted > 0:
+                frames.append((2, f'(... {omitted} earlier messages '
+                                  f'not shown ...)'))
+            frames += [(0 if m['role'] == 'user' else 1,
+                        m['content'][:400]) for m in window]
+
             # One message per frame: the C64 client's payload buffer is
             # small (512 bytes), so keep each frame well under that.
-            for i, msg in enumerate(messages):
-                more = 1 if i + 1 < len(messages) else 0
+            for i, (role, text) in enumerate(frames):
+                more = 1 if i + 1 < len(frames) else 0
 
                 payload = bytearray()
                 payload.append(1)
                 payload.append(more)
-                role = 0 if msg['role'] == 'user' else 1
                 payload.append(role)
-                text = msg['content'][:400]
                 payload.extend(text.encode('ascii', errors='replace'))
                 payload.append(0x00)
 
                 await self.send_message(MessageType.CONVERSATION_DATA, bytes(payload))
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.05)
         else:
             error = b"Conversation not found\x00"
             await self.send_message(MessageType.CHAT_ERROR, error)
