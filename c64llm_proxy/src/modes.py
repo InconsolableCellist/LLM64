@@ -106,12 +106,14 @@ class AdventureMode(Mode):
     def __init__(self, config, theme: str = ''):
         super().__init__(config)
         self.theme = theme.strip()
+        # Set by the protocol handler when a music library is loaded
+        self.music_snippet = ''
 
     def system_prompt(self) -> str:
         prompt = ADVENTURE_PROMPT
         if self.theme:
             prompt += f" Setting/theme requested by the player: {self.theme}."
-        return prompt
+        return prompt + self.music_snippet
 
     def sampling(self) -> Dict:
         return dict(self.config.adventure_sampling)

@@ -2,6 +2,7 @@
 
 import struct
 import asyncio
+import time
 from enum import IntEnum
 from pathlib import Path
 from typing import Callable, Optional
@@ -9,6 +10,8 @@ import logging
 
 from .modes import (Mode, AdventureMode, RoleplayMode, CharacterCard,
                     find_cards)
+from .music import MusicLibrary, MusicDirectiveFilter
+from .images import ImageService
 
 
 class MessageType(IntEnum):
@@ -33,6 +36,13 @@ class MessageType(IntEnum):
     CONVERSATION_DATA = 0x54  # 'T' - was 0x24
     STATUS = 0x55  # 'U' - was 0x25
     MODEL_LIST = 0x56  # 'V'
+    SID_BEGIN = 0x57  # 'W' - streamed SID: metadata
+    SID_DATA = 0x58  # 'X' - streamed SID: raw bytes into the $B000 window
+    SID_END = 0x59  # 'Y' - streamed SID: start playback
+    IMG_BEGIN = 0x5A  # 'Z' - fullscreen image incoming
+    IMG_DATA = 0x5B  # '[' - image bytes (8000 bitmap + 1000 matrix)
+    IMG_END = 0x5C  # '\' - image complete
+    HINT = 0x5D  # ']' - persistent status flags (bit0: pic suggestion)
 
 
 # Common Unicode punctuation -> ASCII approximations, applied before the
@@ -83,6 +93,25 @@ class ProtocolHandler:
 
         # Current streaming task
         self.stream_task: Optional[asyncio.Task] = None
+
+        self._started = time.monotonic()
+        self._tunes_sent = 0
+        self._img_retry = None
+
+        # SID music library (optional: absent moods.json disables music)
+        self.music = MusicLibrary(
+            Path(self.config.data_dir) / 'sids' / 'moods.json')
+        if self.music.available:
+            self.logger.info(
+                f"Music library: {len(self.music.tunes)} tunes")
+
+        # Scene illustrations (optional: needs Pillow + the gemini key,
+        # or the C64LLM_IMG_FIXTURE test hook)
+        self.images = ImageService(Path(self.config.data_dir),
+                                   mode=getattr(self.config, 'images_mode',
+                                                'ask'))
+        if self.images.available:
+            self.logger.info(f"Images enabled (mode: {self.images.mode})")
 
     def set_write_callback(self, callback: Callable):
         """Set callback for writing to client"""
@@ -177,6 +206,14 @@ class ProtocolHandler:
                 await self.handle_set_model()
             elif msg_type == MessageType.ACK:
                 self.logger.debug("ACK received")
+                self._img_retry = None
+            elif msg_type == MessageType.NAK:
+                if getattr(self, '_img_retry', None):
+                    self.logger.warning("Image NAKed - resending once")
+                    (blob, bg, fmt), self._img_retry = self._img_retry, None
+                    await self.send_status("Retrying image...")
+                    await self.send_image_blob(blob, bg, is_retry=True,
+                                               fmt=fmt)
             else:
                 self.logger.warning(f"Unknown message type: 0x{self.msg_type:02X}")
 
@@ -271,6 +308,12 @@ class ProtocolHandler:
                 "/chars - list character cards\n"
                 "/char <name> - roleplay with a card\n"
                 "/models - list models, /model <name> - switch\n"
+                "/music <mood> - play a tune (/music for moods)\n"
+                "/pic [desc|n] - illustrate scene / re-show pic n\n"
+                "/pics - list this conversation's pictures\n"
+                "/save [name] - checkpoint this conversation\n"
+                "/saves - list, /restore <n> - roll back\n"
+                "/stats - server statistics\n"
                 "/mode - show current mode")
 
         elif cmd == 'mode':
@@ -281,7 +324,9 @@ class ProtocolHandler:
             await self._send_canned("Chat mode. New conversation started.")
 
         elif cmd in ('adventure', 'adv'):
-            self._switch_mode(AdventureMode(self.config, theme=arg))
+            mode = AdventureMode(self.config, theme=arg)
+            self._attach_snippets(mode)
+            self._switch_mode(mode)
             await self.send_status("Generating your adventure...")
             self.stream_task = asyncio.create_task(
                 self._stream_response(hidden_user_msg=self.mode.kickoff()))
@@ -300,6 +345,92 @@ class ProtocolHandler:
 
         elif cmd == 'char':
             await self._start_roleplay(arg)
+
+        elif cmd in ('pic', 'pics'):
+            if not self.images.available:
+                await self._send_canned("Images not enabled on this server.")
+            elif arg.isdigit():
+                await self._resend_pic(int(arg))
+            elif cmd == 'pics' or (not arg
+                                   and not self.images.pending_prompt):
+                await self._list_pics()
+            else:
+                prompt = arg or self.images.pending_prompt
+                self.images.pending_prompt = None
+                await self.send_message(MessageType.HINT, bytes([0]))
+                # Complete the chat round-trip first: the client must
+                # return to idle before the image transfer starts
+                await self._send_canned(f"Illustrating: {prompt[:100]}")
+                await self._generate_and_send_image(prompt)
+
+        elif cmd == 'save':
+            label = self.conv_manager.save_checkpoint(arg)
+            if label:
+                await self._send_canned(f"Checkpoint saved: {label}\n"
+                                        "(/saves lists, /restore <n> rolls back)")
+            else:
+                await self._send_canned("Nothing to save yet.")
+
+        elif cmd in ('saves', 'checkpoints'):
+            cps = self.conv_manager.list_checkpoints()
+            if cps:
+                lines = ["Checkpoints:"]
+                lines += [f"{i}. {c['name']} ({c['messages']} msgs)"
+                          for i, c in enumerate(cps, 1)]
+                lines.append("Restore with: /restore <n>")
+                await self._send_canned("\n".join(lines))
+            else:
+                await self._send_canned(
+                    "No checkpoints for this conversation. /save makes one.")
+
+        elif cmd == 'restore':
+            try:
+                name = self.conv_manager.restore_checkpoint(int(arg))
+            except ValueError:
+                name = ''
+            if name:
+                await self._send_canned(
+                    f"Restored: {name}. The story continues from there...")
+            else:
+                await self._send_canned("Usage: /restore <n> (see /saves)")
+
+        elif cmd == 'stats':
+            convs = self.conv_manager.list_conversations()
+            msgs = 0
+            chars = 0
+            for c in convs:
+                msgs += c.get('message_count', 0)
+            up = int(time.monotonic() - self._started)
+            lines = [
+                "Server stats:",
+                f"conversations: {len(convs)}",
+                f"messages: {msgs}",
+                f"music library: {len(self.music.tunes)} tunes",
+                f"tunes played this session: {self._tunes_sent}",
+                f"proxy uptime: {up // 3600}h {(up % 3600) // 60}m",
+                f"model: {self.model_override or self.config.model}",
+            ]
+            await self._send_canned("\n".join(lines))
+
+        elif cmd == 'music':
+            if not self.music.available:
+                await self._send_canned("No music library on this server.")
+            elif not arg:
+                await self._send_canned(
+                    "Moods: " + ", ".join(self.music.moods)
+                    + "\nUse: /music <mood>  (S key stops)")
+            else:
+                tune = self.music.pick(arg.lower())
+                if tune:
+                    await self._send_canned(
+                        f"Playing: {tune['title']} ({tune['author']})")
+                    await self.send_sid(tune)
+                    self.conv_manager.set_meta('music', {
+                        'mood': arg.lower(), 'tune': tune['id']})
+                    self.conv_manager.save()
+                else:
+                    await self._send_canned(
+                        f"No tune fits '{arg}'. /music lists moods.")
 
         elif cmd == 'models':
             try:
@@ -369,9 +500,24 @@ class ProtocolHandler:
         self.logger.info(f"Model -> {match}")
         await self.send_status(f"Model: {match[:32]}")
 
+    def _attach_snippets(self, mode):
+        """Give an AdventureMode the directive instructions for whichever
+        media services are live on this server."""
+        snippet = ''
+        if self.music.available:
+            snippet += self.music.prompt_snippet()
+        if self.images.available:
+            snippet += self.images.prompt_snippet()
+        mode.music_snippet = snippet
+
     def _switch_mode(self, mode):
         self.mode = mode
         self.conv_manager.new_conversation()
+        # Record the mode on the conversation so loading it later can
+        # restore the same experience (prompt, sampling, music directives)
+        self.conv_manager.set_meta('mode', mode.name)
+        if getattr(mode, 'theme', ''):
+            self.conv_manager.set_meta('theme', mode.theme)
         self.logger.info(f"Mode -> {mode.label}")
 
     async def _start_roleplay(self, query: str):
@@ -431,6 +577,98 @@ class ProtocolHandler:
         await asyncio.sleep(self.BULK_PACE_BASE
                             + len(payload) * self.BULK_PACE_PER_BYTE)
 
+    SID_CHUNK = 256
+
+    async def send_sid(self, tune):
+        """Stream a relocated SID into the client's $B000 window, paced
+        like any other bulk transfer (the C64U modem drops burst tails)."""
+        data = self.music.payload(tune)
+        head = struct.pack('<HHHBHB', tune['load'], tune['init'],
+                           tune['play'],
+                           max(0, tune.get('start_song', 1) - 1), len(data),
+                           tune.get('vol_byte') or 0)
+        name = tune['title'][:24].encode('ascii', errors='replace')
+        await self._send_bulk(MessageType.SID_BEGIN, head + name + b'\x00')
+        for i in range(0, len(data), self.SID_CHUNK):
+            await self._send_bulk(MessageType.SID_DATA,
+                                  data[i:i + self.SID_CHUNK])
+        await self._send_bulk(MessageType.SID_END, b'')
+        self._tunes_sent += 1
+        self.music.tune_started = time.monotonic()
+        self.logger.info(f"Sent SID {tune['id']} ({len(data)} bytes)")
+
+    async def send_image_blob(self, blob: bytes, bg: int = 0,
+                              is_retry: bool = False, fmt: int = 1):
+        """Stream a converted image into the client's bitmap, paced.
+        BEGIN payload: format byte (1 = multicolor, 0 = hires) + bg color.
+        The client freezes text drawing on IMG_BEGIN; the picture paints
+        progressively on the live screen. A NAK (short/corrupt transfer,
+        e.g. a dropped frame on real hardware) triggers one resend."""
+        self._img_retry = None if is_retry else (blob, bg, fmt)
+        await self._send_bulk(MessageType.IMG_BEGIN, bytes([fmt, bg & 0x0F]))
+        for i in range(0, len(blob), self.SID_CHUNK):
+            await self._send_bulk(MessageType.IMG_DATA,
+                                  blob[i:i + self.SID_CHUNK])
+        await self._send_bulk(MessageType.IMG_END, b'')
+        self.logger.info(f"Sent image ({len(blob)} bytes"
+                         f"{', retry' if is_retry else ''})")
+
+    async def _list_pics(self):
+        """This conversation's generated pictures, newest first."""
+        pics = self.conv_manager.get_meta('images', [])
+        if not pics:
+            await self._send_canned("No pictures in this conversation "
+                                    "yet. /pic <desc> makes one.")
+            return
+        cur = len(self.conv_manager.get_messages())
+        lines = ["Pictures (newest first):"]
+        for i, p in enumerate(reversed(pics[-9:]), 1):
+            ago = ''
+            if 'at_msg' in p:
+                turns = max(0, (cur - p['at_msg']) // 2)
+                ago = f" ({turns} turns ago)" if turns else " (this turn)"
+            lines.append(f"{i}. {p['prompt'][:48]}{ago}")
+        lines.append("Show again with: /pic <n>")
+        await self._send_canned("\n".join(lines))
+
+    async def _resend_pic(self, n: int):
+        """Re-stream picture #n from the /pics list (cached blob, no
+        generation cost)."""
+        pics = list(reversed(self.conv_manager.get_meta('images', [])[-9:]))
+        if not 1 <= n <= len(pics):
+            await self._send_canned("No such picture. /pics lists them.")
+            return
+        path = self.images.dir / f"{pics[n - 1]['stem']}.blob"
+        try:
+            data = path.read_bytes()
+        except OSError:
+            await self._send_canned("That picture's data is gone.")
+            return
+        await self._send_canned(f"Showing: {pics[n - 1]['prompt'][:60]}")
+        if len(data) == 10001:      # multicolor: blob + bg byte
+            await self.send_image_blob(data[:10000], data[10000])
+        else:                       # hires-era blob
+            await self.send_image_blob(data, 0, fmt=0)
+
+    async def _generate_and_send_image(self, prompt: str):
+        await self.send_status("Illustrating... (10-20s)")
+        hb = asyncio.create_task(self._heartbeat("Illustrating..."))
+        try:
+            blob, stem, bg = await self.images.generate_blob(
+                prompt, self.conv_manager.current_id)
+        except Exception as e:
+            self.logger.error(f"Image generation failed: {e}")
+            await self.send_status("Illustration failed.")
+            return
+        finally:
+            hb.cancel()
+        pics = self.conv_manager.get_meta('images', [])
+        pics.append({'stem': stem, 'prompt': prompt[:200],
+                     'at_msg': len(self.conv_manager.get_messages())})
+        self.conv_manager.set_meta('images', pics)
+        self.conv_manager.save()
+        await self.send_image_blob(blob, bg)
+
     async def _send_text_chunk(self, seq: int, piece: bytes) -> int:
         """Send one CHAT_CHUNK frame and pace; returns next seq."""
         payload = bytearray()
@@ -441,6 +679,19 @@ class ProtocolHandler:
         await asyncio.sleep(self.CHUNK_PACE_BASE
                             + len(piece) * self.CHUNK_PACE_PER_BYTE)
         return (seq + 1) % 256
+
+    async def _heartbeat(self, label: str, interval: float = 10.0,
+                         beats: int = 18):
+        """Keep the client's response watchdog fed during long silent
+        waits (cold prompt-eval of a big conversation, model load, image
+        generation). Capped: if the wait outlives the cap, the silence
+        lets the client watchdog abort as a last resort."""
+        try:
+            for i in range(1, beats + 1):
+                await asyncio.sleep(interval)
+                await self.send_status(f"{label} ({int(i * interval)}s)")
+        except asyncio.CancelledError:
+            pass
 
     async def _send_canned(self, text: str):
         """Stream local text to the C64 as a normal reply (no API call)."""
@@ -454,6 +705,7 @@ class ProtocolHandler:
 
     async def _stream_response(self, hidden_user_msg: str = None):
         """Stream API response to C64"""
+        hb = None
         try:
             await self.send_status("Contacting API...")
 
@@ -466,25 +718,63 @@ class ProtocolHandler:
                 messages = messages + [
                     {'role': 'user', 'content': hidden_user_msg}]
 
-            # Stream from API
+            # In adventure mode the model may steer the soundtrack with
+            # [[MUSIC: mood]]; strip that from what the C64 sees (and from
+            # saved history) and act on it after the response completes.
+            mfilter = None
+            if isinstance(self.mode, AdventureMode) and (
+                    self.music.available or self.images.available):
+                mfilter = MusicDirectiveFilter()
+
+            # Nudge, don't nag: after ~5 minutes of one tune looping,
+            # remind the narrator it owns the soundtrack
+            sys_prompt = self.mode.system_prompt()
+            if (mfilter and self.music.available and self.music.stale()
+                    and sys_prompt):
+                sys_prompt += ("\n(The background music has been looping "
+                               "for several minutes; if the scene's tone "
+                               "warrants it, this reply is a good moment "
+                               "for a MUSIC directive.)")
+
+            # Heartbeat until the first token arrives (a 79K-char
+            # conversation's cold prompt-eval outlives the client's 40s
+            # watchdog otherwise)
+            hb = asyncio.create_task(self._heartbeat("Thinking..."))
             thinking_notified = False
             async for kind, chunk in self.api_client.stream_chat(
                 messages,
-                system_prompt=self.mode.system_prompt(),
+                system_prompt=sys_prompt,
                 sampling=self.mode.sampling(),
                 model=self.model_override
             ):
+                if hb:
+                    hb.cancel()
+                    hb = None
                 if kind == 'reasoning':
                     if not thinking_notified:
                         thinking_notified = True
                         await self.send_status("Thinking...")
                     continue
                 if chunk:
+                    if mfilter:
+                        chunk = mfilter.feed(chunk)
+                        if not chunk:
+                            continue
                     full_response += chunk
 
                     # Split into small paced frames regardless of the size
                     # the API chose to emit (see CHUNK_TEXT_MAX comment)
                     data = chunk.translate(UNICODE_TO_ASCII).encode(
+                        'ascii', errors='replace')
+                    for i in range(0, len(data), self.CHUNK_TEXT_MAX):
+                        seq = await self._send_text_chunk(
+                            seq, data[i:i + self.CHUNK_TEXT_MAX])
+
+            if mfilter:
+                tail = mfilter.flush()
+                if tail:
+                    full_response += tail
+                    data = tail.translate(UNICODE_TO_ASCII).encode(
                         'ascii', errors='replace')
                     for i in range(0, len(data), self.CHUNK_TEXT_MAX):
                         seq = await self._send_text_chunk(
@@ -499,6 +789,37 @@ class ProtocolHandler:
             self.conv_manager.save()
 
             self.logger.info(f"Response complete: {len(full_response)} bytes")
+
+            # Model requested a scene illustration: generate now (auto,
+            # rate-limited) or park it as a /pic suggestion (ask)
+            if mfilter and mfilter.images and self.images.available:
+                prompt = mfilter.images[0]
+                if self.images.auto_ok():
+                    self.images.mark_auto()
+                    await self._generate_and_send_image(prompt)
+                elif self.images.mode == 'ask':
+                    self.images.pending_prompt = prompt
+                    await self.send_status(
+                        "Scene available - /pic to illustrate")
+                    await self.send_message(MessageType.HINT, bytes([1]))
+
+            # Model asked for a music change: honor at most one, after the
+            # text is fully delivered (the client is idle again), unless a
+            # change happened too recently
+            if mfilter and mfilter.moods:
+                if self.music.rate_limited():
+                    self.logger.info(
+                        f"Music directive rate-limited: {mfilter.moods}")
+                else:
+                    tune = self.music.pick(mfilter.moods[0])
+                    if tune:
+                        await self.send_sid(tune)
+                        self.music.mark_changed()
+                        # Remember what's playing: loading this
+                        # conversation later resumes the soundtrack
+                        self.conv_manager.set_meta('music', {
+                            'mood': mfilter.moods[0], 'tune': tune['id']})
+                        self.conv_manager.save()
 
             # Give the conversation a meaningful LLM-generated title
             # (fire-and-forget; does not delay the DONE frame above)
@@ -518,6 +839,9 @@ class ProtocolHandler:
             self.logger.error(f"Error streaming response: {e}")
             error_msg = str(e)[:200].encode('ascii', errors='replace') + b'\x00'
             await self.send_message(MessageType.CHAT_ERROR, error_msg)
+        finally:
+            if hb:
+                hb.cancel()
 
     async def _maybe_title(self):
         """Ask the model for a short conversation title, once per
@@ -661,6 +985,26 @@ class ProtocolHandler:
 
                 await self._send_bulk(MessageType.CONVERSATION_DATA,
                                       bytes(payload))
+
+            # Restore what the conversation was: mode (an adventure loaded
+            # into chat mode would lose its prompt and music directives)...
+            meta_mode = self.conv_manager.get_meta('mode')
+            if meta_mode == 'adventure' and self.mode.name != 'adventure':
+                mode = AdventureMode(
+                    self.config, theme=self.conv_manager.get_meta('theme', ''))
+                self._attach_snippets(mode)
+                self.mode = mode  # not _switch_mode: keep the conversation
+                self.logger.info("Restored adventure mode from conversation")
+
+            # ...and the soundtrack (exact tune if still in the library,
+            # else another tune of the same mood). The transfer starts only
+            # after the last CONVERSATION_DATA frame so nothing interleaves.
+            music_meta = self.conv_manager.get_meta('music')
+            if music_meta and self.music.available:
+                tune = (self.music.find(music_meta.get('tune'))
+                        or self.music.pick(music_meta.get('mood', '')))
+                if tune:
+                    await self.send_sid(tune)
         else:
             error = b"Conversation not found\x00"
             await self.send_message(MessageType.CHAT_ERROR, error)

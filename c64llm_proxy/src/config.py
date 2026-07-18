@@ -103,6 +103,11 @@ class Config:
         self.adventure_sampling = _sampling(modes.get('adventure', {}))
         self.roleplay_sampling = _sampling(modes.get('roleplay', {}))
 
+        # Scene illustrations: auto (directives generate immediately),
+        # ask (directives suggest, /pic confirms - the default: images
+        # cost real API money), off
+        self.images_mode = config.get('images', {}).get('mode', 'ask')
+
         # API key is optional: local servers (llama.cpp, Ollama, ...) accept
         # any bearer token. Cloud providers still need a real key.
         if not self.api_key:
