@@ -1,0 +1,60 @@
+{
+ "version": 1,
+ "moods": [
+  "adventurous",
+  "eerie",
+  "festive",
+  "heroic",
+  "melancholy",
+  "menacing",
+  "mysterious",
+  "playful",
+  "serene",
+  "somber",
+  "tense",
+  "triumphant",
+  "urgent"
+ ],
+ "tunes": [
+  {
+   "id": "Astro_Chase",
+   "title": "Astro Chase",
+   "author": "Mike Crick & Dennis Kirsch",
+   "moods": {
+    "playful": 0.6,
+    "festive": 0.5
+   },
+   "settings": {
+    "scifi": 0.4
+   },
+   "arcadey": 0.8,
+   "confidence": 0.9,
+   "file": "Astro_Chase.sid",
+   "load": 45056,
+   "init": 45127,
+   "play": 45137,
+   "songs": 1,
+   "start_song": 1,
+   "size": 512
+  },
+  {
+   "id": "Pac-Man",
+   "title": "Pac-Man",
+   "author": "<?>",
+   "moods": {
+    "playful": 0.8,
+    "urgent": 0.5
+   },
+   "settings": {},
+   "arcadey": 1.0,
+   "confidence": 1.0,
+   "file": "Pac-Man.sid",
+   "load": 45151,
+   "init": 45151,
+   "play": 45178,
+   "songs": 1,
+   "start_song": 1,
+   "size": 189
+  }
+ ]
+}

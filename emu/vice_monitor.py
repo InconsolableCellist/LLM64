@@ -120,8 +120,10 @@ class ViceMonitor:
         except ViceMonitorError:
             pass
 
-    def read_memory(self, start, end):
-        body = struct.pack('<BHHBH', 0, start, end, 0, 0)
+    def read_memory(self, start, end, bank=0):
+        """bank 0 = CPU view (ROMs visible); bank 1 = RAM (needed to see
+        writes under the KERNAL, e.g. the bitmap at $E000)."""
+        body = struct.pack('<BHHBH', 0, start, end, 0, bank)
         resp_type, error, rbody = self._transact(CMD_MEM_GET, body)
         if error:
             raise ViceMonitorError(f'memory read failed: error {error}')

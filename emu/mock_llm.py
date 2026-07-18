@@ -73,6 +73,18 @@ class MockHandler(BaseHTTPRequestHandler):
             text = ('params: temp {} topk {} topp {}'.format(
                 request.get('temperature'), request.get('top_k'),
                 request.get('top_p')))
+        elif 'PICTEST' in upper:
+            # Image directive with a description long enough to split
+            # across chunk boundaries
+            text = ('[[IMAGE: a vast crystal cavern, stalactites glinting '
+                    'above a black lake]] The cavern opens before you, '
+                    'glittering endlessly.')
+        elif 'MUSICTEST' in upper:
+            # Music directive split mid-token across SSE chunks (CHUNK_SIZE
+            # boundaries land inside [[MUSIC:...]]): exercises the proxy's
+            # hold-back stripping
+            text = ('[[MUSIC: festive]] The carnival begins! Lanterns '
+                    'bob between the stalls.')
         elif 'BEGIN THE ADVENTURE' in upper:
             text = ('You awaken in a dark room smelling of ozone. A single '
                     'door stands to the north. Your quest awaits.')

@@ -16,6 +16,7 @@ Exit code 0 = pass.
 import argparse
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -98,6 +99,16 @@ def proxy_python():
 POLL_INTERVAL = float(os.environ.get('E2E_POLL_INTERVAL', '0.5'))
 
 
+def parse_labels(path):
+    """ld65 -Ln label file -> {symbol: address} (true link addresses)."""
+    labels = {}
+    for line in Path(path).read_text().splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[0] == 'al':
+            labels[parts[2].lstrip('.')] = int(parts[1], 16)
+    return labels
+
+
 def wait_for_screen(monitor, pattern, timeout, artifacts, label):
     """Poll screen RAM until regex `pattern` matches (case-insensitive)."""
     regex = re.compile(pattern, re.IGNORECASE)
@@ -146,6 +157,11 @@ def main():
     parser.add_argument('--prg', default=str(REPO / 'c64_client/build/c64llm.prg'))
     parser.add_argument('--timeout', type=float, default=90.0)
     parser.add_argument('--baud', type=int, default=9600)
+    parser.add_argument('--acia-mode', type=int, default=0,
+                        help='VICE -acia1mode: 0=plain 6551 (control $1E = '
+                             '9600), 1=SwiftLink (clock doubled: $1E = '
+                             '19200, matching real C64U hardware; pair '
+                             'with --baud 19200)')
     parser.add_argument('--proxy-port', type=int, default=PROXY_PORT,
                         help='TCP port for the test proxy (use a free one if a live proxy runs on 6400)')
     parser.add_argument('--live', action='store_true',
@@ -197,6 +213,15 @@ def main():
                 # keep test conversations out of the user's data dir
                 'C64LLM_DATA_DIR': str(artifacts / 'data'),
             })
+            # Deterministic 2-tune music library (urgent -> Pac-Man,
+            # festive -> Astro Chase)
+            shutil.copytree(REPO / 'emu' / 'fixtures' / 'sids',
+                            artifacts / 'data' / 'sids',
+                            dirs_exist_ok=True)
+            # Image generation without the real API: every "generation"
+            # returns this fixture
+            env['C64LLM_IMG_FIXTURE'] = str(
+                REPO / 'emu' / 'fixtures' / 'scene.png')
             print(f"mock LLM on :{mock_port}")
 
         # 2. Proxy
@@ -230,7 +255,8 @@ def main():
         stack.start('vice', [
             'x64sc', '-default', *speed, '-sounddev', 'dummy',
             '+confirmonexit',
-            '-acia1', '-acia1mode', '0', '-acia1base', '0xDE00',
+            '-acia1', '-acia1mode', str(args.acia_mode),
+            '-acia1base', '0xDE00',
             '-acia1irq', '2', '-myaciadev', '0',
             *rsdev, '-rsdev1baud', str(args.baud),
             '-binarymonitor',
@@ -285,6 +311,133 @@ def main():
                 wait_for_screen(monitor, r'dark room', 60,
                                 artifacts, f'{tag}-adventure')
                 wait_ready(monitor, 30, artifacts, f'{tag}-adventure-ready')
+
+                if args.cols80:
+                    # Streamed SID: /music picks Pac-Man (only urgent tune
+                    # in the fixture library) and the client starts playing
+                    # it: music_state == $FF, play vector = Pac-Man's
+                    labels = parse_labels(
+                        Path(args.prg).parent / 'labels.txt')
+                    def music_word(name):
+                        a = labels[name]
+                        lo, hi = monitor.read_memory(a, a + 1)  # end incl.
+                        return lo | (hi << 8)
+                    monitor.keyboard_feed('/music urgent\r')
+                    wait_for_screen(monitor, r'playing: pac-man', 30,
+                                    artifacts, f'{tag}-music-cmd')
+                    time.sleep(2)  # transfer is ~1s of wire time
+                    state = monitor.read_memory(
+                        labels['_music_state'], labels['_music_state'])[0]
+                    if state != 0xFF:
+                        raise AssertionError(
+                            f'music_state={state:#x}, expected 0xff (ext)')
+                    if music_word('_music_ext_play_addr') != 0xB07A:
+                        raise AssertionError('play vector is not Pac-Man')
+                    print('  PASS: /music transfer + play')
+
+                    # LLM music directive: mock replies with
+                    # [[MUSIC: festive]] which must be stripped from the
+                    # visible text and switch the tune to Astro Chase
+                    monitor.keyboard_feed('musictest\r')
+                    screen = wait_for_screen(monitor, r'carnival begins', 60,
+                                             artifacts,
+                                             f'{tag}-music-directive')
+                    if re.search(r'\[\[\s*music', screen, re.IGNORECASE):
+                        raise AssertionError(
+                            f'music directive leaked to screen\n{screen}')
+                    # Wait for PLAYBACK, not just the vector: the client
+                    # stores addresses at SID_BEGIN but only re-enters ext
+                    # mode (state $FF) at SID_END, when it is idle again
+                    deadline = time.time() + 30
+                    while not (music_word('_music_ext_play_addr') == 0xB051
+                               and monitor.read_memory(
+                                   labels['_music_state'],
+                                   labels['_music_state'])[0] == 0xFF):
+                        if time.time() > deadline:
+                            raise AssertionError(
+                                'tune never switched to Astro Chase')
+                        time.sleep(1)
+                    time.sleep(1)  # let the status line settle
+                    print('  PASS: [[MUSIC]] directive switched tune')
+
+                    # Scene illustration: [[IMAGE:]] directive (ask mode)
+                    # parks a suggestion; /pic streams the converted
+                    # fixture into the bitmap at $E000/$CC00
+                    expected = subprocess.run(
+                        [proxy_python(), '-c',
+                         'import sys; sys.path.insert(0, ".");'
+                         'from src.imaging import convert_to_c64_mc;'
+                         'from PIL import Image;'
+                         f'i = Image.open("{REPO}/emu/fixtures/scene.png");'
+                         'b, s, c, bg = convert_to_c64_mc(i);'
+                         'sys.stdout.write(b[:16].hex() + s[-16:].hex()'
+                         ' + c[-16:].hex())'],
+                        cwd=str(PROXY_DIR), capture_output=True, text=True
+                    ).stdout.strip()
+                    assert len(expected) == 96, f'converter probe: {expected}'
+                    want_colram = [int(expected[64 + i*2:66 + i*2], 16) & 0x0F
+                                   for i in range(16)]
+                    monitor.keyboard_feed('pictest\r')
+                    wait_for_screen(monitor, r'cavern opens', 60,
+                                    artifacts, f'{tag}-img-suggest')
+                    # Persistent '!P' indicator appears with the suggestion
+                    wait_for_screen(monitor, r'!p', 30,
+                                    artifacts, f'{tag}-img-hint')
+                    print('  PASS: pic-pending indicator shown')
+                    monitor.keyboard_feed('/pic\r')
+                    def img_shown():
+                        return monitor.read_memory(
+                            labels['_img_shown'], labels['_img_shown'])[0]
+                    deadline = time.time() + 60
+                    while True:
+                        got = (bytes(monitor.read_memory(0xE000, 0xE00F,
+                                                         bank=1)).hex()
+                               + bytes(monitor.read_memory(0xCFD8, 0xCFE7,
+                                                           bank=1)).hex())
+                        colram = [b & 0x0F for b in monitor.read_memory(
+                            0xDBD8, 0xDBE7, bank=0)]
+                        # img_shown flips only when IMG_END verified the
+                        # byte count: the one non-racy completion signal
+                        if (got == expected[:64] and colram == want_colram
+                                and img_shown()):
+                            break
+                        if time.time() > deadline:
+                            raise AssertionError(
+                                f'image never completed (shown='
+                                f'{img_shown()})\nwant {expected[:64]}\n'
+                                f'got  {got} colram {colram}')
+                        time.sleep(2)
+                    print('  PASS: image streamed to bitmap+matrix+colram')
+                    monitor.keyboard_feed(' ')   # dismiss
+                    screen = wait_for_screen(monitor, r'> pictest', 15,
+                                             artifacts, f'{tag}-img-dismiss')
+                    if re.search(r'!p', screen):
+                        raise AssertionError(
+                            f'pic indicator not cleared after /pic\n{screen}')
+                    print('  PASS: image dismissed, chat restored, '
+                          'indicator cleared')
+
+                    # Picture browser: list + re-show from cache
+                    monitor.keyboard_feed('/pics\r')
+                    wait_for_screen(monitor, r'1\. a vast crystal cavern',
+                                    30, artifacts, f'{tag}-pics-list')
+                    monitor.keyboard_feed('/pic 1\r')
+                    wait_for_screen(monitor, r'showing: a vast crystal',
+                                    30, artifacts, f'{tag}-pic-reshow')
+                    deadline = time.time() + 60
+                    while True:
+                        got = bytes(monitor.read_memory(
+                            0xE000, 0xE00F, bank=1)).hex()
+                        if got == expected[:32] and img_shown():
+                            break
+                        if time.time() > deadline:
+                            raise AssertionError('cached re-show never '
+                                                 f'landed (got {got})')
+                        time.sleep(2)
+                    monitor.keyboard_feed(' ')
+                    wait_for_screen(monitor, r'> /pics', 15,
+                                    artifacts, f'{tag}-pic-reshow-dismiss')
+                    print('  PASS: /pics browser + cached re-show')
 
                 # Character cards: list, then load the example card
                 monitor.keyboard_feed('/chars\r')
@@ -344,10 +497,22 @@ def main():
                 wait_ready(monitor, args.timeout, artifacts,
                            f'{tag}-longinput-done')
 
-                # Music toggle: F1 menu, S cycles off->tune1->tune2->off
+                # Music toggle. In cols80 a streamed SID is still playing
+                # from the music tests: S first stops it, then cycles the
+                # pattern tunes off->tune1->tune2->off as always
                 monitor.keyboard_feed_petscii(b'\x85')
-                wait_for_screen(monitor, r'S  music \(off\)', 15,
-                                artifacts, f'{tag}-menu-music')
+                if args.cols80:
+                    wait_for_screen(monitor, r'S  music: streamed', 15,
+                                    artifacts, f'{tag}-menu-music')
+                    monitor.keyboard_feed('s')
+                    wait_for_screen(monitor, r'music off', 15,
+                                    artifacts, f'{tag}-music-ext-stop')
+                    monitor.keyboard_feed_petscii(b'\x85')
+                    wait_for_screen(monitor, r'S  music \(off\)', 15,
+                                    artifacts, f'{tag}-menu-music-off')
+                else:
+                    wait_for_screen(monitor, r'S  music \(off\)', 15,
+                                    artifacts, f'{tag}-menu-music')
                 monitor.keyboard_feed('s')
                 wait_for_screen(monitor, r'music: dungeon depths', 15,
                                 artifacts, f'{tag}-music-on')
