@@ -237,8 +237,10 @@ class ProtocolHandler:
                     # first time or fail visibly); /pic <n> re-sends
                     # from cache on demand
                     self._img_sent = False
+                    # No status frame here: the client just printed its
+                    # loss diagnostics (i fail g=...) in the status bar
+                    # and a STATUS would overwrite them
                     self.logger.warning("Image NAKed - not retrying")
-                    await self.send_status("Image failed - /pic to retry")
                 elif getattr(self, '_sid_retry', None) \
                         and getattr(self, '_sid_tries', 0):
                     self._sid_tries -= 1
