@@ -68,6 +68,13 @@ vectors_saved:  .res 1
 overflows:      .res 1          ; ring-full drops (consumer too slow)
 overruns:       .res 1          ; ACIA overrun flags seen (IRQ too late)
 in_music:       .res 1          ; music_play reentrancy guard (see tick)
+rx_masked:      .res 1          ; RX IRQ currently masked (ring was full).
+                                ; Tracked so serial_available only writes
+                                ; ACIA_COMMAND on a real transition: the
+                                ; C64U modem re-evaluates DTR/RTS on every
+                                ; command write, and with 'drop on DTR
+                                ; low' / 'RTS handshake' enabled a kHz
+                                ; stream of rewrites glitches the line.
 rx_buffer:      .res RX_RING_SIZE
 rx_buffer_end:
 
@@ -196,6 +203,8 @@ _acia_init_hw:
         lda ACIA_STATUS
         lda #ACIA_CMD_VALUE
         sta ACIA_COMMAND
+        lda #0
+        sta rx_masked
 
         ldy #20
 @init_delay:
@@ -234,6 +243,8 @@ drain_sub:
 @full:  inc overflows
         lda #ACIA_CMD_VALUE | 2 ; ring full: mask the RX interrupt (the
         sta ACIA_COMMAND        ; line is level-asserted while RDRF sits,
+        lda #1
+        sta rx_masked
         rts                     ; so just returning would storm) and leave
                                 ; the byte unread - delivery pauses behind
                                 ; it. serial_available's pickup unmasks
@@ -332,6 +343,8 @@ acia_nmi_entry:
 @nfull: inc overflows           ; ring full: mask RX IRQ (see drain_sub)
         lda #ACIA_CMD_VALUE | 2
         sta ACIA_COMMAND
+        lda #1
+        sta rx_masked
 @ours:
         pla
         tax
@@ -346,37 +359,50 @@ acia_nmi_entry:
 ;---------------------------------------
 ; uint8_t serial_available(void)
 ;
-; When the ring is empty, also poll the ACIA directly: if a byte's
+; Always poll the ACIA directly, whatever the ring holds: if a byte's
 ; interrupt was lost to a status-read race (the 6551 clears its IRQ
 ; flag on any status read), the byte sits in the data register and -
 ; with delivery paused behind it - would deadlock the stream. The main
 ; loop calls this constantly, so a stranded byte heals within
-; microseconds. IRQs are masked around the pickup to keep the ring
-; writer single-threaded.
+; microseconds. Status READS are line-safe; the ACIA_COMMAND write is
+; gated to real mask transitions because the C64U modem re-evaluates
+; DTR/RTS on every command write (kHz rewrites glitched the line:
+; dropped packets, even hangups with 'drop on DTR low' enabled).
+; IRQs are masked around the pickup to keep the ring writer
+; single-threaded.
 ;---------------------------------------
 _serial_available:
-        lda rx_used
-        ora rx_used+1
-        bne @yes
         php
         sei
-        lda #ACIA_CMD_VALUE     ; ring is empty: make sure the RX IRQ is
-        sta ACIA_COMMAND        ; unmasked again (idempotent)
-        lda ACIA_STATUS
+        lda rx_masked
+        beq @pick               ; unmask only on a real transition,
+        lda rx_used+1           ; and only once the ring has drained
+        ora rx_used
+        bne @pick
+        lda #ACIA_CMD_VALUE
+        sta ACIA_COMMAND
+        lda #0
+        sta rx_masked
+@pick:  lda ACIA_STATUS
         and #ACIA_SR_RDRF
-        beq @none
+        beq @counts
+        lda rx_used+1           ; room in the ring?
+        cmp #>RX_RING_SIZE
+        bcs @counts             ; full: the masked path owns this byte
         lda ACIA_DATA           ; stranded byte: pick it up ourselves
         jsr ring_write
         inc rx_used
-        bne @up
+        bne @counts
         inc rx_used+1
-@up:    plp
-@yes:   lda #1
+@counts:
+        plp
+        lda rx_used
+        ora rx_used+1
+        beq @empty
+        lda #1
         ldx #0
         rts
-@none:
-        plp
-        lda #0
+@empty: lda #0
         ldx #0
         rts
 
