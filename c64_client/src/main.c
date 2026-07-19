@@ -108,6 +108,16 @@ static uint16_t img_got, img_expect;
    RESUMED transfer only needs the chunks the modem ate last time -
    successive lossy passes converge instead of starting over. */
 static uint8_t xfer_map[8];
+/* Window flow control: ACK every xfer_window-th received DATA frame so
+   the proxy never overfills the modem's packet queue (it drops whole
+   frames when scheduling jitter bunches paced writes) */
+static uint8_t xfer_window, xfer_count;
+static void xfer_flow_tick(void) {
+    if (xfer_window && ++xfer_count >= xfer_window) {
+        xfer_count = 0;
+        proto_send_ack();
+    }
+}
 static uint8_t map_test_set(uint8_t idx) {
     uint8_t m = 1 << (idx & 7);
     if (xfer_map[idx >> 3] & m) return 0;   /* already have this chunk */
@@ -610,15 +620,17 @@ static void handle_message(uint8_t msg_type) {
 #ifdef SOFT80
         case MSG_SID_BEGIN: {
             /* load(2) init(2) play(2) song(1) size(2) vol(1) resume(1)
-               name(nul) */
+               window(1) name(nul) */
             uint8_t* p = proto_get_payload(&proto);
             uint16_t load = p[0] | ((uint16_t)p[1] << 8);
             uint16_t size = p[7] | ((uint16_t)p[8] << 8);
             if (load < SID_WIN_START || load + size > SID_WIN_END
-                    || proto_get_length(&proto) < 12) {
+                    || proto_get_length(&proto) < 13) {
                 proto_send_nak();
                 break;
             }
+            xfer_window = p[11];
+            xfer_count = 0;
             music_ext_stop();       /* silence during the transfer */
             music_ext_init = p[2] | ((uint16_t)p[3] << 8);
             music_ext_play_addr = p[4] | ((uint16_t)p[5] << 8);
@@ -631,7 +643,7 @@ static void handle_message(uint8_t msg_type) {
                 memset(xfer_map, 0, sizeof xfer_map);
             }
             sid_active = 1;
-            strncpy(sid_name, (char*)(p + 11), 24);
+            strncpy(sid_name, (char*)(p + 12), 24);
             sid_name[24] = 0;
             ascii_to_petscii_str(sid_name);
             /* Arm the watchdog: a dropped tail must not hang us */
@@ -660,6 +672,7 @@ static void handle_message(uint8_t msg_type) {
                 sid_active = 0;
                 break;
             }
+            xfer_flow_tick();
             if (!map_test_set((uint8_t)(off >> 8))) break;
             memcpy(sid_dst + off, p, len);
             sid_got += len;
@@ -690,11 +703,13 @@ static void handle_message(uint8_t msg_type) {
             }
             img_active = 1;
             img_shown = 0;
-            /* payload: fmt(1) bg(1) resume(1) */
+            /* payload: fmt(1) bg(1) resume(1) window(1) */
             if (proto_get_length(&proto) < 3 || !p[2]) {
                 img_got = 0;
                 memset(xfer_map, 0, sizeof xfer_map);
             }
+            xfer_window = (proto_get_length(&proto) >= 4) ? p[3] : 0;
+            xfer_count = 0;
             ui_frozen = 1;
             if (proto_get_length(&proto) >= 2 && p[0] == 1) {
                 img_expect = IMG_MC_SZ;
@@ -732,6 +747,7 @@ static void handle_message(uint8_t msg_type) {
                 img_active = 0;
                 break;
             }
+            xfer_flow_tick();
             if (!map_test_set((uint8_t)(off >> 8))) break;
             if (off < IMG_BITMAP_SZ) {
                 n = IMG_BITMAP_SZ - off;

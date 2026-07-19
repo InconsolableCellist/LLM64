@@ -85,6 +85,8 @@ class ProtocolHandler:
         # BEGIN handshake event: set when the client ACKs a SID/IMG
         # BEGIN (music silenced, rendering drained - clear to stream)
         self._begin_ack = None
+        # Window flow-control event (see _send_bulk_stream)
+        self._flow_ack = None
         # Media sends triggered from the reader task must run as
         # background tasks: _send_begin waits for an ACK that only the
         # reader can dispatch, so awaiting it inline would deadlock
@@ -223,6 +225,9 @@ class ProtocolHandler:
                     # BEGIN handshake: client stopped its music and
                     # drained rendering - clear to stream
                     self._begin_ack.set()
+                elif getattr(self, '_flow_ack', None) is not None \
+                        and not self._flow_ack.is_set():
+                    self._flow_ack.set()   # window flow control
                 else:
                     self._sid_retry = None
             elif msg_type == MessageType.NAK:
@@ -660,14 +665,13 @@ class ProtocolHandler:
 
     SID_CHUNK = 256
 
-    # Long transfers (SID ~4KB, image ~10KB) run 40+ frames back to back.
-    # The ~15% per-frame pacing margin covers the wire, but any client
-    # stall (banked-out copy segment, music IRQ) backs bytes up in the
-    # modem's TCP->serial buffer with no slack to drain - and the C64U
-    # drops the tail when that buffer fills. A periodic breather lets it
-    # empty out mid-transfer.
-    BULK_BREATH_EVERY = 8   # frames
-    BULK_BREATH = 0.12      # seconds
+    # The C64U bridge drops WHOLE PACKETS from its TCP->serial queue
+    # when scheduling jitter bunches our paced writes (field signature:
+    # exactly 1-2 chunks missing, cr=00 - clean frame-sized holes, any
+    # content). Windowed flow control bounds the queue by construction:
+    # the client ACKs every FLOW_WINDOW chunks and the proxy sends no
+    # further until it does, so at most ~1KB is ever in flight.
+    FLOW_WINDOW = 4
     RETRY_DELAY = 2.0       # quiet time before resending a NAKed transfer
 
     def _spawn_media(self, coro):
@@ -711,16 +715,26 @@ class ProtocolHandler:
         return False
 
     async def _send_bulk_stream(self, msg_type: MessageType, data: bytes):
-        """Chunk a large blob into paced frames with periodic breathers.
-        Each frame carries its byte offset so the client can place it
-        even when the modem eats an earlier frame (resumable retries)."""
+        """Chunk a large blob into paced, flow-controlled frames. Each
+        frame carries its byte offset so the client can place it even
+        after a gap; every FLOW_WINDOW frames the proxy waits for the
+        client's ACK so the modem's packet queue can never overflow."""
         n = 0
-        for i in range(0, len(data), self.SID_CHUNK):
-            await self._send_bulk(msg_type, struct.pack('<H', i)
-                                  + data[i:i + self.SID_CHUNK])
-            n += 1
-            if n % self.BULK_BREATH_EVERY == 0:
-                await asyncio.sleep(self.BULK_BREATH)
+        self._flow_ack = asyncio.Event()
+        try:
+            for i in range(0, len(data), self.SID_CHUNK):
+                await self._send_bulk(msg_type, struct.pack('<H', i)
+                                      + data[i:i + self.SID_CHUNK])
+                n += 1
+                if n % self.FLOW_WINDOW == 0:
+                    try:
+                        await asyncio.wait_for(self._flow_ack.wait(), 3.0)
+                    except asyncio.TimeoutError:
+                        self.logger.warning(
+                            f"Flow ACK timeout at chunk {n} - continuing")
+                    self._flow_ack = asyncio.Event()
+        finally:
+            self._flow_ack = None
 
     async def send_sid(self, tune, is_retry: bool = False):
         """Stream a relocated SID into the client's $B000 window, paced
@@ -728,11 +742,12 @@ class ProtocolHandler:
         Data flows only after the client ACKs the BEGIN; a NAK
         afterwards (short/corrupt transfer) triggers spaced resends."""
         data = self.music.payload(tune)
-        head = struct.pack('<HHHBHBB', tune['load'], tune['init'],
+        head = struct.pack('<HHHBHBBB', tune['load'], tune['init'],
                            tune['play'],
                            max(0, tune.get('start_song', 1) - 1), len(data),
                            tune.get('vol_byte') or 0,
-                           1 if is_retry else 0)
+                           1 if is_retry else 0,
+                           self.FLOW_WINDOW)
         name = tune['title'][:24].encode('ascii', errors='replace')
         async with self._media_lock:
             if not await self._send_begin(MessageType.SID_BEGIN,
@@ -760,7 +775,8 @@ class ProtocolHandler:
         async with self._media_lock:
             if not await self._send_begin(
                     MessageType.IMG_BEGIN,
-                    bytes([fmt, bg & 0x0F, 1 if is_retry else 0])):
+                    bytes([fmt, bg & 0x0F, 1 if is_retry else 0,
+                           self.FLOW_WINDOW])):
                 self.logger.error("IMG_BEGIN never ACKed - aborting send")
                 await self.send_status("Image transfer couldn't start.")
                 return
