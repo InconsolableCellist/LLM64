@@ -103,6 +103,18 @@ static uint8_t img_mc;       /* multicolor: VIC state to restore */
 static uint8_t img_d021_save;
 static uint16_t img_got, img_expect;
 
+/* Received-chunk bitmap (256-byte chunks; SID and image transfers never
+   overlap so they share it). DATA frames carry their own offset, so a
+   RESUMED transfer only needs the chunks the modem ate last time -
+   successive lossy passes converge instead of starting over. */
+static uint8_t xfer_map[8];
+static uint8_t map_test_set(uint8_t idx) {
+    uint8_t m = 1 << (idx & 7);
+    if (xfer_map[idx >> 3] & m) return 0;   /* already have this chunk */
+    xfer_map[idx >> 3] |= m;
+    return 1;
+}
+
 static void img_restore_vic(void) {
     if (img_mc) {
         VIC_CTRL2 &= (uint8_t)~0x10;
@@ -582,12 +594,13 @@ static void handle_message(uint8_t msg_type) {
             break;
 #ifdef SOFT80
         case MSG_SID_BEGIN: {
-            /* load(2) init(2) play(2) song(1) size(2) vol(1) name(nul) */
+            /* load(2) init(2) play(2) song(1) size(2) vol(1) resume(1)
+               name(nul) */
             uint8_t* p = proto_get_payload(&proto);
             uint16_t load = p[0] | ((uint16_t)p[1] << 8);
             uint16_t size = p[7] | ((uint16_t)p[8] << 8);
             if (load < SID_WIN_START || load + size > SID_WIN_END
-                    || proto_get_length(&proto) < 11) {
+                    || proto_get_length(&proto) < 12) {
                 proto_send_nak();
                 break;
             }
@@ -598,9 +611,12 @@ static void handle_message(uint8_t msg_type) {
             music_ext_vol = p[9];
             sid_dst = (uint8_t*)load;
             sid_expect = size;
-            sid_got = 0;
+            if (!p[10]) {           /* fresh, not a resumed retry */
+                sid_got = 0;
+                memset(xfer_map, 0, sizeof xfer_map);
+            }
             sid_active = 1;
-            strncpy(sid_name, (char*)(p + 10), 24);
+            strncpy(sid_name, (char*)(p + 11), 24);
             sid_name[24] = 0;
             ascii_to_petscii_str(sid_name);
             /* Arm the watchdog: a dropped tail must not hang us */
@@ -611,12 +627,23 @@ static void handle_message(uint8_t msg_type) {
             break;
         }
         case MSG_SID_DATA: {
+            /* offset(2) data... - chunks are 256-aligned */
             uint16_t len = proto_get_length(&proto);
-            if (!sid_active || sid_got + len > sid_expect) {
+            uint8_t* p = proto_get_payload(&proto);
+            uint16_t off;
+            if (!sid_active || len < 3) {
                 sid_active = 0;
                 break;
             }
-            memcpy(sid_dst + sid_got, proto_get_payload(&proto), len);
+            off = p[0] | ((uint16_t)p[1] << 8);
+            len -= 2;
+            p += 2;
+            if ((off & 0xFF) || off + len > sid_expect) {
+                sid_active = 0;
+                break;
+            }
+            if (!map_test_set((uint8_t)(off >> 8))) break;
+            memcpy(sid_dst + off, p, len);
             sid_got += len;
             break;
         }
@@ -641,7 +668,11 @@ static void handle_message(uint8_t msg_type) {
             img_restore_vic();       /* a retry may follow a failed mc */
             img_active = 1;
             img_shown = 0;
-            img_got = 0;
+            /* payload: fmt(1) bg(1) resume(1) */
+            if (proto_get_length(&proto) < 3 || !p[2]) {
+                img_got = 0;
+                memset(xfer_map, 0, sizeof xfer_map);
+            }
             ui_frozen = 1;
             if (proto_get_length(&proto) >= 2 && p[0] == 1) {
                 img_expect = IMG_MC_SZ;
@@ -659,34 +690,44 @@ static void handle_message(uint8_t msg_type) {
             break;
         }
         case MSG_IMG_DATA: {
-            /* memcpy, not a per-byte loop: at 19200 baud the consumer
-               must stay well under ~520 cycles/byte or the RX ring backs
-               up and the C64U modem drops the burst tail */
+            /* offset(2) data... memcpy, not a per-byte loop: at 19200
+               baud the consumer must stay well under ~520 cycles/byte
+               or the RX ring backs up and the modem drops the tail */
             uint16_t len = proto_get_length(&proto);
             uint8_t* p = proto_get_payload(&proto);
-            uint16_t n;
-            if (!img_active || img_got + len > img_expect) {
+            uint16_t off, n;
+            if (!img_active || len < 3) {
                 img_active = 0;
                 break;
             }
-            if (img_got < IMG_BITMAP_SZ) {
-                n = IMG_BITMAP_SZ - img_got;
+            off = p[0] | ((uint16_t)p[1] << 8);
+            len -= 2;
+            p += 2;
+            if ((off & 0xFF) || off + len > img_expect) {
+                img_active = 0;
+                break;
+            }
+            if (!map_test_set((uint8_t)(off >> 8))) break;
+            if (off < IMG_BITMAP_SZ) {
+                n = IMG_BITMAP_SZ - off;
                 if (n > len) n = len;
-                memcpy(IMG_BITMAP + img_got, p, n);
+                memcpy(IMG_BITMAP + off, p, n);
                 img_got += n;
+                off += n;
                 p += n;
                 len -= n;
             }
-            if (len && img_got < IMG_HIRES_SZ) {
-                n = IMG_HIRES_SZ - img_got;
+            if (len && off < IMG_HIRES_SZ) {
+                n = IMG_HIRES_SZ - off;
                 if (n > len) n = len;
-                memcpy(IMG_MATRIX + (img_got - IMG_BITMAP_SZ), p, n);
+                memcpy(IMG_MATRIX + (off - IMG_BITMAP_SZ), p, n);
                 img_got += n;
+                off += n;
                 p += n;
                 len -= n;
             }
             if (len) {
-                memcpy(IMG_COLRAM + (img_got - IMG_HIRES_SZ), p, len);
+                memcpy(IMG_COLRAM + (off - IMG_HIRES_SZ), p, len);
                 img_got += len;
             }
             break;

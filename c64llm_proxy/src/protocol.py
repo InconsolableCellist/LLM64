@@ -78,6 +78,10 @@ class ProtocolHandler:
         self.config = api_client.config
         self.mode = Mode(self.config)
         self.model_override: Optional[str] = None
+        # Media sends run from both the stream task and the NAK-retry
+        # path; interleaving their DATA frames on the wire (and in the
+        # client's shared chunk map) would corrupt both transfers.
+        self._media_lock = asyncio.Lock()
         self.logger = logging.getLogger(__name__)
 
         # Parser state
@@ -399,7 +403,7 @@ class ProtocolHandler:
                     await self.send_message(MessageType.HINT, bytes([0]))
                     # Complete the chat round-trip first: the client must
                     # return to idle before the image transfer starts
-                    await self._send_canned(f"Illustrating: {prompt[:100]}")
+                    await self._send_canned(f"Illustrating: {prompt[:300]}")
                     await self._generate_and_send_image(prompt)
 
         elif cmd in ('history', 'hist'):
@@ -645,10 +649,13 @@ class ProtocolHandler:
     RETRY_DELAY = 2.0       # quiet time before resending a NAKed transfer
 
     async def _send_bulk_stream(self, msg_type: MessageType, data: bytes):
-        """Chunk a large blob into paced frames with periodic breathers."""
+        """Chunk a large blob into paced frames with periodic breathers.
+        Each frame carries its byte offset so the client can place it
+        even when the modem eats an earlier frame (resumable retries)."""
         n = 0
         for i in range(0, len(data), self.SID_CHUNK):
-            await self._send_bulk(msg_type, data[i:i + self.SID_CHUNK])
+            await self._send_bulk(msg_type, struct.pack('<H', i)
+                                  + data[i:i + self.SID_CHUNK])
             n += 1
             if n % self.BULK_BREATH_EVERY == 0:
                 await asyncio.sleep(self.BULK_BREATH)
@@ -658,14 +665,17 @@ class ProtocolHandler:
         like any other bulk transfer (the C64U modem drops burst tails).
         A NAK afterwards (short/corrupt transfer) triggers one resend."""
         data = self.music.payload(tune)
-        head = struct.pack('<HHHBHB', tune['load'], tune['init'],
+        head = struct.pack('<HHHBHBB', tune['load'], tune['init'],
                            tune['play'],
                            max(0, tune.get('start_song', 1) - 1), len(data),
-                           tune.get('vol_byte') or 0)
+                           tune.get('vol_byte') or 0,
+                           1 if is_retry else 0)
         name = tune['title'][:24].encode('ascii', errors='replace')
-        await self._send_bulk(MessageType.SID_BEGIN, head + name + b'\x00')
-        await self._send_bulk_stream(MessageType.SID_DATA, data)
-        await self._send_bulk(MessageType.SID_END, b'')
+        async with self._media_lock:
+            await self._send_bulk(MessageType.SID_BEGIN,
+                                  head + name + b'\x00')
+            await self._send_bulk_stream(MessageType.SID_DATA, data)
+            await self._send_bulk(MessageType.SID_END, b'')
         self._tunes_sent += 1
         self.music.tune_started = time.monotonic()
         if not is_retry:
@@ -684,9 +694,12 @@ class ProtocolHandler:
         if not is_retry:
             self._img_retry = (blob, bg, fmt)
             self._img_tries = 2
-        await self._send_bulk(MessageType.IMG_BEGIN, bytes([fmt, bg & 0x0F]))
-        await self._send_bulk_stream(MessageType.IMG_DATA, blob)
-        await self._send_bulk(MessageType.IMG_END, b'')
+        async with self._media_lock:
+            await self._send_bulk(MessageType.IMG_BEGIN,
+                                  bytes([fmt, bg & 0x0F,
+                                         1 if is_retry else 0]))
+            await self._send_bulk_stream(MessageType.IMG_DATA, blob)
+            await self._send_bulk(MessageType.IMG_END, b'')
         self.logger.info(f"Sent image ({len(blob)} bytes"
                          f"{', retry' if is_retry else ''})")
 
