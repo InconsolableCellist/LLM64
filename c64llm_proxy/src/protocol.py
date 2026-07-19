@@ -210,16 +210,36 @@ class ProtocolHandler:
                 self._img_retry = None
                 self._sid_retry = None
             elif msg_type == MessageType.NAK:
-                if getattr(self, '_img_retry', None):
-                    self.logger.warning("Image NAKed - resending once")
-                    (blob, bg, fmt), self._img_retry = self._img_retry, None
+                # A NAK often means the client was still digesting the
+                # previous bulk send (post-load rendering backlog) when
+                # this transfer arrived - retrying instantly hits the
+                # same congestion. Wait it out first, and allow two
+                # attempts (seen in the field: back-to-back retries
+                # failed identically).
+                if getattr(self, '_img_retry', None) \
+                        and getattr(self, '_img_tries', 0):
+                    self._img_tries -= 1
+                    self.logger.warning(
+                        f"Image NAKed - retrying in {self.RETRY_DELAY}s "
+                        f"({self._img_tries} attempts left)")
                     await self.send_status("Retrying image...")
+                    await asyncio.sleep(self.RETRY_DELAY)
+                    blob, bg, fmt = self._img_retry
+                    if not self._img_tries:
+                        self._img_retry = None
                     await self.send_image_blob(blob, bg, is_retry=True,
                                                fmt=fmt)
-                elif getattr(self, '_sid_retry', None):
-                    self.logger.warning("SID NAKed - resending once")
-                    tune, self._sid_retry = self._sid_retry, None
+                elif getattr(self, '_sid_retry', None) \
+                        and getattr(self, '_sid_tries', 0):
+                    self._sid_tries -= 1
+                    self.logger.warning(
+                        f"SID NAKed - retrying in {self.RETRY_DELAY}s "
+                        f"({self._sid_tries} attempts left)")
                     await self.send_status("Retrying music...")
+                    await asyncio.sleep(self.RETRY_DELAY)
+                    tune = self._sid_retry
+                    if not self._sid_tries:
+                        self._sid_retry = None
                     await self.send_sid(tune, is_retry=True)
             else:
                 self.logger.warning(f"Unknown message type: 0x{self.msg_type:02X}")
@@ -622,6 +642,7 @@ class ProtocolHandler:
     # empty out mid-transfer.
     BULK_BREATH_EVERY = 8   # frames
     BULK_BREATH = 0.12      # seconds
+    RETRY_DELAY = 2.0       # quiet time before resending a NAKed transfer
 
     async def _send_bulk_stream(self, msg_type: MessageType, data: bytes):
         """Chunk a large blob into paced frames with periodic breathers."""
@@ -647,7 +668,9 @@ class ProtocolHandler:
         await self._send_bulk(MessageType.SID_END, b'')
         self._tunes_sent += 1
         self.music.tune_started = time.monotonic()
-        self._sid_retry = None if is_retry else tune
+        if not is_retry:
+            self._sid_retry = tune
+            self._sid_tries = 2
         self.logger.info(f"Sent SID {tune['id']} ({len(data)} bytes"
                          f"{', retry' if is_retry else ''})")
 
@@ -658,7 +681,9 @@ class ProtocolHandler:
         The client freezes text drawing on IMG_BEGIN; the picture paints
         progressively on the live screen. A NAK (short/corrupt transfer,
         e.g. a dropped frame on real hardware) triggers one resend."""
-        self._img_retry = None if is_retry else (blob, bg, fmt)
+        if not is_retry:
+            self._img_retry = (blob, bg, fmt)
+            self._img_tries = 2
         await self._send_bulk(MessageType.IMG_BEGIN, bytes([fmt, bg & 0x0F]))
         await self._send_bulk_stream(MessageType.IMG_DATA, blob)
         await self._send_bulk(MessageType.IMG_END, b'')
@@ -1184,6 +1209,12 @@ class ProtocolHandler:
                 tune = (self.music.find(music_meta.get('tune'))
                         or self.music.pick(music_meta.get('mood', '')))
                 if tune:
+                    # The client keeps rendering a big load for seconds
+                    # after the last frame arrives; a SID streamed into
+                    # that backlog overflows its RX ring (field log: the
+                    # resume tune NAKed twice after a 213-message load).
+                    # Let the renderer drain first.
+                    await asyncio.sleep(min(5.0, 1.0 + 0.2 * len(frames)))
                     await self.send_sid(tune)
         else:
             error = b"Conversation not found\x00"

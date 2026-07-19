@@ -21,11 +21,11 @@
 #define COLORS ((uint8_t*)0xD800)
 
 #ifdef SOFT80
-/* 132 (not 160): ~2.3KB of BSS traded for the $B000 SID window + image
-   + indicator code - see c64-soft80.cfg (the hayes build is the tight
-   one). When this number stops feeling like scrollback and starts
-   feeling like rent, it's time for the overlay/module system. */
-#define MAX_LINES 132
+/* 131 (not 160): ~2.4KB of BSS traded for the $B000 SID window + image
+   + indicator + diagnostics code - see c64-soft80.cfg (the hayes build
+   is the tight one). When this number stops feeling like scrollback and
+   starts feeling like rent, it's time for the overlay/module system. */
+#define MAX_LINES 129
 #else
 #define MAX_LINES 160
 #endif

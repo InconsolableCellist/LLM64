@@ -84,6 +84,10 @@ static uint8_t state = ST_IDLE;
 static uint8_t modal = MODAL_NONE;
 uint8_t crc_fail_count;
 uint16_t chunk_frames;
+/* Chunk sequence tracking: a dropped/corrupted CHAT_CHUNK otherwise
+   loses text silently (each frame carries a seq byte; CHAT_DONE carries
+   the next expected one). */
+static uint8_t rx_seq, chunk_lost;
 
 #ifdef SOFT80
 /* Streamed-SID transfer progress */
@@ -105,6 +109,41 @@ static void img_restore_vic(void) {
         VIC_BG = img_d021_save;
         img_mc = 0;
     }
+}
+
+/* Leave the fullscreen image: the picture painted over the input rows
+   too, so the editor needs repainting along with frame and chat. */
+static void img_close(void) {
+    img_restore_vic();
+    ui_frozen = 0;
+    ui_redraw_all();
+    editor_redraw();
+}
+#endif
+
+/* Status-line scratch shared by the data-loss diagnostics */
+static char dm[41];
+static const char hx[] = "0123456789abcdef";
+static void hx2(uint8_t i, uint8_t v) {
+    dm[i] = hx[v >> 4];
+    dm[i + 1] = hx[v & 15];
+}
+
+#ifdef SOFT80
+/* A failed media transfer: say WHERE the bytes died. got/expect plus
+   ring / hw-overrun / crc counters - all three zero means the modem
+   dropped them silently. */
+static void xfer_fail(char tag, uint16_t got, uint16_t expect) {
+    strcpy(dm, "? fail g=????/???? ov=?? hw=?? cr=??");
+    dm[0] = tag;
+    hx2(9, (uint8_t)(got >> 8));
+    hx2(11, (uint8_t)got);
+    hx2(14, (uint8_t)(expect >> 8));
+    hx2(16, (uint8_t)expect);
+    hx2(22, serial_overflows());
+    hx2(28, serial_overruns());
+    hx2(34, crc_fail_count);
+    ui_status(dm);
 }
 #endif
 
@@ -463,10 +502,18 @@ static void handle_message(uint8_t msg_type) {
             uint8_t* p = proto_get_payload(&proto);
             ++chunk_frames;
             if (state != ST_STREAMING) {
+                if (state == ST_IDLE) {
+                    /* Unsolicited (e.g. a late error notice): sync to
+                       whatever seq it opens with */
+                    rx_seq = p[0];
+                    chunk_lost = 0;
+                }
                 state = ST_STREAMING;
                 chat_start(1);
                 ui_status("Receiving... (F3 to cancel)");
             }
+            if (p[0] != rx_seq) chunk_lost = 1;
+            rx_seq = (uint8_t)(p[0] + 1);
             chat_append_ascii((char*)(p + 1));  /* skip sequence byte */
             chat_redraw_stream();
             break;
@@ -475,20 +522,25 @@ static void handle_message(uint8_t msg_type) {
             if (state != ST_IDLE) {
                 chat_finish();
                 state = ST_IDLE;
+                if (proto_get_length(&proto) >= 1
+                        && *proto_get_payload(&proto) != rx_seq) {
+                    chunk_lost = 1;
+                }
+                if (chunk_lost) {
+                    chunk_lost = 0;
+                    chat_start(2);
+                    chat_append_petscii(
+                        "(some text was lost - /history reshows it)");
+                    chat_finish();
+                }
                 if (serial_overflows() || serial_overruns()
                         || crc_fail_count) {
                     /* Data was lost - a bug if it ever shows. Counters:
                        ring drops / hw overruns / crc failures (hex). */
-                    static char dm[41];
-                    static const char hx[] = "0123456789abcdef";
-                    uint8_t v;
                     strcpy(dm, "Ready. [data loss ov=?? hw=?? cr=??]");
-                    v = serial_overflows();
-                    dm[21] = hx[v >> 4]; dm[22] = hx[v & 15];
-                    v = serial_overruns();
-                    dm[27] = hx[v >> 4]; dm[28] = hx[v & 15];
-                    v = crc_fail_count;
-                    dm[33] = hx[v >> 4]; dm[34] = hx[v & 15];
+                    hx2(21, serial_overflows());
+                    hx2(27, serial_overruns());
+                    hx2(33, crc_fail_count);
                     ui_status(dm);
                 } else {
                     ui_status("Ready. Type your message.");
@@ -575,7 +627,7 @@ static void handle_message(uint8_t msg_type) {
                 ui_status(sid_name);
             } else {
                 proto_send_nak();
-                ui_status("Music transfer failed.");
+                xfer_fail('m', sid_got, sid_expect);
             }
             sid_active = 0;
             if (state == ST_LOADING) state = ST_IDLE;
@@ -644,11 +696,9 @@ static void handle_message(uint8_t msg_type) {
                 img_shown = 1;   /* key handler dismisses + redraws */
                 proto_send_ack();
             } else {
-                img_restore_vic();
-                ui_frozen = 0;
-                ui_redraw_all();
+                img_close();
                 proto_send_nak();
-                ui_status("Image transfer failed.");
+                xfer_fail('i', img_got, img_expect);
             }
             img_active = 0;
             if (state == ST_LOADING) state = ST_IDLE;
@@ -696,6 +746,8 @@ static void send_message(void) {
     proto_send_chat(editor_text());
     editor_clear();
     state = ST_WAITING;
+    rx_seq = 0;
+    chunk_lost = 0;
     watchdog_reset();
     ui_status("Sending...");
 }
@@ -715,6 +767,8 @@ static void send_command(const char* cmd) {
     }
     proto_send_chat(cmd);
     state = ST_WAITING;
+    rx_seq = 0;
+    chunk_lost = 0;
     watchdog_reset();
     ui_status("Working...");
 }
@@ -733,9 +787,7 @@ static void handle_key(uint8_t k) {
 #ifdef SOFT80
     if (img_shown) {   /* any key dismisses the fullscreen image */
         img_shown = 0;
-        img_restore_vic();
-        ui_frozen = 0;
-        ui_redraw_all();
+        img_close();
         return;
     }
 #endif
@@ -896,9 +948,7 @@ int main(void) {
                 sid_active = 0;
                 if (img_active) {
                     img_active = 0;
-                    img_restore_vic();
-                    ui_frozen = 0;
-                    ui_redraw_all();
+                    img_close();
                 }
                 proto_init(&proto, payload_buffer, MAX_PAYLOAD);
                 proto_send_nak();   /* lets the proxy resend the transfer */
