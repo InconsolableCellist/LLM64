@@ -532,19 +532,22 @@ class ProtocolHandler:
         elif cmd == 'models':
             try:
                 names = await self.api_client.list_models()
-            except Exception as e:
+            except Exception:
                 names = []
             if names:
+                self._model_names = names
                 await self._send_canned(
-                    "Models:\n" + "\n".join(f"- {n}" for n in names)
-                    + "\nSwitch with: /model <name>")
+                    "Models:\n"
+                    + "\n".join(f"{i}. {n}"
+                                for i, n in enumerate(names, 1))
+                    + "\nSwitch with: /model <n> or a name prefix")
             else:
                 await self._send_canned("Could not fetch the model list.")
 
         elif cmd == 'model':
             if arg:
-                await self._set_model(arg)
-                await self._send_canned("Model switched.")
+                match = await self._set_model(arg)
+                await self._send_canned(f"Now using: {match}")
             else:
                 current = self.model_override or self.config.model
                 await self._send_canned(f"Current model: {current}")
@@ -583,20 +586,30 @@ class ProtocolHandler:
         await self._set_model(name)
 
     async def _set_model(self, query: str):
-        """Resolve a (possibly truncated) model name and switch to it."""
+        """Resolve a model by /models list number, name prefix, or
+        substring, and switch to it."""
         try:
             names = await self.api_client.list_models()
         except Exception:
             names = []
         match = query
-        q = query.lower()
-        for name in names:
-            if name.lower().startswith(q) or q in name.lower():
-                match = name
-                break
+        # '/model 2' picks by number from the last /models listing
+        # (falling back to the fresh list, same order)
+        if query.isdigit():
+            pool = getattr(self, '_model_names', None) or names
+            n = int(query)
+            if 1 <= n <= len(pool):
+                match = pool[n - 1]
+        else:
+            q = query.lower()
+            for name in names:
+                if name.lower().startswith(q) or q in name.lower():
+                    match = name
+                    break
         self.model_override = match
         self.logger.info(f"Model -> {match}")
         await self.send_status(f"Model: {match[:32]}")
+        return match
 
     def _attach_snippets(self, mode):
         """Give an AdventureMode the directive instructions for whichever

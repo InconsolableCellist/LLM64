@@ -73,9 +73,7 @@ void music_ext_stop(void);
 /* Modal overlays */
 #define MODAL_NONE 0
 #define MODAL_CONV 1
-#define MODAL_HELP 2
 #define MODAL_MENU 3
-#define MODAL_MODEL 4
 
 ProtoContext proto;
 static uint8_t payload_buffer[MAX_PAYLOAD];
@@ -220,11 +218,6 @@ static uint8_t load_count;   /* messages received during a bulk load */
 static uint8_t load_open;    /* a split message is mid-assembly */
 
 /* Model browser */
-#define MAX_MODELS 16
-static char models[MAX_MODELS][37];  /* PETSCII names */
-static uint8_t model_count;
-static uint8_t model_sel;
-static uint8_t model_loading;
 
 /* ------------------------------------------------------------------ */
 
@@ -304,38 +297,16 @@ static uint8_t modem_connect(void) {
 }
 #endif
 
-/* --- modal: help ---------------------------------------------------- */
-
-static void help_open(void) {
-    modal = MODAL_HELP;
-    chat_area_clear_screen();
-    ui_draw_row(2,  "  C64 LLM client - help", COLOR_WHITE, 0);
-    ui_draw_row(4,  "  Return     send message", COLOR_CYAN, 0);
-    ui_draw_row(5,  "  F1         menu (models, modes...)", COLOR_CYAN, 0);
-    ui_draw_row(6,  "  F2/F3      new conversation / cancel", COLOR_CYAN, 0);
-    ui_draw_row(7,  "  F5         conversation browser", COLOR_CYAN, 0);
-    ui_draw_row(8,  "  F7         this help", COLOR_CYAN, 0);
-    ui_draw_row(9,  "  F4 / F6    page chat up/down", COLOR_CYAN, 0);
-    ui_draw_row(10, "  crsr up/dn scroll chat", COLOR_CYAN, 0);
-    ui_draw_row(11, "  ctrl-a/e   start/end of input", COLOR_CYAN, 0);
-    ui_draw_row(12, "  ctrl-k     kill to end", COLOR_CYAN, 0);
-    ui_draw_row(13, "  ctrl-d     delete char", COLOR_CYAN, 0);
-    ui_draw_row(14, "  clr/home   clear input", COLOR_CYAN, 0);
-    ui_draw_row(15, "  commands (type as a message):", COLOR_WHITE, 0);
-    ui_draw_row(16, "  /adventure /char /music /pic", COLOR_CYAN, 0);
-    ui_draw_row(17, "  /history /find - /help = all", COLOR_CYAN, 0);
-    ui_draw_row(18, "  server: " SERVER_IP ":" SERVER_PORT, COLOR_GRAY2, 0);
-    ui_draw_row(19, "  press any key to close", COLOR_WHITE, 0);
-}
-
 /* --- modal: main menu (F1) ------------------------------------------- */
+/* Help lives server-side now (/help streams into the scrollback):
+   ~700 bytes of resident text reclaimed for the module slot. */
 
 static void menu_open(void) {
     modal = MODAL_MENU;
     chat_area_clear_screen();
     ui_draw_row(2,  "  Menu", COLOR_WHITE, 0);
     ui_draw_row(4,  "  N  new conversation", COLOR_CYAN, 0);
-    ui_draw_row(5,  "  M  select model", COLOR_CYAN, 0);
+    ui_draw_row(5,  "  M  models (/model <n> picks)", COLOR_CYAN, 0);
     ui_draw_row(6,  "  C  conversations", COLOR_CYAN, 0);
     ui_draw_row(7,  "  A  adventure mode", COLOR_CYAN, 0);
     ui_draw_row(8,  "  R  list characters", COLOR_CYAN, 0);
@@ -353,65 +324,8 @@ static void menu_open(void) {
     ui_draw_row(13, "  F1 or stop: close", COLOR_GRAY2, 0);
 }
 
-/* --- modal: model browser --------------------------------------------- */
-
-static void model_draw(void) {
-    uint8_t i;
-    chat_area_clear_screen();
-    ui_draw_row(1, " Models (return=select, f1=close)", COLOR_WHITE, 0);
-    if (model_loading) {
-        ui_draw_row(3, "  loading...", COLOR_GRAY2, 0);
-        return;
-    }
-    if (model_count == 0) {
-        ui_draw_row(3, "  (none reported)", COLOR_GRAY2, 0);
-        return;
-    }
-    for (i = 0; i < model_count; ++i) {
-        ui_draw_row(2 + i, models[i], COLOR_CYAN, i == model_sel);
-    }
-}
-
-static void model_open(void) {
-    modal = MODAL_MODEL;
-    model_count = 0;
-    model_sel = 0;
-    model_loading = 1;
-    model_draw();
-    proto_send_message(MSG_LIST_MODELS, 0, 0);
-}
-
-static void model_select(void) {
-    modal = MODAL_NONE;
-    chat_redraw();
-    proto_send_text(MSG_SET_MODEL, models[model_sel]);
-    ui_status("Switching model...");
-}
-
-/* Parse a MODEL_LIST frame: count, more, then name\0 per entry */
-static void model_list_frame(void) {
-    uint8_t* p = proto_get_payload(&proto);
-    uint16_t plen = proto_get_length(&proto);
-    uint8_t n = p[0];
-    uint8_t more = p[1];
-    uint16_t off = 2;
-    uint8_t i;
-
-    for (i = 0; i < n && model_count < MAX_MODELS && off < plen; ++i) {
-        uint8_t t = 0;
-        while (off < plen && p[off] && t < 36) {
-            models[model_count][t++] = ascii_to_petscii(p[off++]);
-        }
-        models[model_count][t] = 0;
-        while (off < plen && p[off]) ++off;  /* skip overlong remainder */
-        ++off;
-        ++model_count;
-    }
-    if (!more || model_count >= MAX_MODELS) {
-        model_loading = 0;
-    }
-    if (modal == MODAL_MODEL) model_draw();
-}
+/* Model browser removed: /models lists (numbered), /model <n> or a
+   name prefix switches - ~900 bytes reclaimed for the module slot. */
 
 /* --- modal: conversation browser ------------------------------------ */
 
@@ -644,9 +558,6 @@ static void handle_message(uint8_t msg_type) {
             break;
         case MSG_CONVERSATION_LIST:
             conv_list_frame();
-            break;
-        case MSG_MODEL_LIST:
-            model_list_frame();
             break;
         case MSG_CONVERSATION_DATA:
             conv_data_frame();
@@ -915,17 +826,12 @@ static void handle_key(uint8_t k) {
         return;
     }
 #endif
-    if (modal == MODAL_HELP) {
-        modal = MODAL_NONE;
-        chat_redraw();
-        return;
-    }
     if (modal == MODAL_MENU) {
         modal = MODAL_NONE;
         chat_redraw();
         switch (k) {
             case 'n': new_conversation(); break;
-            case 'm': model_open(); break;
+            case 'm': send_command("/models"); break;
             case 'c': if (state == ST_IDLE) conv_open(); break;
             case 'a': send_command("/adventure"); break;
             case 'r': send_command("/chars"); break;
@@ -942,27 +848,8 @@ static void handle_key(uint8_t k) {
                     ui_status("Music: streamed tune");
                 }
                 break;
-            case 'h': help_open(); break;
+            case 'h': send_command("/help"); break;
             default: break;  /* F1/STOP/anything else: just close */
-        }
-        return;
-    }
-    if (modal == MODAL_MODEL) {
-        switch (k) {
-            case KEY_CRSR_UP:
-                if (model_sel > 0) { --model_sel; model_draw(); }
-                break;
-            case KEY_CRSR_DOWN:
-                if (model_sel + 1 < model_count) { ++model_sel; model_draw(); }
-                break;
-            case KEY_RETURN:
-                if (model_count) model_select();
-                break;
-            case 133: /* F1 */
-            case KEY_STOP:
-                modal = MODAL_NONE;
-                chat_redraw();
-                break;
         }
         return;
     }
@@ -1003,7 +890,7 @@ static void handle_key(uint8_t k) {
             if (state == ST_IDLE) conv_open();
             break;
         case 136: /* F7 */
-            help_open();
+            send_command("/help");
             break;
         case KEY_CRSR_UP:
             chat_scroll(1);

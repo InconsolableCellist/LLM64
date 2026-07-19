@@ -61,7 +61,9 @@ NMI_VECTOR = $0318
 ; stall unrecoverably if RDRF sits unread). Access goes through
 ; self-modifying absolute-address stubs (below, in DATA) with a 16-bit
 ; fill counter; the reader masks IRQs around its non-atomic updates.
-RX_RING_SIZE = 8192
+RX_RING_SIZE = 4096          ; halved from 8KB: worst observed backlog
+                             ; is ~300 bytes and the ov counter stands
+                             ; guard - freed 4KB banked for the module slot
 rx_used:        .res 2          ; bytes currently buffered
 connected:      .res 1
 vectors_saved:  .res 1

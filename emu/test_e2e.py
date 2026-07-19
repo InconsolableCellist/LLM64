@@ -295,13 +295,11 @@ def main():
                                 artifacts, f'{tag}-content')
             final = wait_ready(monitor, args.timeout, artifacts,
                                f'{tag}-done')
-            # Help overlay round-trip (F7, then any key to close)
+            # F7 = server-side /help streamed into the scrollback
             monitor.keyboard_feed_petscii(b'\x88')
-            wait_for_screen(monitor, r'press any key to close', 15,
+            wait_for_screen(monitor, r'search all conversations', 30,
                             artifacts, f'{tag}-help')
-            monitor.keyboard_feed(' ')
-            final = wait_for_screen(monitor, r'> hello computer', 15,
-                                    artifacts, f'{tag}-restore')
+            final = wait_ready(monitor, 30, artifacts, f'{tag}-restore')
             if not args.live:
                 # Conversation browser: F5, load newest (= this session)
                 monitor.keyboard_feed_petscii(b'\x87')
@@ -609,17 +607,17 @@ def main():
                 wait_for_screen(monitor, r'music off', 15,
                                 artifacts, f'{tag}-music-off')
 
-                # F1 menu -> M -> model browser -> select second model
+                # F1 menu -> M lists models (numbered); /model 2 picks
                 monitor.keyboard_feed_petscii(b'\x85')  # F1
-                wait_for_screen(monitor, r'select model', 15,
+                wait_for_screen(monitor, r'models \(/model', 15,
                                 artifacts, f'{tag}-menu')
                 monitor.keyboard_feed('m')
-                wait_for_screen(monitor, r'mock-large', 15,
+                wait_for_screen(monitor, r'2\. mock-large', 30,
                                 artifacts, f'{tag}-models')
-                monitor.keyboard_feed_petscii(b'\x11')  # cursor down
-                monitor.keyboard_feed('\r')
-                final = wait_for_screen(monitor, r'model: mock-large', 15,
-                                        artifacts, f'{tag}-modelset')
+                wait_ready(monitor, 15, artifacts, f'{tag}-models-done')
+                monitor.keyboard_feed('/model 2\r')
+                final = wait_for_screen(monitor, r'now using: mock-large',
+                                        15, artifacts, f'{tag}-modelset')
 
                 # Roleplay restore: /chat leaves the card, reloading the
                 # conversation (newest saved - the empty chat one is
