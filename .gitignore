@@ -11,3 +11,7 @@ c64llm_proxy/data/
 emu/artifacts/
 c64llm_proxy/proxy-live.log
 c64_client/include/buildhash.h
+
+# Live config (contains private hostnames)
+c64llm_proxy/config.toml
+c64llm_proxy/cards/

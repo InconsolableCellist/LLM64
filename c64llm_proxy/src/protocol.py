@@ -229,7 +229,11 @@ class ProtocolHandler:
                         and not self._flow_ack.is_set():
                     self._flow_ack.set()   # window flow control
                 else:
+                    # Transfer-complete ACK: disarm BOTH retry slots
+                    # (leaving _img_sent set misrouted the next NAK
+                    # into the image branch, suppressing a SID retry)
                     self._sid_retry = None
+                    self._img_sent = False
             elif msg_type == MessageType.NAK:
                 # A NAK often means the client was still digesting the
                 # previous bulk send (post-load rendering backlog) when
@@ -278,6 +282,13 @@ class ProtocolHandler:
         if len(payload) > self.MAX_PAYLOAD:
             self.logger.error(f"Payload too large: {len(payload)}")
             return
+        # The CLIENT's buffer is the binding limit: an oversized frame
+        # desyncs its parser (field bug: 1000-char load messages)
+        if len(payload) > 512:
+            self.logger.error(
+                f"Payload {len(payload)} exceeds client buffer (512) - "
+                f"dropping {msg_type.name} frame")
+            return
 
         # Build frame
         frame = bytearray()
@@ -325,6 +336,10 @@ class ProtocolHandler:
 
         await self.send_ack()
 
+        # A re-sent request (client watchdog recovery) must not leave
+        # two streams interleaving their CHAT_CHUNK seq counters
+        self._cancel_stream()
+
         if text.startswith('/'):
             await self.handle_command(text)
             return
@@ -334,6 +349,16 @@ class ProtocolHandler:
 
         # Start streaming task
         self.stream_task = asyncio.create_task(self._stream_response())
+
+    def _cancel_stream(self):
+        """Quietly cancel any in-flight response stream. Quiet = no
+        partial CHAT_DONE: the client has moved on (loading, new
+        conversation, or re-sent request), and a stray DONE would flip
+        it idle mid-load and disarm its watchdog. The client's explicit
+        F3 cancel keeps the loud path (it awaits the DONE)."""
+        if self.stream_task and not self.stream_task.done():
+            self.stream_task.quiet_cancel = True
+            self.stream_task.cancel()
 
     # --- slash commands / modes ---------------------------------------
 
@@ -400,23 +425,12 @@ class ProtocolHandler:
             elif cmd == 'pics':
                 await self._list_pics()
             else:
-                # Priority: explicit description > pending suggestion >
-                # ask the model to describe the current scene itself
+                # Everything (including the derive LLM call) runs off
+                # the reader task: a stalled model must not deafen the
+                # proxy to CANCEL/ACK/NAK for minutes
                 prompt = arg or self.images.pending_prompt
-                if not prompt:
-                    await self.send_status("Studying the scene...")
-                    prompt = await self._derive_scene_prompt()
-                if not prompt:
-                    await self._send_canned(
-                        "Couldn't picture the scene - try "
-                        "/pic <description>.")
-                else:
-                    self.images.pending_prompt = None
-                    await self.send_message(MessageType.HINT, bytes([0]))
-                    # Complete the chat round-trip first: the client must
-                    # return to idle before the image transfer starts
-                    await self._send_canned(f"Illustrating: {prompt[:300]}")
-                    self._spawn_media(self._generate_and_send_image(prompt))
+                self.images.pending_prompt = None
+                self._spawn_media(self._illustrate(prompt))
 
         elif cmd in ('history', 'hist'):
             await self._show_history(arg)
@@ -559,8 +573,9 @@ class ProtocolHandler:
             for name in chunk:
                 payload.extend(name[:36].encode('ascii', errors='replace'))
                 payload.append(0x00)
-            await self.send_message(MessageType.MODEL_LIST, bytes(payload))
-            await asyncio.sleep(0.05)
+            # Wire-time pacing like every multi-frame send (a flat 50ms
+            # under-paced ~300-byte frames into the modem's queue)
+            await self._send_bulk(MessageType.MODEL_LIST, bytes(payload))
 
     async def handle_set_model(self):
         name = self.payload.rstrip(b'\x00').decode('ascii', errors='replace')
@@ -595,6 +610,8 @@ class ProtocolHandler:
 
     def _switch_mode(self, mode):
         self.mode = mode
+        # A parked image suggestion belongs to the old conversation
+        self.images.pending_prompt = None
         self.conv_manager.new_conversation()
         # Record the mode on the conversation so loading it later can
         # restore the same experience (prompt, sampling, music directives)
@@ -682,7 +699,13 @@ class ProtocolHandler:
         """Run a media send off the reader task (see _media_tasks)."""
         task = asyncio.create_task(coro)
         self._media_tasks.add(task)
-        task.add_done_callback(self._media_tasks.discard)
+
+        def _done(t):
+            self._media_tasks.discard(t)
+            if not t.cancelled() and t.exception():
+                self.logger.error("Media task failed",
+                                  exc_info=t.exception())
+        task.add_done_callback(_done)
 
     async def _retry_sid(self, tune):
         """Spaced SID resend (resume) after a NAK."""
@@ -752,7 +775,16 @@ class ProtocolHandler:
                            tune.get('vol_byte') or 0,
                            1 if is_retry else 0,
                            self.FLOW_WINDOW)
+        if len(data) > 0x1000:
+            self.logger.error(f"SID {tune['id']} is {len(data)} bytes - "
+                              "exceeds the $B000 window, not sending")
+            return
         name = tune['title'][:24].encode('ascii', errors='replace')
+        if not is_retry:
+            # Arm BEFORE sending: arming after the lock released raced
+            # the completion ACK and could leave a stale retry armed
+            self._sid_retry = tune
+            self._sid_tries = 2
         async with self._media_lock:
             if not await self._send_begin(MessageType.SID_BEGIN,
                                           head + name + b'\x00'):
@@ -762,9 +794,6 @@ class ProtocolHandler:
             await self._send_bulk(MessageType.SID_END, b'')
         self._tunes_sent += 1
         self.music.tune_started = time.monotonic()
-        if not is_retry:
-            self._sid_retry = tune
-            self._sid_tries = 2
         self.logger.info(f"Sent SID {tune['id']} ({len(data)} bytes"
                          f"{', retry' if is_retry else ''})")
 
@@ -968,6 +997,27 @@ class ProtocolHandler:
         else:                       # hires-era blob
             self._spawn_media(self.send_image_blob(data, 0, fmt=0))
 
+    async def _illustrate(self, prompt: str):
+        """Full /pic flow off the reader task: derive a scene prompt if
+        none given, announce, then generate + send. Priority: explicit
+        description > pending suggestion > model-derived scene."""
+        if not prompt:
+            await self.send_status("Studying the scene...")
+            hb = asyncio.create_task(self._heartbeat("Studying..."))
+            try:
+                prompt = await self._derive_scene_prompt()
+            finally:
+                hb.cancel()
+        if not prompt:
+            await self._send_canned(
+                "Couldn't picture the scene - try /pic <description>.")
+            return
+        await self.send_message(MessageType.HINT, bytes([0]))
+        # Complete the chat round-trip first: the client must return
+        # to idle before the image transfer starts
+        await self._send_canned(f"Illustrating: {prompt[:300]}")
+        await self._generate_and_send_image(prompt)
+
     async def _generate_and_send_image(self, prompt: str):
         await self.send_status("Illustrating... (10-20s)")
         hb = asyncio.create_task(self._heartbeat("Illustrating..."))
@@ -1029,11 +1079,13 @@ class ProtocolHandler:
     async def _stream_response(self, hidden_user_msg: str = None):
         """Stream API response to C64"""
         hb = None
+        # Bound before any await: a cancel landing on the first status
+        # send must not NameError in the CancelledError handler
+        seq = 0
+        full_response = ""
+        done_sent = False
         try:
             await self.send_status("Contacting API...")
-
-            seq = 0
-            full_response = ""
 
             messages = self.conv_manager.get_messages()
             if hidden_user_msg:
@@ -1104,8 +1156,10 @@ class ProtocolHandler:
                             seq, data[i:i + self.CHUNK_TEXT_MAX])
 
             # Send completion
-            payload = struct.pack('<BH', seq, len(full_response))
+            payload = struct.pack('<BH', seq,
+                                  min(len(full_response), 0xFFFF))
             await self.send_message(MessageType.CHAT_DONE, payload)
+            done_sent = True
 
             # Save assistant response to conversation
             self.conv_manager.add_message('assistant', full_response)
@@ -1150,13 +1204,18 @@ class ProtocolHandler:
 
         except asyncio.CancelledError:
             self.logger.info("Stream cancelled")
-            # Send partial completion
-            payload = struct.pack('<BH', seq, len(full_response))
-            await self.send_message(MessageType.CHAT_DONE, payload)
-            # Still save what we have
-            if full_response:
-                self.conv_manager.add_message('assistant', full_response)
-                self.conv_manager.save()
+            # A cancel landing in the post-DONE media phase must not
+            # re-send DONE or double-save the assistant message; a
+            # quiet cancel (client moved on) sends nothing at all
+            if not done_sent and not getattr(
+                    asyncio.current_task(), 'quiet_cancel', False):
+                payload = struct.pack('<BH', seq,
+                                      min(len(full_response), 0xFFFF))
+                await self.send_message(MessageType.CHAT_DONE, payload)
+                if full_response:
+                    self.conv_manager.add_message('assistant',
+                                                  full_response)
+                    self.conv_manager.save()
 
         except Exception as e:
             self.logger.error(f"Error streaming response: {e}")
@@ -1215,6 +1274,13 @@ class ProtocolHandler:
         conversations = self.conv_manager.list_conversations()
         self.logger.info(f"Found {len(conversations)} conversations")
 
+        # Zero frames would leave the browser at 'loading...' forever
+        # (fresh install): an explicit empty frame, like MODEL_LIST's
+        if not conversations:
+            await self.send_message(MessageType.CONVERSATION_LIST,
+                                    bytes([0, 0]))
+            return
+
         # Send in chunks (max 5 per message to keep under size limit)
         chunk_size = 5
         for i in range(0, len(conversations), chunk_size):
@@ -1254,6 +1320,10 @@ class ProtocolHandler:
             self.logger.error("Invalid LOAD_CONVERSATION payload")
             await self.send_nak()
             return
+        # An in-flight stream would save its response into the newly
+        # loaded conversation and interleave frames with the load
+        self._cancel_stream()
+        self.images.pending_prompt = None
 
         masked_id = struct.unpack('<I', self.payload[:4])[0]
         self.logger.info(f"Load conversation: {masked_id}")
@@ -1341,13 +1411,17 @@ class ProtocolHandler:
                 meta_mode = 'adventure'
                 self.conv_manager.set_meta('mode', 'adventure')
                 self.conv_manager.save()
-            if meta_mode == 'adventure' and self.mode.name != 'adventure':
+            # Rebuild the mode unconditionally: same-NAME loads still
+            # need the right theme/character (adventure theme B loaded
+            # while in theme A kept A's prompt), and loading a plain
+            # chat while in adventure kept narrating in adventure voice
+            if meta_mode == 'adventure':
                 mode = AdventureMode(
                     self.config, theme=self.conv_manager.get_meta('theme', ''))
                 self._attach_snippets(mode)
                 self.mode = mode  # not _switch_mode: keep the conversation
                 self.logger.info("Restored adventure mode from conversation")
-            elif meta_mode == 'roleplay' and self.mode.name != 'roleplay':
+            elif meta_mode == 'roleplay':
                 cname = self.conv_manager.get_meta('char', '')
                 m = self._find_card(cname) if cname else None
                 if m:
@@ -1358,6 +1432,9 @@ class ProtocolHandler:
                     self.mode = mode
                     self.logger.info(
                         f"Restored roleplay mode ({m[0]}) from conversation")
+            elif meta_mode == 'chat' and self.mode.name != 'chat':
+                self.mode = Mode(self.config)
+                self.logger.info("Restored chat mode from conversation")
 
             # ...and the soundtrack (exact tune if still in the library,
             # else another tune of the same mood). The transfer starts only
@@ -1375,5 +1452,7 @@ class ProtocolHandler:
     async def handle_new_conversation(self):
         """Start a new conversation"""
         self.logger.info("New conversation request")
+        self._cancel_stream()
+        self.images.pending_prompt = None
         self.conv_manager.new_conversation()
         await self.send_ack()

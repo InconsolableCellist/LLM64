@@ -22,6 +22,9 @@ uint8_t ascii_to_petscii(uint8_t c) {
     return c;
 }
 
+/* Screen-code conversion is 40-column-only: the soft-80 renderer works
+   in ASCII cells end to end (~190 bytes reclaimed in that build) */
+#ifndef SOFT80
 uint8_t ascii_to_screen(uint8_t c) {
     if (c >= 0x61 && c <= 0x7A) return c - 0x60;  /* a-z -> 1-26 */
     if (c >= 0x41 && c <= 0x5A) return c;         /* A-Z -> 65-90 */
@@ -44,6 +47,7 @@ void petscii_to_ascii_str(char* s) {
         ++s;
     }
 }
+#endif
 
 void ascii_to_petscii_str(char* s) {
     while (*s) {

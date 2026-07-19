@@ -133,23 +133,16 @@ static void img_restore_vic(void) {
     }
 }
 
-/* Ext music silenced for the image transfer (some SID play routines
-   SEI long enough to blind the ACIA - field: Niwashi killed every
-   image pass until the tune was stopped); restart on close. */
-static uint8_t img_music_was;
-
 /* Leave the fullscreen image: the picture painted over the input rows
-   too, so the editor needs repainting along with frame and chat. */
+   too, so the editor needs repainting along with frame and chat.
+   (Music no longer pauses for transfers: the ACIA-blinding theory was
+   disproven once the modem's DTR/RTS glitching was fixed.) */
 static void img_close(void) {
     img_restore_vic();
     ui_frozen = 0;
     ui_redraw_all();
     editor_redraw();
     ui_status("Ready.");  /* the image's colors linger there otherwise */
-    if (img_music_was) {
-        img_music_was = 0;
-        music_ext_begin();
-    }
 }
 #endif
 
@@ -515,6 +508,10 @@ static void conv_data_frame(void) {
     uint16_t off = 2;
     uint8_t i;
 
+    /* A frame delayed past the watchdog abort must not append into
+       the live chat or flip the status after the timeout notice */
+    if (state != ST_LOADING) return;
+
     for (i = 0; i < n && off < plen; ++i) {
         uint8_t role = p[off++];
         if (!(role & 0x80)) {
@@ -579,7 +576,18 @@ static void handle_message(uint8_t msg_type) {
         case MSG_CHAT_DONE:
             if (state != ST_IDLE) {
                 chat_finish();
-                state = ST_IDLE;
+                /* A live media transfer must keep the watchdog armed
+                   (DONE mid-transfer used to go idle: a dropped image
+                   tail then left the screen frozen forever) */
+#ifdef SOFT80
+                if (sid_active || img_active) {
+                    state = ST_LOADING;
+                    watchdog_reset();
+                } else
+#endif
+                {
+                    state = ST_IDLE;
+                }
                 if (proto_get_length(&proto) >= 1
                         && *proto_get_payload(&proto) != rx_seq) {
                     chunk_lost = 1;
@@ -613,7 +621,15 @@ static void handle_message(uint8_t msg_type) {
             chat_append_petscii("error: ");
             chat_append_ascii(p);
             chat_finish();
-            state = ST_IDLE;
+#ifdef SOFT80
+            if (sid_active || img_active) {
+                state = ST_LOADING;
+                watchdog_reset();
+            } else
+#endif
+            {
+                state = ST_IDLE;
+            }
             ui_status("Error from server. Ready.");
             break;
         }
@@ -645,7 +661,10 @@ static void handle_message(uint8_t msg_type) {
             uint8_t* p = proto_get_payload(&proto);
             uint16_t load = p[0] | ((uint16_t)p[1] << 8);
             uint16_t size = p[7] | ((uint16_t)p[8] << 8);
-            if (load < SID_WIN_START || load + size > SID_WIN_END
+            /* wrap-proof: load+size overflowed uint16 for size>=0x5000
+               and the old guard passed out-of-window transfers */
+            if (load < SID_WIN_START || load >= SID_WIN_END
+                    || size > SID_WIN_END - load
                     || proto_get_length(&proto) < 13) {
                 proto_send_nak();
                 break;
@@ -690,7 +709,8 @@ static void handle_message(uint8_t msg_type) {
             off = p[0] | ((uint16_t)p[1] << 8);
             len -= 2;
             p += 2;
-            if ((off & 0xFF) || off + len > sid_expect) {
+            if ((off & 0xFF) || off >= sid_expect
+                    || len > sid_expect - off) {
                 sid_active = 0;
                 break;
             }
@@ -718,15 +738,7 @@ static void handle_message(uint8_t msg_type) {
                text drawing until the user dismisses it. Scrollback is
                untouched, so dismissing is a local redraw - no reload. */
             uint8_t* p = proto_get_payload(&proto);
-            uint8_t plen = proto_get_length(&proto);
             img_restore_vic();       /* a retry may follow a failed mc */
-            /* flags bit0 (payload[4]): keep the tune playing through
-               the transfer - experiment hook for the SEI question */
-            if (music_state == 0xFF
-                    && !(plen >= 5 && (p[4] & 1))) {
-                img_music_was = 1;
-                music_ext_stop();    /* silence during the transfer */
-            }
             xfer_mark();
             img_active = 1;
             img_shown = 0;
@@ -770,7 +782,8 @@ static void handle_message(uint8_t msg_type) {
             off = p[0] | ((uint16_t)p[1] << 8);
             len -= 2;
             p += 2;
-            if ((off & 0xFF) || off + len > img_expect) {
+            if ((off & 0xFF) || off >= img_expect
+                    || len > img_expect - off) {
                 img_active = 0;
                 break;
             }
@@ -804,12 +817,6 @@ static void handle_message(uint8_t msg_type) {
             if (img_active && img_got == img_expect) {
                 img_shown = 1;   /* key handler dismisses + redraws */
                 proto_send_ack();
-                /* Transfer done - no more traffic while the picture is
-                   viewed, so the tune can accompany it from here */
-                if (img_music_was) {
-                    img_music_was = 0;
-                    music_ext_begin();
-                }
             } else {
                 img_close();
                 proto_send_nak();
@@ -863,6 +870,7 @@ static void send_message(void) {
     state = ST_WAITING;
     rx_seq = 0;
     chunk_lost = 0;
+    pending_ack = PA_NONE;  /* a stale F2 ACK must not wipe the chat */
     watchdog_reset();
     ui_status("Sending...");
 }
@@ -884,6 +892,7 @@ static void send_command(const char* cmd) {
     state = ST_WAITING;
     rx_seq = 0;
     chunk_lost = 0;
+    pending_ack = PA_NONE;
     watchdog_reset();
     ui_status("Working...");
 }

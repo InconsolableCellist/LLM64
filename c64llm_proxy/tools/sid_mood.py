@@ -161,7 +161,7 @@ def main():
                     help="JSON list from sid_scan.py (optionally filtered)")
     ap.add_argument("--stil", type=Path,
                     default=Path("data/sids/C64Music/DOCUMENTS/STIL.txt"))
-    ap.add_argument("--base-url", default="https://mlboy.tail99c274.ts.net:5000/v1")
+    ap.add_argument("--base-url", default="http://localhost:5000/v1")
     ap.add_argument("--model", default="gemma4-26b-a4b-it-qat-q4-mlboy")
     ap.add_argument("--pilot", type=int, metavar="N",
                     help="classify only the first N tunes")

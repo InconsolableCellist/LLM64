@@ -398,7 +398,6 @@ def main():
                         return monitor.read_memory(
                             labels['_img_shown'], labels['_img_shown'])[0]
                     deadline = time.time() + 60
-                    seen_silent = False
                     while True:
                         got = (bytes(monitor.read_memory(0xE000, 0xE00F,
                                                          bank=1)).hex()
@@ -406,13 +405,6 @@ def main():
                                                            bank=1)).hex())
                         colram = [b & 0x0F for b in monitor.read_memory(
                             0xDBD8, 0xDBE7, bank=0)]
-                        # Heavy SID play routines blind the ACIA
-                        # mid-transfer (field: Niwashi): the tune must
-                        # be silent while data is in flight...
-                        if not img_shown() and monitor.read_memory(
-                                labels['_music_state'],
-                                labels['_music_state'])[0] == 0:
-                            seen_silent = True
                         # img_shown flips only when IMG_END verified the
                         # byte count: the one non-racy completion signal
                         if (got == expected[:64] and colram == want_colram
@@ -425,18 +417,15 @@ def main():
                                 f'got  {got} colram {colram}')
                         time.sleep(2)
                     print('  PASS: image streamed to bitmap+matrix+colram')
-                    if not seen_silent:
-                        raise AssertionError(
-                            'ext music never silenced during transfer')
-                    # ...and resume the moment the transfer completes,
-                    # accompanying the displayed picture
+                    # Music no longer pauses for transfers (the ACIA-
+                    # blinding theory was disproven): the tune plays
+                    # through transfer and display alike
                     if monitor.read_memory(
                             labels['_music_state'],
                             labels['_music_state'])[0] != 0xFF:
                         raise AssertionError(
-                            'ext music not playing during display')
-                    print('  PASS: music silent in transfer, back for '
-                          'display')
+                            'ext music stopped during image')
+                    print('  PASS: music plays through the image')
                     monitor.keyboard_feed(' ')   # dismiss
                     screen = wait_for_screen(monitor, r'> pictest', 15,
                                              artifacts, f'{tag}-img-dismiss')

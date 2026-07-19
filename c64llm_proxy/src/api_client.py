@@ -181,7 +181,15 @@ class APIClient:
                             continue
 
         except httpx.HTTPStatusError as e:
-            self.logger.error(f"API HTTP error: {e.response.status_code} - {e.response.text}")
+            # Streaming responses must be read before .text is legal -
+            # otherwise the real error is replaced by ResponseNotRead
+            try:
+                await e.response.aread()
+                detail = e.response.text[:200]
+            except Exception:
+                detail = '(body unavailable)'
+            self.logger.error(
+                f"API HTTP error: {e.response.status_code} - {detail}")
             raise Exception(f"API error: {e.response.status_code}")
 
         except httpx.HTTPError as e:

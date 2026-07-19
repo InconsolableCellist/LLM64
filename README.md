@@ -1,9 +1,11 @@
 # C64 LLM Interface
 
-Chat with modern LLMs from a Commodore 64. A native TUI client (cc65
-C + 6502 assembly) talks through a 6551 ACIA to a Python proxy that
-bridges to any OpenAI-compatible API — and the whole stack is verified
-end-to-end by automated tests running in VICE.
+Chat with modern LLMs from a Commodore 64 — with an AI game master,
+a 10,000-tune SID soundtrack it conducts itself, and generated
+multicolor illustrations, captioned and burned into the frame. A
+native TUI client (cc65 C + 6502 assembly) talks through a 6551 ACIA
+to a Python proxy that bridges to any OpenAI-compatible API, and the
+whole stack is verified end-to-end by automated tests running in VICE.
 
 ![Status](https://img.shields.io/badge/status-working-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-C64%20%2F%20VICE%20%2F%20C64%20Ultimate-red)
@@ -20,26 +22,42 @@ end-to-end by automated tests running in VICE.
 
 ## What works today
 
-- **Interactive TUI on the C64**: scrollable word-wrapped chat, streaming
-  responses, 120-char input editor with Emacs bindings, conversation
-  browser, help overlay
-- **Interrupt-driven serial**: 6551 ACIA driver with an IRQ/NMI RX ring
-  buffer and a ~50-cycle per-byte fast path — verified zero data loss on
-  multi-KB streams at real C64 speed (`make test-emu-long-rt`)
-- **Custom keyboard driver**: replaces the KERNAL scanner; registers every
-  key pressed in a frame (rollover to the matrix's physical limit) with
-  ghost-blocking, verified with real X11 keystrokes (`make test-emu-matrix`)
-- **Python proxy**: async TCP server, OpenAI SSE streaming, Open
-  WebUI-style conversation persistence, ASCII sanitization, C64-aware
-  system prompt
+- **Soft-80 bitmap TUI**: an 80-column display on stock hardware (VIC
+  bank 3 bitmap with a 4×8 font), streaming word-wrapped chat,
+  ~120-line scrollback, 120-char input editor with Emacs bindings,
+  conversation browser, build hash in the title bar
+- **AI-conducted SID music**: a pipeline (HVSC scan → `sidreloc`
+  relocation to a protected 4KB window → LLM mood-tagging → loudness
+  normalization) produced a 10,000-tune library across 15 moods; in
+  adventure and roleplay modes the model steers the soundtrack with
+  `[[MUSIC: mood]]` directives, stripped from the visible text and
+  streamed to the SID mid-conversation
+- **Generated illustrations**: `[[IMAGE: …]]` directives (or `/pic`)
+  render scenes via an image model, converted to C64 multicolor
+  (160×200, Pepto palette, Floyd–Steinberg dither, auto-levels), with
+  an LLM-written caption burned into the frame — scene descriptions
+  carry character/setting continuity from earlier illustrations
+- **A hardened wire protocol**: CRC-framed messages, BEGIN handshakes,
+  windowed flow control (the client ACKs every 4th chunk so the
+  modem's buffer can never overflow), offset-addressed chunks, and
+  per-transfer loss diagnostics in the status bar — the result of an
+  extended real-hardware debugging campaign against a
+  packet-dropping modem bridge
+- **Interrupt-driven serial**: 6551 ACIA driver with an 8KB IRQ/NMI RX
+  ring — verified zero data loss on multi-KB streams at real C64 speed
+- **Custom keyboard driver**: replaces the KERNAL scanner; full
+  rollover with ghost-blocking, verified with real X11 keystrokes
 - **Interaction modes**: `/adventure [theme]` text-adventure GM,
-  `/char <name>` roleplay with SillyTavern character cards (v1/v2),
-  `/chat` to return — with per-mode Gemma-tuned sampling
-  ([docs/06-modes.md](docs/06-modes.md))
-- **Automated end-to-end tests in VICE**: the CI-able `make test-all`
-  boots mock LLM → proxy → emulated C64 and asserts on actual screen
-  contents (including typing into the emulator through VICE's binary
-  monitor). Verified against a real llama.cpp server too.
+  `/char <name>` SillyTavern character-card roleplay (both with music
+  and illustration directives), `/chat` plain chat — per-mode sampling
+- **Conversation tooling**: persistent conversations with mode/music/
+  image metadata (loading one restores the adventure, the soundtrack,
+  and the character), `/history` paging, `/find` search, `/findall`
+  cross-conversation search, `/save`//`/restore` checkpoints
+- **Automated end-to-end tests in VICE**: `make test-all` boots mock
+  LLM → proxy → emulated C64 and asserts on actual screen contents and
+  memory (70+ asserts, including image bitmap bytes and SID play
+  vectors), plus a frame-drop/watchdog recovery suite
 
 ## Quick start (emulator)
 
@@ -48,10 +66,12 @@ Hayes-mode test.
 
 ```bash
 # one-time proxy setup
-cd c64llm_proxy && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && cd ..
+cd c64llm_proxy && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+cp config.toml.example config.toml   # point it at your API
+cd ..
 
-make test-all       # run the four automated suites
-make run-live       # interactive TUI against the API in c64llm_proxy/config.toml
+make test-all       # run the automated suites
+make run-live       # interactive TUI against your configured API
 ```
 
 See [docs/04-emulator-setup.md](docs/04-emulator-setup.md) for the VICE
@@ -61,41 +81,52 @@ wiring details (and the archaeology of why naive VICE setups fail).
 
 ```bash
 make -C c64_client clean
-make -C c64_client CONNECT=hayes SERVER_IP=<proxy-lan-ip>
+make -C c64_client CONNECT=hayes SERVER_IP=<proxy-lan-ip> MODE80=1
 # copy build/c64llm.prg to the Ultimate, run the proxy, LOAD"C64LLM",8,1
 ```
 
 Checklist: [docs/05-ultimate-setup.md](docs/05-ultimate-setup.md)
-(ACIA/SwiftLink at $DE00 + modem emulation enabled).
+(ACIA/SwiftLink at $DE00 + modem emulation enabled). Modem settings
+that matter: disable *drop connection on DTR low* and *RTS handshake
+RX*, enable *automatic RX pushback* — the emulated control lines are
+re-evaluated on ACIA command writes and the wrong settings drop data.
 
-## Keys (TUI client)
+## Keys and commands
 
 | Key | Action |
 |-----|--------|
-| F1 / Return | Send message |
-| F2 | New conversation |
-| F3 | Cancel streaming reply |
-| F5 | Conversation browser (Return loads, F5 closes) |
+| Return | Send message |
+| F1 | Menu (models, modes, music toggle) |
+| F2 / F3 | New conversation / cancel reply |
+| F4 / F6 | Page chat up / down |
+| F5 | Conversation browser |
 | F7 | Help |
 | CRSR up/down | Scroll chat |
-| Ctrl-A / Ctrl-E | Start / end of input |
-| Ctrl-K / Ctrl-D | Kill to end / delete char |
-| CLR/HOME | Clear input |
+| Ctrl-A/E, Ctrl-K/D, CLR | Editor: home/end, kill, delete, clear |
+
+`/help` on the C64 lists all slash commands: modes, `/music <mood>`,
+`/pic [desc|n]`, `/pics`, `/history`, `/find`, `/findall`, `/save`,
+`/restore`, `/model`, `/stats`.
 
 ## Repository layout
 
 ```
-c64_client/     cc65 client (src/main.c TUI, src/debug_main.c scripted
-                diagnostics, serial.s ACIA driver, display/editor/protocol)
-c64llm_proxy/   Python proxy (src/, config.toml, .venv)
-emu/            VICE automation: e2e harness, mock LLM, binary-monitor client
-docs/           design docs (00-03) + setup guides (04-05)
+c64_client/     cc65 client (main.c TUI + transfer state machines,
+                serial.s ACIA driver, soft80.s bitmap renderer,
+                music.s SID player, display/editor/protocol)
+c64llm_proxy/   Python proxy (src/), SID pipeline tools (tools/):
+                sid_scan, sid_reloc_batch, sid_mood (LLM tagger),
+                sid_loudness, sid_makedb, img2c64
+emu/            VICE automation: e2e harness, mock LLM, watchdog suite,
+                binary-monitor client
+docs/           design docs + setup guides
 ```
 
 ## Build modes
 
 | Flag | Meaning |
 |------|---------|
+| `MODE80=1` | Soft-80 bitmap UI (the primary experience) |
 | `CONNECT=direct` | No modem handshake; ACIA pipe is the connection (VICE) |
 | `CONNECT=hayes` | AT-command dial (C64 Ultimate, or VICE+tcpser) |
 | `SERVER_IP=` / `SERVER_PORT=` | Proxy address baked into the PRG |
@@ -103,20 +134,19 @@ docs/           design docs (00-03) + setup guides (04-05)
 
 ## Configuration (proxy)
 
-`c64llm_proxy/config.toml`:
+Copy `c64llm_proxy/config.toml.example` to `config.toml` and point it
+at your server. Optional sections enable the extras: `[images]`
+(generation mode ask/auto/off), music activates automatically when
+`data/sids/moods.json` exists. Environment overrides: `OPENAI_API_BASE`,
+`OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_SYSTEM_PROMPT`.
 
-```toml
-[api]
-base_url = "https://your-server:5000/v1"
-model = "your-model"
-system_prompt = "You are chatting with a user on a Commodore 64..."
+## Roadmap
 
-[storage]
-data_dir = "./data"
-```
-
-Environment overrides: `OPENAI_API_BASE`, `OPENAI_API_KEY` (optional for
-local servers), `OPENAI_MODEL`, `OPENAI_SYSTEM_PROMPT`.
+Overlay/module system (stream UI modules from the proxy into a fixed
+RAM slot — modal sub-applications without growing the resident
+client), a full conversation manager, Claude Code integration (the
+proxy drives a coding-agent session; the C64 approves tool use),
+19200/38400 baud, screensaver/ambient mode.
 
 ## Documentation
 
@@ -127,5 +157,3 @@ local servers), `OPENAI_MODEL`, `OPENAI_SYSTEM_PROMPT`.
 - [06-modes.md](docs/06-modes.md) — adventure & character-card roleplay
 
 ---
-
-*"Bringing 1980s hardware into the 2020s AI era"*
