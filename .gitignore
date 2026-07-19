@@ -10,3 +10,4 @@ __pycache__/
 c64llm_proxy/data/
 emu/artifacts/
 c64llm_proxy/proxy-live.log
+c64_client/include/buildhash.h

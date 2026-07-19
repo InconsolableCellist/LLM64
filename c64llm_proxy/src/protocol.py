@@ -595,6 +595,24 @@ class ProtocolHandler:
 
     SID_CHUNK = 256
 
+    # Long transfers (SID ~4KB, image ~10KB) run 40+ frames back to back.
+    # The ~15% per-frame pacing margin covers the wire, but any client
+    # stall (banked-out copy segment, music IRQ) backs bytes up in the
+    # modem's TCP->serial buffer with no slack to drain - and the C64U
+    # drops the tail when that buffer fills. A periodic breather lets it
+    # empty out mid-transfer.
+    BULK_BREATH_EVERY = 8   # frames
+    BULK_BREATH = 0.12      # seconds
+
+    async def _send_bulk_stream(self, msg_type: MessageType, data: bytes):
+        """Chunk a large blob into paced frames with periodic breathers."""
+        n = 0
+        for i in range(0, len(data), self.SID_CHUNK):
+            await self._send_bulk(msg_type, data[i:i + self.SID_CHUNK])
+            n += 1
+            if n % self.BULK_BREATH_EVERY == 0:
+                await asyncio.sleep(self.BULK_BREATH)
+
     async def send_sid(self, tune, is_retry: bool = False):
         """Stream a relocated SID into the client's $B000 window, paced
         like any other bulk transfer (the C64U modem drops burst tails).
@@ -606,9 +624,7 @@ class ProtocolHandler:
                            tune.get('vol_byte') or 0)
         name = tune['title'][:24].encode('ascii', errors='replace')
         await self._send_bulk(MessageType.SID_BEGIN, head + name + b'\x00')
-        for i in range(0, len(data), self.SID_CHUNK):
-            await self._send_bulk(MessageType.SID_DATA,
-                                  data[i:i + self.SID_CHUNK])
+        await self._send_bulk_stream(MessageType.SID_DATA, data)
         await self._send_bulk(MessageType.SID_END, b'')
         self._tunes_sent += 1
         self.music.tune_started = time.monotonic()
@@ -625,9 +641,7 @@ class ProtocolHandler:
         e.g. a dropped frame on real hardware) triggers one resend."""
         self._img_retry = None if is_retry else (blob, bg, fmt)
         await self._send_bulk(MessageType.IMG_BEGIN, bytes([fmt, bg & 0x0F]))
-        for i in range(0, len(blob), self.SID_CHUNK):
-            await self._send_bulk(MessageType.IMG_DATA,
-                                  blob[i:i + self.SID_CHUNK])
+        await self._send_bulk_stream(MessageType.IMG_DATA, blob)
         await self._send_bulk(MessageType.IMG_END, b'')
         self.logger.info(f"Sent image ({len(blob)} bytes"
                          f"{', retry' if is_retry else ''})")

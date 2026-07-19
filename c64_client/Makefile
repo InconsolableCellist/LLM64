@@ -34,6 +34,13 @@ CFLAGS += -DCONNECT_DIRECT
 endif
 CFLAGS += $(CFLAGS_EXTRA)
 ASFLAGS = -t c64 -I include
+
+# Git hash shown in the title bar; '+' marks a dirty working tree.
+GIT_HASH := $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo nogit)
+ifneq ($(strip $(shell git status --porcelain 2>/dev/null)),)
+GIT_HASH := $(GIT_HASH)+
+endif
+HASHFILE = include/buildhash.h
 LDFLAGS = -t c64 -m $(TARGETDIR)/$(TARGET).map -Ln $(TARGETDIR)/labels.txt
 
 # MODE80=1 builds the soft-80-column bitmap UI instead of 40-column text.
@@ -69,6 +76,17 @@ $(OBJECTS): | $(TARGETDIR)
 
 $(TARGETDIR):
 	mkdir -p $(TARGETDIR)
+
+# buildhash.h is only rewritten when the hash actually changes, so
+# incremental builds don't recompile display.c every time.
+$(HASHFILE): FORCE
+	@printf '#define GIT_HASH "%s"\n' '$(GIT_HASH)' > $(HASHFILE).tmp; \
+	if cmp -s $(HASHFILE).tmp $(HASHFILE); then rm -f $(HASHFILE).tmp; \
+	else mv $(HASHFILE).tmp $(HASHFILE); fi
+
+FORCE:
+
+$(TARGETDIR)/display.o: $(HASHFILE)
 
 # Compile C files (compile to .s then assemble to .o)
 $(TARGETDIR)/%.o: src/%.c

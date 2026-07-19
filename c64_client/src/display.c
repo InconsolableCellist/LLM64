@@ -12,6 +12,7 @@
 #include <c64.h>
 #include "ui.h"
 #include "text.h"
+#include "buildhash.h"
 #ifdef SOFT80
 #include "soft80.h"
 #endif
@@ -457,7 +458,7 @@ void ui_status(const char* msg) {
 
 static void draw_frame(void) {
     uint8_t i;
-    ui_draw_row(0, " C64 LLM        F1=menu      Return=send", COLOR_WHITE, 1);
+    ui_draw_row(0, " C64 LLM " GIT_HASH "  F1=menu  Return=send", COLOR_WHITE, 1);
     for (i = 0; i < TEXT_COLS; ++i) {
 #ifdef SOFT80
         rowbuf[i] = 0x2D;  /* '-' */
