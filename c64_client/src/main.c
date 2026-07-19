@@ -633,6 +633,9 @@ static void handle_message(uint8_t msg_type) {
                 state = ST_LOADING;
                 watchdog_reset();
             }
+            /* Handshake: the proxy holds the data until this ACK, so
+               nothing streams while a tune could blind the ACIA */
+            proto_send_ack();
             break;
         }
         case MSG_SID_DATA: {
@@ -700,6 +703,9 @@ static void handle_message(uint8_t msg_type) {
                 state = ST_LOADING;   /* watchdog covers the transfer */
                 watchdog_reset();
             }
+            /* Handshake: music now silenced and rendering drained -
+               safe for the proxy to stream */
+            proto_send_ack();
             break;
         }
         case MSG_IMG_DATA: {

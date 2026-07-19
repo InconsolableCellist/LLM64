@@ -82,6 +82,13 @@ class ProtocolHandler:
         # path; interleaving their DATA frames on the wire (and in the
         # client's shared chunk map) would corrupt both transfers.
         self._media_lock = asyncio.Lock()
+        # BEGIN handshake event: set when the client ACKs a SID/IMG
+        # BEGIN (music silenced, rendering drained - clear to stream)
+        self._begin_ack = None
+        # Media sends triggered from the reader task must run as
+        # background tasks: _send_begin waits for an ACK that only the
+        # reader can dispatch, so awaiting it inline would deadlock
+        self._media_tasks = set()
         self.logger = logging.getLogger(__name__)
 
         # Parser state
@@ -100,7 +107,7 @@ class ProtocolHandler:
 
         self._started = time.monotonic()
         self._tunes_sent = 0
-        self._img_retry = None
+        self._img_sent = False
         self._sid_retry = None
 
         # SID music library (optional: absent moods.json disables music)
@@ -211,8 +218,13 @@ class ProtocolHandler:
                 await self.handle_set_model()
             elif msg_type == MessageType.ACK:
                 self.logger.debug("ACK received")
-                self._img_retry = None
-                self._sid_retry = None
+                if self._begin_ack is not None \
+                        and not self._begin_ack.is_set():
+                    # BEGIN handshake: client stopped its music and
+                    # drained rendering - clear to stream
+                    self._begin_ack.set()
+                else:
+                    self._sid_retry = None
             elif msg_type == MessageType.NAK:
                 # A NAK often means the client was still digesting the
                 # previous bulk send (post-load rendering backlog) when
@@ -220,19 +232,13 @@ class ProtocolHandler:
                 # same congestion. Wait it out first, and allow two
                 # attempts (seen in the field: back-to-back retries
                 # failed identically).
-                if getattr(self, '_img_retry', None) \
-                        and getattr(self, '_img_tries', 0):
-                    self._img_tries -= 1
-                    self.logger.warning(
-                        f"Image NAKed - retrying in {self.RETRY_DELAY}s "
-                        f"({self._img_tries} attempts left)")
-                    await self.send_status("Retrying image...")
-                    await asyncio.sleep(self.RETRY_DELAY)
-                    blob, bg, fmt = self._img_retry
-                    if not self._img_tries:
-                        self._img_retry = None
-                    await self.send_image_blob(blob, bg, is_retry=True,
-                                               fmt=fmt)
+                if getattr(self, '_img_sent', False):
+                    # No auto-retry for images (user preference: work
+                    # first time or fail visibly); /pic <n> re-sends
+                    # from cache on demand
+                    self._img_sent = False
+                    self.logger.warning("Image NAKed - not retrying")
+                    await self.send_status("Image failed - /pic to retry")
                 elif getattr(self, '_sid_retry', None) \
                         and getattr(self, '_sid_tries', 0):
                     self._sid_tries -= 1
@@ -240,11 +246,10 @@ class ProtocolHandler:
                         f"SID NAKed - retrying in {self.RETRY_DELAY}s "
                         f"({self._sid_tries} attempts left)")
                     await self.send_status("Retrying music...")
-                    await asyncio.sleep(self.RETRY_DELAY)
                     tune = self._sid_retry
                     if not self._sid_tries:
                         self._sid_retry = None
-                    await self.send_sid(tune, is_retry=True)
+                    self._spawn_media(self._retry_sid(tune))
             else:
                 self.logger.warning(f"Unknown message type: 0x{self.msg_type:02X}")
 
@@ -404,7 +409,7 @@ class ProtocolHandler:
                     # Complete the chat round-trip first: the client must
                     # return to idle before the image transfer starts
                     await self._send_canned(f"Illustrating: {prompt[:300]}")
-                    await self._generate_and_send_image(prompt)
+                    self._spawn_media(self._generate_and_send_image(prompt))
 
         elif cmd in ('history', 'hist'):
             await self._show_history(arg)
@@ -476,7 +481,7 @@ class ProtocolHandler:
                 if tune:
                     await self._send_canned(
                         f"Playing: {tune['title']} ({tune['author']})")
-                    await self.send_sid(tune)
+                    self._spawn_media(self.send_sid(tune))
                     self.conv_manager.set_meta('music', {
                         'mood': arg.lower(), 'tune': tune['id']})
                     self.conv_manager.save()
@@ -648,6 +653,46 @@ class ProtocolHandler:
     BULK_BREATH = 0.12      # seconds
     RETRY_DELAY = 2.0       # quiet time before resending a NAKed transfer
 
+    def _spawn_media(self, coro):
+        """Run a media send off the reader task (see _media_tasks)."""
+        task = asyncio.create_task(coro)
+        self._media_tasks.add(task)
+        task.add_done_callback(self._media_tasks.discard)
+
+    async def _retry_sid(self, tune):
+        """Spaced SID resend (resume) after a NAK."""
+        await asyncio.sleep(self.RETRY_DELAY)
+        await self.send_sid(tune, is_retry=True)
+
+    async def _resume_tune(self, tune, frames: int):
+        """Resume a loaded conversation's soundtrack once the client has
+        had time to render the load (a SID streamed into that backlog
+        overflowed its RX ring in the field; the BEGIN handshake also
+        gates this, the sleep is belt and braces)."""
+        await asyncio.sleep(min(5.0, 1.0 + 0.2 * frames))
+        await self.send_sid(tune)
+
+    async def _send_begin(self, msg_type: MessageType,
+                          payload: bytes) -> bool:
+        """Send a SID/IMG BEGIN and wait for the client's ACK before any
+        data flows. A playing tune's SEI windows can eat bytes at the
+        ACIA, including the BEGIN frame itself - so BEGIN is re-sent
+        until ACKed, and the ACK guarantees the client has silenced its
+        music and finished rendering. Returns False if it never ACKs."""
+        for attempt in range(4):
+            self._begin_ack = asyncio.Event()
+            await self._send_bulk(msg_type, payload)
+            try:
+                await asyncio.wait_for(self._begin_ack.wait(), 2.0)
+                return True
+            except asyncio.TimeoutError:
+                self.logger.warning(
+                    f"{msg_type.name} not ACKed (attempt {attempt + 1})"
+                    " - resending")
+            finally:
+                self._begin_ack = None
+        return False
+
     async def _send_bulk_stream(self, msg_type: MessageType, data: bytes):
         """Chunk a large blob into paced frames with periodic breathers.
         Each frame carries its byte offset so the client can place it
@@ -663,7 +708,8 @@ class ProtocolHandler:
     async def send_sid(self, tune, is_retry: bool = False):
         """Stream a relocated SID into the client's $B000 window, paced
         like any other bulk transfer (the C64U modem drops burst tails).
-        A NAK afterwards (short/corrupt transfer) triggers one resend."""
+        Data flows only after the client ACKs the BEGIN; a NAK
+        afterwards (short/corrupt transfer) triggers spaced resends."""
         data = self.music.payload(tune)
         head = struct.pack('<HHHBHBB', tune['load'], tune['init'],
                            tune['play'],
@@ -672,8 +718,10 @@ class ProtocolHandler:
                            1 if is_retry else 0)
         name = tune['title'][:24].encode('ascii', errors='replace')
         async with self._media_lock:
-            await self._send_bulk(MessageType.SID_BEGIN,
-                                  head + name + b'\x00')
+            if not await self._send_begin(MessageType.SID_BEGIN,
+                                          head + name + b'\x00'):
+                self.logger.error("SID_BEGIN never ACKed - aborting send")
+                return
             await self._send_bulk_stream(MessageType.SID_DATA, data)
             await self._send_bulk(MessageType.SID_END, b'')
         self._tunes_sent += 1
@@ -687,17 +735,18 @@ class ProtocolHandler:
     async def send_image_blob(self, blob: bytes, bg: int = 0,
                               is_retry: bool = False, fmt: int = 1):
         """Stream a converted image into the client's bitmap, paced.
-        BEGIN payload: format byte (1 = multicolor, 0 = hires) + bg color.
-        The client freezes text drawing on IMG_BEGIN; the picture paints
-        progressively on the live screen. A NAK (short/corrupt transfer,
-        e.g. a dropped frame on real hardware) triggers one resend."""
-        if not is_retry:
-            self._img_retry = (blob, bg, fmt)
-            self._img_tries = 2
+        BEGIN payload: format byte (1 = multicolor, 0 = hires) + bg
+        color + resume flag; data flows only after the client ACKs the
+        BEGIN. No auto-retry on NAK - the client restores its screen
+        and shows diagnostics; /pic <n> re-sends from cache."""
+        self._img_sent = True
         async with self._media_lock:
-            await self._send_bulk(MessageType.IMG_BEGIN,
-                                  bytes([fmt, bg & 0x0F,
-                                         1 if is_retry else 0]))
+            if not await self._send_begin(
+                    MessageType.IMG_BEGIN,
+                    bytes([fmt, bg & 0x0F, 1 if is_retry else 0])):
+                self.logger.error("IMG_BEGIN never ACKed - aborting send")
+                await self.send_status("Image transfer couldn't start.")
+                return
             await self._send_bulk_stream(MessageType.IMG_DATA, blob)
             await self._send_bulk(MessageType.IMG_END, b'')
         self.logger.info(f"Sent image ({len(blob)} bytes"
@@ -874,9 +923,10 @@ class ProtocolHandler:
         await self._send_canned(
             f"Showing: {pics[n - 1].get('caption') or pics[n - 1]['prompt'][:60]}")
         if len(data) == 10001:      # multicolor: blob + bg byte
-            await self.send_image_blob(data[:10000], data[10000])
+            self._spawn_media(self.send_image_blob(data[:10000],
+                                                   data[10000]))
         else:                       # hires-era blob
-            await self.send_image_blob(data, 0, fmt=0)
+            self._spawn_media(self.send_image_blob(data, 0, fmt=0))
 
     async def _generate_and_send_image(self, prompt: str):
         await self.send_status("Illustrating... (10-20s)")
@@ -1257,13 +1307,7 @@ class ProtocolHandler:
                 tune = (self.music.find(music_meta.get('tune'))
                         or self.music.pick(music_meta.get('mood', '')))
                 if tune:
-                    # The client keeps rendering a big load for seconds
-                    # after the last frame arrives; a SID streamed into
-                    # that backlog overflows its RX ring (field log: the
-                    # resume tune NAKed twice after a 213-message load).
-                    # Let the renderer drain first.
-                    await asyncio.sleep(min(5.0, 1.0 + 0.2 * len(frames)))
-                    await self.send_sid(tune)
+                    self._spawn_media(self._resume_tune(tune, len(frames)))
         else:
             error = b"Conversation not found\x00"
             await self.send_message(MessageType.CHAT_ERROR, error)
