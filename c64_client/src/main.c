@@ -777,6 +777,12 @@ static void handle_message(uint8_t msg_type) {
             if (img_active && img_got == img_expect) {
                 img_shown = 1;   /* key handler dismisses + redraws */
                 proto_send_ack();
+                /* Transfer done - no more traffic while the picture is
+                   viewed, so the tune can accompany it from here */
+                if (img_music_was) {
+                    img_music_was = 0;
+                    music_ext_begin();
+                }
             } else {
                 img_close();
                 proto_send_nak();
