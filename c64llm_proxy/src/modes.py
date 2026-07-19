@@ -82,6 +82,10 @@ class Mode:
 
     def __init__(self, config):
         self.config = config
+        # Directive instructions ([[MUSIC:]]/[[IMAGE:]]) attached by the
+        # protocol handler when media services are live; adventure and
+        # roleplay prompts append it, plain chat ignores it.
+        self.music_snippet = ''
 
     def system_prompt(self) -> Optional[str]:
         return None  # None = api_client uses config.system_prompt
@@ -106,8 +110,6 @@ class AdventureMode(Mode):
     def __init__(self, config, theme: str = ''):
         super().__init__(config)
         self.theme = theme.strip()
-        # Set by the protocol handler when a music library is loaded
-        self.music_snippet = ''
 
     def system_prompt(self) -> str:
         prompt = ADVENTURE_PROMPT
@@ -131,7 +133,7 @@ class RoleplayMode(Mode):
         self.label = f'Roleplay: {card.name}'
 
     def system_prompt(self) -> str:
-        return self.card.build_system_prompt()
+        return self.card.build_system_prompt() + self.music_snippet
 
     def sampling(self) -> Dict:
         return dict(self.config.roleplay_sampling)

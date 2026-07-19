@@ -476,6 +476,18 @@ def main():
                 wait_for_screen(monitor, r'temp 1\.0 topk 64', 60,
                                 artifacts, f'{tag}-sampling')
 
+                # Directives are filtered in roleplay too: the musictest
+                # reply carries [[MUSIC: festive]] which must not leak
+                # (the tune change itself may be rate-limited here -
+                # stripping is what's asserted)
+                monitor.keyboard_feed('musictest\r')
+                rp = wait_for_screen(monitor, r'carnival begins', 60,
+                                     artifacts, f'{tag}-rp-music')
+                if re.search(r'\[\[\s*music', rp, re.IGNORECASE):
+                    raise AssertionError(
+                        f'directive leaked in roleplay\n{rp}')
+                print('  PASS: roleplay music directive stripped')
+
                 # Page up/down (F4/F6) through a long response
                 monitor.keyboard_feed('longtest\r')
                 wait_for_screen(monitor, r'number\s+60', 120,
@@ -574,6 +586,25 @@ def main():
                 monitor.keyboard_feed('\r')
                 final = wait_for_screen(monitor, r'model: mock-large', 15,
                                         artifacts, f'{tag}-modelset')
+
+                # Roleplay restore: /chat leaves the card, reloading the
+                # conversation (newest saved - the empty chat one is
+                # in-memory only) must bring the character back via the
+                # 'char' meta
+                monitor.keyboard_feed('/chat\r')
+                wait_for_screen(monitor, r'chat mode', 15,
+                                artifacts, f'{tag}-tochat')
+                monitor.keyboard_feed_petscii(b'\x87')  # F5 browser
+                wait_for_screen(monitor, r'conversations \(return=load',
+                                15, artifacts, f'{tag}-rp-browser')
+                monitor.keyboard_feed('\r')
+                wait_for_screen(monitor, r'conversation loaded', 30,
+                                artifacts, f'{tag}-rp-loadstatus')
+                monitor.keyboard_feed('/mode\r')
+                final = wait_for_screen(monitor,
+                                        r'mode: roleplay: captain', 15,
+                                        artifacts, f'{tag}-rp-restored')
+                print('  PASS: roleplay mode restored on load')
         else:
             # Scripted debug session runs in warp faster than we can poll,
             # so assert on the durable end state: the client parks on

@@ -544,24 +544,31 @@ class ProtocolHandler:
             self.conv_manager.set_meta('theme', mode.theme)
         self.logger.info(f"Mode -> {mode.label}")
 
+    def _find_card(self, query: str):
+        """Match a card by name prefix/substring: (name, path) or None."""
+        q = query.lower()
+        for name, path in find_cards(Path(self.config.cards_dir)):
+            if name.lower().startswith(q) or q in name.lower():
+                return (name, path)
+        return None
+
     async def _start_roleplay(self, query: str):
         if not query:
             await self._send_canned("Usage: /char <name> (see /chars)")
             return
-        cards = find_cards(Path(self.config.cards_dir))
-        match = None
-        q = query.lower()
-        for name, path in cards:
-            if name.lower().startswith(q) or q in name.lower():
-                match = (name, path)
-                break
+        match = self._find_card(query)
         if not match:
             await self._send_canned(
                 f"No card matching '{query}'. See /chars.")
             return
 
         card = CharacterCard.load(match[1], user_name=self.config.user_name)
-        self._switch_mode(RoleplayMode(self.config, card))
+        mode = RoleplayMode(self.config, card)
+        self._attach_snippets(mode)
+        self._switch_mode(mode)
+        # Card name in meta so loading this conversation later can
+        # rebuild the same character
+        self.conv_manager.set_meta('char', match[0])
 
         greeting = self.mode.greeting()
         if greeting:
@@ -852,7 +859,7 @@ class ProtocolHandler:
             # [[MUSIC: mood]]; strip that from what the C64 sees (and from
             # saved history) and act on it after the response completes.
             mfilter = None
-            if isinstance(self.mode, AdventureMode) and (
+            if self.mode.name in ('adventure', 'roleplay') and (
                     self.music.available or self.images.available):
                 mfilter = MusicDirectiveFilter()
 
@@ -1134,6 +1141,17 @@ class ProtocolHandler:
                 self._attach_snippets(mode)
                 self.mode = mode  # not _switch_mode: keep the conversation
                 self.logger.info("Restored adventure mode from conversation")
+            elif meta_mode == 'roleplay' and self.mode.name != 'roleplay':
+                cname = self.conv_manager.get_meta('char', '')
+                m = self._find_card(cname) if cname else None
+                if m:
+                    card = CharacterCard.load(
+                        m[1], user_name=self.config.user_name)
+                    mode = RoleplayMode(self.config, card)
+                    self._attach_snippets(mode)
+                    self.mode = mode
+                    self.logger.info(
+                        f"Restored roleplay mode ({m[0]}) from conversation")
 
             # ...and the soundtrack (exact tune if still in the library,
             # else another tune of the same mood). The transfer starts only
