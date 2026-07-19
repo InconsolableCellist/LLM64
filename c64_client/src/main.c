@@ -224,6 +224,7 @@ static uint8_t conv_count;
 static uint8_t conv_sel;
 static uint8_t conv_loading;
 static uint8_t load_count;   /* messages received during a bulk load */
+static uint8_t load_open;    /* a split message is mid-assembly */
 
 /* Model browser */
 #define MAX_MODELS 16
@@ -465,6 +466,7 @@ static void conv_load_selected(void) {
     chat_clear();
     chat_freeze(1);  /* render once at the end: jump straight to the bottom */
     load_count = 0;
+    load_open = 0;
     /* Arm the watchdog: a frame lost in transit would otherwise leave the
        chat frozen at 'Loading... NN' forever */
     state = ST_LOADING;
@@ -501,7 +503,10 @@ static void conv_list_frame(void) {
     if (modal == MODAL_CONV) conv_draw();
 }
 
-/* Parse a CONVERSATION_DATA frame: count, more, then [role text\0] */
+/* Parse a CONVERSATION_DATA frame: count, more, then [role text\0].
+   Long messages arrive split across frames - role bit 7 marks a
+   continuation, which appends to the open message instead of starting
+   a new chat block (frames are capped by MAX_PAYLOAD). */
 static void conv_data_frame(void) {
     uint8_t* p = proto_get_payload(&proto);
     uint16_t plen = proto_get_length(&proto);
@@ -512,24 +517,29 @@ static void conv_data_frame(void) {
 
     for (i = 0; i < n && off < plen; ++i) {
         uint8_t role = p[off++];
-        chat_start(role);   /* 0 user, 1 assistant, 2 system marker */
-        if (!role) chat_append_petscii("> ");
+        if (!(role & 0x80)) {
+            if (load_open) chat_finish();
+            load_open = 1;
+            chat_start(role);   /* 0 user, 1 assistant, 2 system */
+            if (!role) chat_append_petscii("> ");
+            /* progress in the status bar while the chat is frozen */
+            ++load_count;
+            {
+                static char lm[24];
+                strcpy(lm, "Loading... ??");
+                lm[11] = '0' + (load_count / 10) % 10;
+                lm[12] = '0' + load_count % 10;
+                ui_status(lm);
+            }
+        }
         while (off < plen && p[off]) {
             chat_append_ascii_char(p[off++]);
         }
         ++off;
-        chat_finish();
-        /* progress in the status bar while the chat area is frozen */
-        ++load_count;
-        {
-            static char lm[24];
-            strcpy(lm, "Loading... ??");
-            lm[11] = '0' + (load_count / 10) % 10;
-            lm[12] = '0' + load_count % 10;
-            ui_status(lm);
-        }
     }
     if (!more) {
+        if (load_open) chat_finish();
+        load_open = 0;
         state = ST_IDLE;
         chat_freeze(0);
         ui_status("Conversation loaded. Ready.");

@@ -660,6 +660,14 @@ def main():
                 monitor.keyboard_feed('\r')
                 wait_for_screen(monitor, r'conversation loaded', 30,
                                 artifacts, f'{tag}-rp-loadstatus')
+                # The newest message is the ~3KB longtest reply: its
+                # 1000-char clip arrives SPLIT across frames (client
+                # buffer is 512) and ends with the truncation marker.
+                # This is the assert that was missing when oversized
+                # single frames broke loads in the field.
+                wait_for_screen(monitor, r'/history shows the rest', 10,
+                                artifacts, f'{tag}-rp-longmsg')
+                print('  PASS: long message split across frames + marker')
                 if args.cols80:
                     if monitor.read_memory(
                             labels['_music_state'],

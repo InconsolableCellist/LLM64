@@ -1294,12 +1294,21 @@ class ProtocolHandler:
                     return text
                 return text[:MSG_CAP] + " [... /history shows the rest]"
 
+            # The client's frame buffer is 512 bytes (MAX_PAYLOAD): a
+            # long message is SPLIT across frames, continuations marked
+            # with bit 7 of the role byte so the client appends instead
+            # of starting a new chat block.
+            FRAME_TEXT = 380
             frames = []
             if omitted > 0:
                 frames.append((2, f'(... {omitted} earlier messages '
                                   f'not shown - /history has them ...)'))
-            frames += [(0 if m['role'] == 'user' else 1,
-                        clip(m['content'])) for m in window]
+            for m in window:
+                role = 0 if m['role'] == 'user' else 1
+                text = clip(m['content'])
+                for i in range(0, len(text), FRAME_TEXT):
+                    frames.append((role if i == 0 else role | 0x80,
+                                   text[i:i + FRAME_TEXT]))
             # Zero frames would leave the client waiting forever: the
             # 'load done' signal is the final more=0 frame
             if not frames:
