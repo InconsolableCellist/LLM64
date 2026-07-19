@@ -322,6 +322,7 @@ class ProtocolHandler:
                 "/saves - list, /restore <n> - roll back\n"
                 "/history [page] - browse the full conversation\n"
                 "/find <text> - search this conversation\n"
+                "/findall <text> - search all conversations\n"
                 "/stats - server statistics\n"
                 "/mode - show current mode")
 
@@ -386,6 +387,9 @@ class ProtocolHandler:
 
         elif cmd == 'find':
             await self._find_history(arg)
+
+        elif cmd == 'findall':
+            await self._find_all(arg)
 
         elif cmd == 'save':
             label = self.conv_manager.save_checkpoint(arg)
@@ -748,6 +752,25 @@ class ProtocolHandler:
         if len(hits) > len(shown):
             lines.append(f"(newest {len(shown)} shown)")
         lines.append("View a hit with /history <p>.")
+        await self._send_canned("\n".join(lines))
+
+    async def _find_all(self, needle: str):
+        """Search every saved conversation (conversation-manager seed)."""
+        if not needle:
+            await self._send_canned("Usage: /findall <text>")
+            return
+        hits = self.conv_manager.search_all(needle)
+        if not hits:
+            await self._send_canned(
+                f'No conversation mentions "{needle[:40]}".')
+            return
+        lines = [f'Conversations mentioning "{needle[:40]}":']
+        for h in hits:
+            when = time.strftime('%b %d', time.localtime(h['timestamp']))
+            lines.append(f"- {h['title'][:36]} ({when}, {h['hits']} "
+                         f"hit{'s' if h['hits'] != 1 else ''})")
+            lines.append(f"    ...{h['snippet']}...")
+        lines.append("Open one via F5, then /find to jump.")
         await self._send_canned("\n".join(lines))
 
     async def _list_pics(self):

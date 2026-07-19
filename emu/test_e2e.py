@@ -513,12 +513,25 @@ def main():
                                 artifacts, f'{tag}-find')
                 wait_for_screen(monitor, r'\[\d+\] p\d+:', 10,
                                 artifacts, f'{tag}-find-hit')
+                wait_ready(monitor, 15, artifacts, f'{tag}-find-done')
                 monitor.keyboard_feed('/history 1\r')
                 wait_for_screen(monitor, r'page 1/\d+ \(msgs 1-', 30,
                                 artifacts, f'{tag}-history')
                 wait_for_screen(monitor, r'ahoy', 10,
                                 artifacts, f'{tag}-history-content')
                 print('  PASS: /find + /history paging')
+
+                # /findall searches every saved conversation (wait out
+                # the /history stream first: Return while receiving is
+                # swallowed as 'Busy')
+                wait_ready(monitor, 15, artifacts, f'{tag}-history-done')
+                monitor.keyboard_feed('/findall sentence\r')
+                wait_for_screen(monitor,
+                                r'conversations mentioning "sentence"', 30,
+                                artifacts, f'{tag}-findall')
+                wait_for_screen(monitor, r'\d+ hits?\)', 10,
+                                artifacts, f'{tag}-findall-hit')
+                print('  PASS: /findall cross-conversation search')
 
                 # Editor must be VISIBLE: glyph colors live in the matrix,
                 # which the ASCII shadow can't see - check color RAM/matrix

@@ -186,6 +186,36 @@ class ConversationManager:
             self.logger.error(f"Error loading conversation {conv_id}: {e}")
             return False
 
+    def search_all(self, needle: str, limit: int = 10) -> List[Dict]:
+        """Case-insensitive substring search across every saved
+        conversation; one entry per matching conversation, newest first."""
+        low = needle.lower()
+        hits = []
+        for filepath in self.data_dir.glob('*.json'):
+            try:
+                with open(filepath, 'r') as f:
+                    data = json.load(f)
+            except Exception as e:
+                self.logger.error(f"Error loading {filepath}: {e}")
+                continue
+            count = 0
+            snippet = ''
+            for m in data['chat']['messages']:
+                pos = m['content'].lower().find(low)
+                if pos >= 0:
+                    count += 1
+                    if not snippet:
+                        start = max(0, pos - 20)
+                        snippet = m['content'][start:start + 70]
+            if count:
+                hits.append({'id': int(data['id']),
+                             'title': data['title'],
+                             'timestamp': data['updated_at'],
+                             'hits': count,
+                             'snippet': snippet.replace('\n', ' ')})
+        hits.sort(key=lambda x: x['timestamp'], reverse=True)
+        return hits[:limit]
+
     def list_conversations(self) -> List[Dict]:
         """List all conversations (sorted by updated_at, newest first)"""
         conversations = []
