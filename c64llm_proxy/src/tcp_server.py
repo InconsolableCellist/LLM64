@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import socket
 from typing import Optional
 from .protocol import ProtocolHandler
 from .conversation import ConversationManager
@@ -81,6 +82,22 @@ class C64Server:
 
     async def handle_client(self, reader, writer):
         """Handle new client connection"""
+        # One C64 at a time: a fresh dial supersedes any lingering
+        # session (a wedged modem bridge left its old TCP half-open
+        # forever, and the corpse blocked redials once)
+        for old in self.clients[:]:
+            old.logger.info("Superseded by a new connection - closing")
+            await old.close()
+        # Keepalive reaps silently-dead peers even without a new dial
+        sock = writer.get_extra_info('socket')
+        if sock is not None:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            try:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 15)
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 4)
+            except (AttributeError, OSError):
+                pass
         self.client_counter += 1
         client = ClientHandler(
             reader, writer, self.config, self.api_client, self.client_counter
