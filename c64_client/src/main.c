@@ -901,7 +901,8 @@ int main(void) {
                     ui_redraw_all();
                 }
                 proto_init(&proto, payload_buffer, MAX_PAYLOAD);
-                ui_status("Transfer timed out. Ready.");
+                proto_send_nak();   /* lets the proxy resend the transfer */
+                ui_status("Transfer timed out - retrying...");
                 continue;
             }
 #endif

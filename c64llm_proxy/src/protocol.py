@@ -97,6 +97,7 @@ class ProtocolHandler:
         self._started = time.monotonic()
         self._tunes_sent = 0
         self._img_retry = None
+        self._sid_retry = None
 
         # SID music library (optional: absent moods.json disables music)
         self.music = MusicLibrary(
@@ -207,6 +208,7 @@ class ProtocolHandler:
             elif msg_type == MessageType.ACK:
                 self.logger.debug("ACK received")
                 self._img_retry = None
+                self._sid_retry = None
             elif msg_type == MessageType.NAK:
                 if getattr(self, '_img_retry', None):
                     self.logger.warning("Image NAKed - resending once")
@@ -214,6 +216,11 @@ class ProtocolHandler:
                     await self.send_status("Retrying image...")
                     await self.send_image_blob(blob, bg, is_retry=True,
                                                fmt=fmt)
+                elif getattr(self, '_sid_retry', None):
+                    self.logger.warning("SID NAKed - resending once")
+                    tune, self._sid_retry = self._sid_retry, None
+                    await self.send_status("Retrying music...")
+                    await self.send_sid(tune, is_retry=True)
             else:
                 self.logger.warning(f"Unknown message type: 0x{self.msg_type:02X}")
 
@@ -579,9 +586,10 @@ class ProtocolHandler:
 
     SID_CHUNK = 256
 
-    async def send_sid(self, tune):
+    async def send_sid(self, tune, is_retry: bool = False):
         """Stream a relocated SID into the client's $B000 window, paced
-        like any other bulk transfer (the C64U modem drops burst tails)."""
+        like any other bulk transfer (the C64U modem drops burst tails).
+        A NAK afterwards (short/corrupt transfer) triggers one resend."""
         data = self.music.payload(tune)
         head = struct.pack('<HHHBHB', tune['load'], tune['init'],
                            tune['play'],
@@ -595,7 +603,9 @@ class ProtocolHandler:
         await self._send_bulk(MessageType.SID_END, b'')
         self._tunes_sent += 1
         self.music.tune_started = time.monotonic()
-        self.logger.info(f"Sent SID {tune['id']} ({len(data)} bytes)")
+        self._sid_retry = None if is_retry else tune
+        self.logger.info(f"Sent SID {tune['id']} ({len(data)} bytes"
+                         f"{', retry' if is_retry else ''})")
 
     async def send_image_blob(self, blob: bytes, bg: int = 0,
                               is_retry: bool = False, fmt: int = 1):
@@ -989,6 +999,15 @@ class ProtocolHandler:
             # Restore what the conversation was: mode (an adventure loaded
             # into chat mode would lose its prompt and music directives)...
             meta_mode = self.conv_manager.get_meta('mode')
+            if meta_mode is None and messages \
+                    and messages[0].get('role') == 'assistant':
+                # Pre-meta conversation: adventures (and roleplay) start
+                # with an assistant message (hidden kickoff/greeting);
+                # plain chats start with the user. Treat as adventure and
+                # make it stick.
+                meta_mode = 'adventure'
+                self.conv_manager.set_meta('mode', 'adventure')
+                self.conv_manager.save()
             if meta_mode == 'adventure' and self.mode.name != 'adventure':
                 mode = AdventureMode(
                     self.config, theme=self.conv_manager.get_meta('theme', ''))
