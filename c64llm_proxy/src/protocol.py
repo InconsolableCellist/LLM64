@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import Callable, Optional
 import logging
 
-from .modes import (Mode, AdventureMode, RoleplayMode, CharacterCard,
-                    find_cards)
+from .modes import (Mode, AdventureMode, RoleplayMode, ClaudeMode,
+                    CharacterCard, find_cards)
+from .claude_session import ClaudeSession
 from .music import MusicLibrary, MusicDirectiveFilter
 from .images import ImageService
 
@@ -111,6 +112,7 @@ class ProtocolHandler:
         self._tunes_sent = 0
         self._img_sent = False
         self._sid_retry = None
+        self._claude = None          # ClaudeSession when in code mode
 
         # SID music library (optional: absent moods.json disables music)
         self.music = MusicLibrary(
@@ -344,11 +346,31 @@ class ProtocolHandler:
             await self.handle_command(text)
             return
 
+        # Claude Code mode: route to the CLI session, not the LLM API.
+        # A pending tool-permission question is answered by this very
+        # message (y/n); anything else is a new instruction.
+        if self.mode.name == 'claude':
+            self.conv_manager.add_message('user', text)
+            self.conv_manager.save()
+            if self._claude_pending():
+                await self._claude_answer(text)
+            else:
+                self.stream_task = asyncio.create_task(
+                    self._claude_turn(text))
+            return
+
         # Add user message to conversation
         self.conv_manager.add_message('user', text)
 
         # Start streaming task
         self.stream_task = asyncio.create_task(self._stream_response())
+
+    async def shutdown(self):
+        """Release everything bound to this connection (called on close)."""
+        self._cancel_stream()
+        for t in list(self._media_tasks):
+            t.cancel()
+        await self._stop_claude()
 
     def _cancel_stream(self):
         """Quietly cancel any in-flight response stream. Quiet = no
@@ -372,6 +394,7 @@ class ProtocolHandler:
             await self._send_canned(
                 "Commands:\n"
                 "/chat - plain chat mode\n"
+                "/code - Claude Code (drive a coding agent)\n"
                 "/adventure [theme] - text adventure\n"
                 "/chars - list character cards\n"
                 "/char <name> - roleplay with a card\n"
@@ -391,8 +414,12 @@ class ProtocolHandler:
             await self._send_canned(f"Current mode: {self.mode.label}")
 
         elif cmd == 'chat':
+            await self._stop_claude()
             self._switch_mode(Mode(self.config))
             await self._send_canned("Chat mode. New conversation started.")
+
+        elif cmd in ('code', 'claude'):
+            await self._start_claude()
 
         elif cmd in ('adventure', 'adv'):
             mode = AdventureMode(self.config, theme=arg)
@@ -1088,6 +1115,113 @@ class ProtocolHandler:
                 seq, data[i:i + self.CHUNK_TEXT_MAX])
         await self.send_message(MessageType.CHAT_DONE,
                                 struct.pack('<BH', seq, len(text)))
+
+    # --- Claude Code mode ---------------------------------------------
+
+    async def _start_claude(self):
+        """Enter Claude Code mode: spin up the CLI session."""
+        await self._stop_claude()
+        self._switch_mode(ClaudeMode(self.config))
+        try:
+            self._claude = ClaudeSession(
+                self.config.claude_command,
+                self.config.claude_workdir,
+                model=self.model_override)
+            await self._claude.start()
+        except Exception as e:
+            self.logger.error(f"Claude Code start failed: {e}")
+            self._claude = None
+            self._switch_mode(Mode(self.config))
+            await self._send_canned(
+                "Couldn't start Claude Code on the server.")
+            return
+        await self._send_canned(
+            "Claude Code ready. Tell me what to build; I'll ask "
+            "before running tools (reply y or n). /chat to exit.\n"
+            f"Working in: {self.config.claude_workdir}")
+
+    async def _stop_claude(self):
+        if self._claude:
+            await self._claude.stop()
+            self._claude = None
+
+    def _claude_pending(self):
+        return bool(self._claude and self._claude.pending_permission)
+
+    async def _claude_answer(self, text: str):
+        """Resolve a parked tool-permission question with this message."""
+        rid = self._claude.pending_permission
+        allow = text.strip().lower()[:1] in ('y', 'a', 'o')  # y/allow/ok
+        await self._claude.resolve_permission(rid, allow)
+        await self.send_status("Approved." if allow else "Denied.")
+        # Keep rendering the same turn's remaining events
+        self.stream_task = asyncio.create_task(self._claude_drain())
+
+    async def _claude_turn(self, text: str):
+        await self._claude.send_user_turn(text)
+        await self._claude_drain()
+
+    async def _claude_drain(self):
+        """Render the session's event stream until the turn ends or a
+        permission question needs the user."""
+        seq = 0
+        hb = asyncio.create_task(self._heartbeat("Working..."))
+        try:
+            async for ev in self._claude.events():
+                kind = ev.get("kind")
+                if kind == "text":
+                    data = ev["text"].translate(UNICODE_TO_ASCII).encode(
+                        'ascii', errors='replace')
+                    for i in range(0, len(data), self.CHUNK_TEXT_MAX):
+                        seq = await self._send_text_chunk(
+                            seq, data[i:i + self.CHUNK_TEXT_MAX])
+                elif kind == "tool":
+                    line = self._describe_tool(ev["name"], ev["input"])
+                    data = ("\n> " + line + "\n").encode(
+                        'ascii', errors='replace')
+                    for i in range(0, len(data), self.CHUNK_TEXT_MAX):
+                        seq = await self._send_text_chunk(
+                            seq, data[i:i + self.CHUNK_TEXT_MAX])
+                elif kind == "permission":
+                    q = (f"Allow {ev['name']}"
+                         f"{' ' + ev['description'] if ev['description'] else ''}"
+                         "? (y/n)")
+                    data = ("\n" + q).encode('ascii', errors='replace')
+                    for i in range(0, len(data), self.CHUNK_TEXT_MAX):
+                        seq = await self._send_text_chunk(
+                            seq, data[i:i + self.CHUNK_TEXT_MAX])
+                    await self.send_message(
+                        MessageType.CHAT_DONE,
+                        struct.pack('<BH', seq, 0))
+                    return  # wait for the user's y/n
+                elif kind == "result":
+                    break
+                elif kind == "exit":
+                    await self._send_canned(
+                        "Claude Code session ended. /code to restart.")
+                    self._claude = None
+                    self._switch_mode(Mode(self.config))
+                    return
+            await self.send_message(MessageType.CHAT_DONE,
+                                    struct.pack('<BH', seq, 0))
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            self.logger.error(f"Claude drain error: {e}")
+            await self.send_message(MessageType.CHAT_DONE,
+                                    struct.pack('<BH', seq, 0))
+        finally:
+            hb.cancel()
+
+    @staticmethod
+    def _describe_tool(name, inp):
+        """A one-line, C64-friendly summary of a tool call."""
+        if name in ('Bash',) and 'command' in inp:
+            return f"Bash: {inp['command'][:60]}"
+        for k in ('file_path', 'path', 'pattern', 'url', 'query'):
+            if k in inp:
+                return f"{name}: {str(inp[k])[:60]}"
+        return name
 
     async def _stream_response(self, hidden_user_msg: str = None):
         """Stream API response to C64"""

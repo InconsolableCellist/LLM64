@@ -108,6 +108,16 @@ class Config:
         # cost real API money), off
         self.images_mode = config.get('images', {}).get('mode', 'ask')
 
+        # Claude Code mode: the proxy drives a coding-agent session and
+        # the C64 is its terminal. 'command' must point at the claude
+        # CLI on the proxy host; 'workdir' is the default project dir.
+        cc = config.get('claude', {})
+        self.claude_command = os.environ.get(
+            'C64LLM_CLAUDE_CMD', cc.get('command', 'claude'))
+        # ~ won't expand under create_subprocess_exec; do it here
+        self.claude_workdir = os.path.expanduser(
+            cc.get('workdir', str(Path.home())))
+
         # API key is optional: local servers (llama.cpp, Ollama, ...) accept
         # any bearer token. Cloud providers still need a real key.
         if not self.api_key:

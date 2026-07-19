@@ -124,6 +124,14 @@ class AdventureMode(Mode):
         return ADVENTURE_KICKOFF
 
 
+class ClaudeMode(Mode):
+    """The proxy drives a Claude Code CLI session; the C64 is its
+    terminal. Not an API mode - the protocol handler routes chat
+    requests to a ClaudeSession rather than the LLM API."""
+    name = 'claude'
+    label = 'Claude Code'
+
+
 class RoleplayMode(Mode):
     name = 'roleplay'
 

@@ -20,3 +20,14 @@ max_tokens = 2000
 [storage]
 # Directory for conversation storage
 data_dir = "./data"
+
+# Claude Code mode (/code on the C64): the proxy drives a `claude` CLI
+# session and the C64 is its terminal. Requires Claude Code installed
+# and authenticated on THIS host (interactive `claude` login, or
+# `claude setup-token` for a headless token, or ANTHROPIC_API_KEY).
+[claude]
+# Path to the claude binary (use an absolute path - the proxy's PATH
+# may not include ~/.local/bin)
+command = "claude"
+# Default project directory the agent works in
+workdir = "~/code"

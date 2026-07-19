@@ -60,6 +60,13 @@ class ClientHandler:
     async def close(self):
         """Close client connection"""
         self.logger.info("Closing client connection")
+        # Tear down any in-flight work bound to this connection (a live
+        # Claude Code subprocess, stream, or media tasks would otherwise
+        # keep running against a dead transport)
+        try:
+            await self.protocol.shutdown()
+        except Exception:
+            pass
         try:
             self.writer.close()
             await self.writer.wait_closed()

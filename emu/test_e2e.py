@@ -222,6 +222,9 @@ def main():
             # returns this fixture
             env['C64LLM_IMG_FIXTURE'] = str(
                 REPO / 'emu' / 'fixtures' / 'scene.png')
+            # Claude Code mode drives a mock CLI (no real agent/API)
+            env['C64LLM_CLAUDE_CMD'] = (
+                f"{sys.executable} {REPO / 'emu' / 'mock_claude.py'}")
             print(f"mock LLM on :{mock_port}")
 
         # 2. Proxy
@@ -667,6 +670,21 @@ def main():
                                         r'mode: roleplay: captain', 15,
                                         artifacts, f'{tag}-rp-restored')
                 print('  PASS: roleplay mode restored on load')
+
+                # Claude Code mode: /code starts the (mock) CLI session,
+                # an instruction produces a tool call + y/n permission
+                # prompt, and 'y' lets it finish
+                monitor.keyboard_feed('/code\r')
+                wait_for_screen(monitor, r'claude code ready', 30,
+                                artifacts, f'{tag}-code-start')
+                monitor.keyboard_feed('make a file\r')
+                wait_for_screen(monitor, r'allow write hello.txt', 30,
+                                artifacts, f'{tag}-code-perm')
+                print('  PASS: Claude Code tool permission prompt')
+                monitor.keyboard_feed('y\r')
+                final = wait_for_screen(monitor, r'done, wrote hello',
+                                        30, artifacts, f'{tag}-code-done')
+                print('  PASS: Claude Code approval completes the turn')
         else:
             # Scripted debug session runs in warp faster than we can poll,
             # so assert on the durable end state: the client parks on
