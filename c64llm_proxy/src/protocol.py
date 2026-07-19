@@ -358,17 +358,26 @@ class ProtocolHandler:
                 await self._send_canned("Images not enabled on this server.")
             elif arg.isdigit():
                 await self._resend_pic(int(arg))
-            elif cmd == 'pics' or (not arg
-                                   and not self.images.pending_prompt):
+            elif cmd == 'pics':
                 await self._list_pics()
             else:
+                # Priority: explicit description > pending suggestion >
+                # ask the model to describe the current scene itself
                 prompt = arg or self.images.pending_prompt
-                self.images.pending_prompt = None
-                await self.send_message(MessageType.HINT, bytes([0]))
-                # Complete the chat round-trip first: the client must
-                # return to idle before the image transfer starts
-                await self._send_canned(f"Illustrating: {prompt[:100]}")
-                await self._generate_and_send_image(prompt)
+                if not prompt:
+                    await self.send_status("Studying the scene...")
+                    prompt = await self._derive_scene_prompt()
+                if not prompt:
+                    await self._send_canned(
+                        "Couldn't picture the scene - try "
+                        "/pic <description>.")
+                else:
+                    self.images.pending_prompt = None
+                    await self.send_message(MessageType.HINT, bytes([0]))
+                    # Complete the chat round-trip first: the client must
+                    # return to idle before the image transfer starts
+                    await self._send_canned(f"Illustrating: {prompt[:100]}")
+                    await self._generate_and_send_image(prompt)
 
         elif cmd == 'save':
             label = self.conv_manager.save_checkpoint(arg)
@@ -622,6 +631,30 @@ class ProtocolHandler:
         await self._send_bulk(MessageType.IMG_END, b'')
         self.logger.info(f"Sent image ({len(blob)} bytes"
                          f"{', retry' if is_retry else ''})")
+
+    async def _derive_scene_prompt(self) -> str:
+        """Ask the chat model for a one-sentence visual description of
+        the current scene (bare /pic with nothing pending)."""
+        msgs = self.conv_manager.get_messages()[-6:]
+        if not msgs:
+            return ''
+        convo = "\n".join(f"{m['role']}: {m['content'][:400]}"
+                          for m in msgs)
+        ask = [{'role': 'user', 'content':
+                "Below is the latest part of a text adventure. Write ONE "
+                "sentence visually describing the current scene for an "
+                "illustrator. Reply with only that sentence.\n\n" + convo}]
+        out = ""
+        try:
+            async for kind, chunk in self.api_client.stream_chat(
+                    ask, system_prompt=None, sampling={},
+                    model=self.model_override):
+                if kind != 'reasoning' and chunk:
+                    out += chunk
+        except Exception as e:
+            self.logger.error(f"Scene derivation failed: {e}")
+            return ''
+        return out.strip()[:300]
 
     async def _list_pics(self):
         """This conversation's generated pictures, newest first."""

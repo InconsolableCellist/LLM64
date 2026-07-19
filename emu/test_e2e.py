@@ -439,6 +439,22 @@ def main():
                                     artifacts, f'{tag}-pic-reshow-dismiss')
                     print('  PASS: /pics browser + cached re-show')
 
+                    # Bare /pic with nothing pending: the proxy asks the
+                    # model to describe the scene, then generates
+                    monitor.keyboard_feed('/pic\r')
+                    wait_for_screen(monitor, r'illustrating:', 60,
+                                    artifacts, f'{tag}-pic-derive')
+                    deadline = time.time() + 60
+                    while not img_shown():
+                        if time.time() > deadline:
+                            raise AssertionError(
+                                'derived-prompt image never completed')
+                        time.sleep(2)
+                    monitor.keyboard_feed(' ')
+                    wait_for_screen(monitor, r'> /pic', 15,
+                                    artifacts, f'{tag}-pic-derive-dismiss')
+                    print('  PASS: bare /pic derived a scene prompt')
+
                 # Character cards: list, then load the example card
                 monitor.keyboard_feed('/chars\r')
                 wait_for_screen(monitor, r'captain byte', 30,
