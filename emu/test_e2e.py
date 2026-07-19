@@ -494,6 +494,20 @@ def main():
                 wait_for_screen(monitor, r'number\s+60', 15,
                                 artifacts, f'{tag}-pagedown')
 
+                # /find + /history: proxy-side search and paging over the
+                # full stored conversation (scrollback is just the view)
+                monitor.keyboard_feed('/find sentence\r')
+                wait_for_screen(monitor, r'match\(es\) for "sentence"', 30,
+                                artifacts, f'{tag}-find')
+                wait_for_screen(monitor, r'\[\d+\] p\d+:', 10,
+                                artifacts, f'{tag}-find-hit')
+                monitor.keyboard_feed('/history 1\r')
+                wait_for_screen(monitor, r'page 1/\d+ \(msgs 1-', 30,
+                                artifacts, f'{tag}-history')
+                wait_for_screen(monitor, r'ahoy', 10,
+                                artifacts, f'{tag}-history-content')
+                print('  PASS: /find + /history paging')
+
                 # Editor must be VISIBLE: glyph colors live in the matrix,
                 # which the ASCII shadow can't see - check color RAM/matrix
                 # for the editor rows directly (yellow = 7)

@@ -320,6 +320,8 @@ class ProtocolHandler:
                 "/pics - list this conversation's pictures\n"
                 "/save [name] - checkpoint this conversation\n"
                 "/saves - list, /restore <n> - roll back\n"
+                "/history [page] - browse the full conversation\n"
+                "/find <text> - search this conversation\n"
                 "/stats - server statistics\n"
                 "/mode - show current mode")
 
@@ -378,6 +380,12 @@ class ProtocolHandler:
                     # return to idle before the image transfer starts
                     await self._send_canned(f"Illustrating: {prompt[:100]}")
                     await self._generate_and_send_image(prompt)
+
+        elif cmd in ('history', 'hist'):
+            await self._show_history(arg)
+
+        elif cmd == 'find':
+            await self._find_history(arg)
 
         elif cmd == 'save':
             label = self.conv_manager.save_checkpoint(arg)
@@ -669,6 +677,71 @@ class ProtocolHandler:
             self.logger.error(f"Scene derivation failed: {e}")
             return ''
         return out.strip()[:300]
+
+    # The client's scrollback is the view, not the archive: /history pages
+    # through the full stored conversation from the proxy, /find searches
+    # it. A page of 4 messages x 500 chars wraps to ~30 lines at 80 cols,
+    # comfortably inside the 132-line scrollback.
+    HISTORY_PAGE = 4
+    HISTORY_SNIP = 500
+
+    async def _show_history(self, arg: str):
+        msgs = self.conv_manager.get_messages()
+        if not msgs:
+            await self._send_canned("No history yet.")
+            return
+        pages = (len(msgs) + self.HISTORY_PAGE - 1) // self.HISTORY_PAGE
+        try:
+            page = int(arg) if arg else pages
+        except ValueError:
+            await self._send_canned("Usage: /history [page]")
+            return
+        page = max(1, min(page, pages))
+        lo = (page - 1) * self.HISTORY_PAGE
+        sel = msgs[lo:lo + self.HISTORY_PAGE]
+        lines = [f"--- page {page}/{pages} "
+                 f"(msgs {lo + 1}-{lo + len(sel)} of {len(msgs)}) ---"]
+        for i, m in enumerate(sel, lo + 1):
+            body = m['content']
+            snip = body[:self.HISTORY_SNIP]
+            if len(body) > self.HISTORY_SNIP:
+                snip += " [...]"
+            who = '>' if m['role'] == 'user' else ':'
+            lines.append(f"[{i}]{who} {snip}")
+        nav = []
+        if page > 1:
+            nav.append(f"/history {page - 1} = older")
+        if page < pages:
+            nav.append(f"/history {page + 1} = newer")
+        if nav:
+            lines.append("(" + ", ".join(nav) + ")")
+        await self._send_canned("\n".join(lines))
+
+    async def _find_history(self, needle: str):
+        if not needle:
+            await self._send_canned("Usage: /find <text>")
+            return
+        msgs = self.conv_manager.get_messages()
+        low = needle.lower()
+        hits = []
+        for i, m in enumerate(msgs, 1):
+            pos = m['content'].lower().find(low)
+            if pos >= 0:
+                hits.append((i, m, pos))
+        if not hits:
+            await self._send_canned(f'No match for "{needle[:40]}".')
+            return
+        shown = hits[-10:]
+        lines = [f'{len(hits)} match(es) for "{needle[:40]}":']
+        for i, m, pos in shown:
+            page = (i - 1) // self.HISTORY_PAGE + 1
+            start = max(0, pos - 20)
+            ctx = m['content'][start:start + 70].replace('\n', ' ')
+            lines.append(f"[{i}] p{page}: ...{ctx}...")
+        if len(hits) > len(shown):
+            lines.append(f"(newest {len(shown)} shown)")
+        lines.append("View a hit with /history <p>.")
+        await self._send_canned("\n".join(lines))
 
     async def _list_pics(self):
         """This conversation's generated pictures, newest first."""
