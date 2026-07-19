@@ -422,6 +422,21 @@ class ProtocolHandler:
         elif cmd == 'findall':
             await self._find_all(arg)
 
+        elif cmd == 'testpat':
+            # Debug probe: stream a synthetic image of one repeated byte
+            # through the real transfer path. Content-dependent modem
+            # mangling (XOFF=13, telnet IAC=ff, CR=0d) shows up as that
+            # pattern failing while /testpat 00 succeeds.
+            try:
+                byte = int(arg or '0', 16) & 0xFF
+            except ValueError:
+                await self._send_canned("Usage: /testpat <hex byte>")
+                return
+            await self._send_canned(f"Test pattern 0x{byte:02x} - "
+                                    "any key dismisses.")
+            self._spawn_media(self.send_image_blob(
+                bytes([byte]) * 10000, 0))
+
         elif cmd == 'save':
             label = self.conv_manager.save_checkpoint(arg)
             if label:
