@@ -77,10 +77,14 @@ class MusicLibrary:
     def pick(self, mood: str):
         """Best tune for a mood, avoiding recent repeats. None if no fit."""
         mood = mood.lower()
-        pool = [t for t in self.tunes if t["id"] not in self._recent]
-        pool = [t for t in pool if t["moods"].get(mood, 0) > 0]
+        pool = [t for t in self.tunes if t["moods"].get(mood, 0) > 0]
         # Instantly recognizable themes (Pac-Man...) feel cheesy in-game
         pool = [t for t in pool if (t.get("iconic") or 0) < 0.85]
+        # Avoid recent repeats unless that would empty the bucket
+        # (small buckets / tiny demo libraries)
+        fresh = [t for t in pool if t["id"] not in self._recent]
+        if fresh:
+            pool = fresh
         # Low tagger confidence = mood is a guess from a bare filename;
         # skip unless that would empty the bucket (tiny demo libraries)
         confident = [t for t in pool

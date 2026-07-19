@@ -1253,6 +1253,10 @@ class ProtocolHandler:
                                   f'not shown ...)'))
             frames += [(0 if m['role'] == 'user' else 1,
                         m['content'][:400]) for m in window]
+            # Zero frames would leave the client waiting forever: the
+            # 'load done' signal is the final more=0 frame
+            if not frames:
+                frames.append((2, '(empty conversation)'))
 
             # One message per frame: the C64 client's payload buffer is
             # small (512 bytes), so keep each frame well under that.

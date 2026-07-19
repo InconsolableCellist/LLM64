@@ -627,12 +627,34 @@ def main():
                 monitor.keyboard_feed('/chat\r')
                 wait_for_screen(monitor, r'chat mode', 15,
                                 artifacts, f'{tag}-tochat')
+                # Loads must silence a playing tune: its SEI windows
+                # corrupt the incoming frames on real hardware (big
+                # load stalled at 'Loading... 19' in the field)
+                if args.cols80:
+                    monitor.keyboard_feed('/music urgent\r')
+                    wait_for_screen(monitor, r'playing: pac-man', 30,
+                                    artifacts, f'{tag}-preload-music')
+                    deadline = time.time() + 30
+                    while monitor.read_memory(
+                            labels['_music_state'],
+                            labels['_music_state'])[0] != 0xFF:
+                        if time.time() > deadline:
+                            raise AssertionError(
+                                'preload tune never started')
+                        time.sleep(1)
                 monitor.keyboard_feed_petscii(b'\x87')  # F5 browser
                 wait_for_screen(monitor, r'conversations \(return=load',
                                 15, artifacts, f'{tag}-rp-browser')
                 monitor.keyboard_feed('\r')
                 wait_for_screen(monitor, r'conversation loaded', 30,
                                 artifacts, f'{tag}-rp-loadstatus')
+                if args.cols80:
+                    if monitor.read_memory(
+                            labels['_music_state'],
+                            labels['_music_state'])[0] != 0:
+                        raise AssertionError(
+                            'music not silenced by conversation load')
+                    print('  PASS: load silences a playing tune')
                 monitor.keyboard_feed('/mode\r')
                 final = wait_for_screen(monitor,
                                         r'mode: roleplay: captain', 15,

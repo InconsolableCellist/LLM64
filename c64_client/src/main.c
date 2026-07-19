@@ -435,6 +435,12 @@ static void conv_close(void) {
 static void conv_load_selected(void) {
     uint32_t id = convs[conv_sel].id;
     conv_close();
+#ifdef SOFT80
+    /* A playing tune's SEI windows corrupt the incoming load frames
+       (field: big load stalled at 'Loading... 19'); the loaded
+       conversation's own soundtrack resumes from meta afterwards */
+    music_ext_stop();
+#endif
     chat_clear();
     chat_freeze(1);  /* render once at the end: jump straight to the bottom */
     load_count = 0;

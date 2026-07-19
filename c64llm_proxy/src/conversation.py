@@ -132,6 +132,11 @@ class ConversationManager:
         """Save current conversation to disk (Open WebUI format)"""
         if not self.current_conversation:
             return
+        # Meta-only saves (e.g. /music before any message) would clutter
+        # the browser with empty conversations; meta persists with the
+        # first real message
+        if not self.current_conversation['messages']:
+            return
 
         filename = f"{self.current_id}.json"
         filepath = self.data_dir / filename
