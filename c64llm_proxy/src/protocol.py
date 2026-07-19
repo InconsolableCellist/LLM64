@@ -429,18 +429,22 @@ class ProtocolHandler:
 
         elif cmd == 'testpat':
             # Debug probe: stream a synthetic image of one repeated byte
-            # through the real transfer path. Content-dependent modem
-            # mangling (XOFF=13, telnet IAC=ff, CR=0d) shows up as that
-            # pattern failing while /testpat 00 succeeds.
+            # through the real transfer path. '/testpat 55 music' keeps
+            # the tune playing during the transfer (tests whether SID
+            # play routines really blind the ACIA on this firmware).
+            parts = arg.split()
+            keep = len(parts) > 1 and parts[1].lower() == 'music'
             try:
-                byte = int(arg or '0', 16) & 0xFF
+                byte = int(parts[0] if parts else '0', 16) & 0xFF
             except ValueError:
-                await self._send_canned("Usage: /testpat <hex byte>")
+                await self._send_canned(
+                    "Usage: /testpat <hex byte> [music]")
                 return
-            await self._send_canned(f"Test pattern 0x{byte:02x} - "
-                                    "any key dismisses.")
+            await self._send_canned(
+                f"Test pattern 0x{byte:02x}"
+                f"{' with music' if keep else ''} - any key dismisses.")
             self._spawn_media(self.send_image_blob(
-                bytes([byte]) * 10000, 0))
+                bytes([byte]) * 10000, 0, keep_music=keep))
 
         elif cmd == 'save':
             label = self.conv_manager.save_checkpoint(arg)
@@ -765,7 +769,8 @@ class ProtocolHandler:
                          f"{', retry' if is_retry else ''})")
 
     async def send_image_blob(self, blob: bytes, bg: int = 0,
-                              is_retry: bool = False, fmt: int = 1):
+                              is_retry: bool = False, fmt: int = 1,
+                              keep_music: bool = False):
         """Stream a converted image into the client's bitmap, paced.
         BEGIN payload: format byte (1 = multicolor, 0 = hires) + bg
         color + resume flag; data flows only after the client ACKs the
@@ -776,7 +781,8 @@ class ProtocolHandler:
             if not await self._send_begin(
                     MessageType.IMG_BEGIN,
                     bytes([fmt, bg & 0x0F, 1 if is_retry else 0,
-                           self.FLOW_WINDOW])):
+                           self.FLOW_WINDOW,
+                           1 if keep_music else 0])):
                 self.logger.error("IMG_BEGIN never ACKed - aborting send")
                 await self.send_status("Image transfer couldn't start.")
                 return
@@ -840,10 +846,11 @@ class ProtocolHandler:
 
     # The client's scrollback is the view, not the archive: /history pages
     # through the full stored conversation from the proxy, /find searches
-    # it. A page of 4 messages x 500 chars wraps to ~30 lines at 80 cols,
-    # comfortably inside the 132-line scrollback.
-    HISTORY_PAGE = 4
-    HISTORY_SNIP = 500
+    # it. A page of 3 messages x 1500 chars wraps to ~55 lines at 80
+    # cols, inside the ~120-line scrollback (this is where full text
+    # lives, so the snippet cap is generous).
+    HISTORY_PAGE = 3
+    HISTORY_SNIP = 1500
 
     async def _show_history(self, arg: str):
         msgs = self.conv_manager.get_messages()
@@ -1265,14 +1272,16 @@ class ProtocolHandler:
             messages = self.conv_manager.get_messages()
 
             # Window to what the client can actually keep: its scrollback
-            # holds ~160 wrapped lines, so send only the NEWEST messages
-            # fitting a ~5KB budget instead of replaying a whole epic at
+            # holds ~120 wrapped lines, so send only the NEWEST messages
+            # fitting a ~6KB budget instead of replaying a whole epic at
             # 9600 baud (a long roleplay used to take minutes and looked
-            # like a hang).
-            budget = 5000
+            # like a hang). Long messages are cut at 1000 chars with a
+            # visible marker; /history has the full text.
+            MSG_CAP = 1000
+            budget = 6000
             window = []
             for m in reversed(messages):
-                cost = min(len(m['content']), 400) + 2
+                cost = min(len(m['content']), MSG_CAP) + 2
                 if budget - cost < 0 and window:
                     break
                 budget -= cost
@@ -1280,12 +1289,17 @@ class ProtocolHandler:
             window.reverse()
             omitted = len(messages) - len(window)
 
+            def clip(text):
+                if len(text) <= MSG_CAP:
+                    return text
+                return text[:MSG_CAP] + " [... /history shows the rest]"
+
             frames = []
             if omitted > 0:
                 frames.append((2, f'(... {omitted} earlier messages '
-                                  f'not shown ...)'))
+                                  f'not shown - /history has them ...)'))
             frames += [(0 if m['role'] == 'user' else 1,
-                        m['content'][:400]) for m in window]
+                        clip(m['content'])) for m in window]
             # Zero frames would leave the client waiting forever: the
             # 'load done' signal is the final more=0 frame
             if not frames:

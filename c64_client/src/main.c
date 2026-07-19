@@ -145,6 +145,7 @@ static void img_close(void) {
     ui_frozen = 0;
     ui_redraw_all();
     editor_redraw();
+    ui_status("Ready.");  /* the image's colors linger there otherwise */
     if (img_music_was) {
         img_music_was = 0;
         music_ext_begin();
@@ -161,9 +162,19 @@ static void hx2(uint8_t i, uint8_t v) {
 }
 
 #ifdef SOFT80
+/* Counter snapshots at BEGIN so the fail line shows THIS transfer's
+   losses, not the session's history (cumulative counts misattributed
+   old CRC failures to a fresh transfer once) */
+static uint8_t xf_ov0, xf_hw0, xf_cr0;
+static void xfer_mark(void) {
+    xf_ov0 = serial_overflows();
+    xf_hw0 = serial_overruns();
+    xf_cr0 = crc_fail_count;
+}
+
 /* A failed media transfer: say WHERE the bytes died. got/expect plus
-   ring / hw-overrun / crc counters - all three zero means the modem
-   dropped them silently. */
+   ring / hw-overrun / crc counters since BEGIN - all three zero means
+   the modem dropped them silently. */
 static void xfer_fail(char tag, uint16_t got, uint16_t expect) {
     strcpy(dm, "? fail g=????/???? ov=?? hw=?? cr=??");
     dm[0] = tag;
@@ -171,9 +182,9 @@ static void xfer_fail(char tag, uint16_t got, uint16_t expect) {
     hx2(11, (uint8_t)got);
     hx2(14, (uint8_t)(expect >> 8));
     hx2(16, (uint8_t)expect);
-    hx2(22, serial_overflows());
-    hx2(28, serial_overruns());
-    hx2(34, crc_fail_count);
+    hx2(22, (uint8_t)(serial_overflows() - xf_ov0));
+    hx2(28, (uint8_t)(serial_overruns() - xf_hw0));
+    hx2(34, (uint8_t)(crc_fail_count - xf_cr0));
     ui_status(dm);
 }
 #endif
@@ -631,6 +642,7 @@ static void handle_message(uint8_t msg_type) {
             }
             xfer_window = p[11];
             xfer_count = 0;
+            xfer_mark();
             music_ext_stop();       /* silence during the transfer */
             music_ext_init = p[2] | ((uint16_t)p[3] << 8);
             music_ext_play_addr = p[4] | ((uint16_t)p[5] << 8);
@@ -696,11 +708,16 @@ static void handle_message(uint8_t msg_type) {
                text drawing until the user dismisses it. Scrollback is
                untouched, so dismissing is a local redraw - no reload. */
             uint8_t* p = proto_get_payload(&proto);
+            uint8_t plen = proto_get_length(&proto);
             img_restore_vic();       /* a retry may follow a failed mc */
-            if (music_state == 0xFF) {
+            /* flags bit0 (payload[4]): keep the tune playing through
+               the transfer - experiment hook for the SEI question */
+            if (music_state == 0xFF
+                    && !(plen >= 5 && (p[4] & 1))) {
                 img_music_was = 1;
                 music_ext_stop();    /* silence during the transfer */
             }
+            xfer_mark();
             img_active = 1;
             img_shown = 0;
             /* payload: fmt(1) bg(1) resume(1) window(1) */
