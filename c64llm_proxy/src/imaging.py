@@ -272,7 +272,37 @@ def _pick_triple(px, bg):
     return best_triple
 
 
-def convert_to_c64_mc(img, levels=True):
+def _caption_band(img, text):
+    """Burn a caption strip into the bottom of the 160x200 frame: black
+    band, white bitmap-font text, wrapped to at most two lines. Flat
+    black + palette white survive the dither untouched, so the text
+    stays crisp through conversion."""
+    from PIL import ImageDraw, ImageFont
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.load_default()
+    lines, cur = [], ''
+    for word in text.split():
+        cand = (cur + ' ' + word).strip()
+        if draw.textlength(cand, font=font) <= MC_WIDTH - 6:
+            cur = cand
+        elif len(lines) < 1:
+            lines.append(cur)
+            cur = word
+        else:
+            break
+    if cur:
+        lines.append(cur)
+    lines = lines[:2]
+    band_h = 4 + 11 * len(lines)
+    top = HEIGHT - band_h
+    draw.rectangle([0, top, MC_WIDTH, HEIGHT], fill=(0, 0, 0))
+    y = top + 2
+    for ln in lines:
+        draw.text((3, y), ln, fill=(255, 255, 255), font=font)
+        y += 11
+
+
+def convert_to_c64_mc(img, levels=True, caption=None):
     """Convert a PIL image to C64 multicolor bitmap format.
 
     Returns (bitmap 8000, screen 1000, colram 1000, bg byte). 160x200
@@ -285,6 +315,8 @@ def convert_to_c64_mc(img, levels=True):
     if levels:
         img = auto_levels(img)
     img = _letterbox(img).resize((MC_WIDTH, HEIGHT), Image.LANCZOS)
+    if caption:
+        _caption_band(img, caption)
     pix = list(img.getdata())
 
     # Global background: the most common nearest-palette color

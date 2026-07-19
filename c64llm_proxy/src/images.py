@@ -50,8 +50,10 @@ class ImageService:
             "striking NEW scene, you may output [[IMAGE: one-sentence "
             "visual description of the scene]] on its own at the START of "
             "that reply. Use it rarely - major locations and dramatic "
-            "moments only, never two scenes in a row. Most replies should "
-            "have no image directive."
+            "moments only, never two scenes in a row. Describe characters "
+            "and places with their established appearance (clothing, hair, "
+            "architecture, lighting) so successive illustrations stay "
+            "consistent. Most replies should have no image directive."
         )
 
     def auto_ok(self) -> bool:
@@ -61,14 +63,17 @@ class ImageService:
     def mark_auto(self):
         self._last_auto = time.monotonic()
 
-    async def generate_blob(self, prompt: str, conv_id) -> tuple:
+    async def generate_blob(self, prompt: str, conv_id,
+                            caption: str = None) -> tuple:
         """Generate + convert. Returns (blob bytes, stem, bg color).
         The blob is multicolor: bitmap(8000) + screen(1000) + colram(1000);
-        bg travels in the IMG_BEGIN frame. Blocking work (API call, PIL)
-        runs off the event loop."""
-        return await asyncio.to_thread(self._generate_sync, prompt, conv_id)
+        bg travels in the IMG_BEGIN frame. A caption is burned into the
+        bottom of the frame. Blocking work (API call, PIL) runs off the
+        event loop."""
+        return await asyncio.to_thread(self._generate_sync, prompt,
+                                       conv_id, caption)
 
-    def _generate_sync(self, prompt: str, conv_id):
+    def _generate_sync(self, prompt: str, conv_id, caption=None):
         from .imaging import convert_to_c64_mc
         from PIL import Image
         import io
@@ -93,7 +98,7 @@ class ImageService:
         (self.dir / f"{stem}.png").write_bytes(raw)
 
         img = Image.open(io.BytesIO(raw))
-        bitmap, screen, colram, bg = convert_to_c64_mc(img)
+        bitmap, screen, colram, bg = convert_to_c64_mc(img, caption=caption)
         blob = bitmap + screen + colram
         (self.dir / f"{stem}.blob").write_bytes(blob + bytes([bg]))
         return blob, stem, bg

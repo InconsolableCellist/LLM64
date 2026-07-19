@@ -703,29 +703,58 @@ class ProtocolHandler:
         self.logger.info(f"Sent image ({len(blob)} bytes"
                          f"{', retry' if is_retry else ''})")
 
-    async def _derive_scene_prompt(self) -> str:
-        """Ask the chat model for a one-sentence visual description of
-        the current scene (bare /pic with nothing pending)."""
-        msgs = self.conv_manager.get_messages()[-6:]
-        if not msgs:
-            return ''
-        convo = "\n".join(f"{m['role']}: {m['content'][:400]}"
-                          for m in msgs)
-        ask = [{'role': 'user', 'content':
-                "Below is the latest part of a text adventure. Write ONE "
-                "sentence visually describing the current scene for an "
-                "illustrator. Reply with only that sentence.\n\n" + convo}]
+    async def _ask_model(self, question: str, limit: int = 300) -> str:
+        """One-shot utility question to the chat model, plain text back."""
         out = ""
         try:
             async for kind, chunk in self.api_client.stream_chat(
-                    ask, system_prompt=None, sampling={},
+                    [{'role': 'user', 'content': question}],
+                    system_prompt=None, sampling={},
                     model=self.model_override):
                 if kind != 'reasoning' and chunk:
                     out += chunk
         except Exception as e:
-            self.logger.error(f"Scene derivation failed: {e}")
+            self.logger.error(f"Utility query failed: {e}")
             return ''
-        return out.strip()[:300]
+        return out.strip()[:limit]
+
+    async def _derive_scene_prompt(self) -> str:
+        """Ask the chat model for a visual description of the current
+        scene (bare /pic with nothing pending). Reads well back into the
+        transcript and at the prompts of earlier illustrations so
+        recurring characters and places keep their established look."""
+        msgs = self.conv_manager.get_messages()[-12:]
+        if not msgs:
+            return ''
+        convo = "\n".join(f"{m['role']}: {m['content'][:500]}"
+                          for m in msgs)
+        prior = [p['prompt'] for p in
+                 self.conv_manager.get_meta('images', [])[-3:]]
+        consistency = ''
+        if prior:
+            consistency = (
+                "\n\nEarlier illustrations in this story showed:\n"
+                + "\n".join(f"- {p}" for p in prior)
+                + "\nKeep characters and places visually consistent "
+                  "with those.")
+        return await self._ask_model(
+            "Below is the latest part of a text adventure. Write ONE "
+            "sentence visually describing the CURRENT scene for an "
+            "illustrator. Include the established appearance of the "
+            "characters and setting (clothing, hair, architecture, "
+            "lighting) from earlier in the story. Reply with only that "
+            "sentence." + consistency + "\n\nTranscript:\n" + convo,
+            limit=400)
+
+    async def _make_caption(self, prompt: str) -> str:
+        """A short atmospheric caption, burned into the picture and
+        echoed into the chat. Falls back to the prompt itself."""
+        out = await self._ask_model(
+            "Write ONE short atmospheric caption (at most 10 words, no "
+            "quotation marks) for this adventure-game illustration, "
+            "addressed to the player. Reply with only the caption. "
+            "Scene: " + prompt, limit=100)
+        return out.strip('"').strip() or prompt[:60]
 
     # The client's scrollback is the view, not the archive: /history pages
     # through the full stored conversation from the proxy, /find searches
@@ -842,7 +871,8 @@ class ProtocolHandler:
         except OSError:
             await self._send_canned("That picture's data is gone.")
             return
-        await self._send_canned(f"Showing: {pics[n - 1]['prompt'][:60]}")
+        await self._send_canned(
+            f"Showing: {pics[n - 1].get('caption') or pics[n - 1]['prompt'][:60]}")
         if len(data) == 10001:      # multicolor: blob + bg byte
             await self.send_image_blob(data[:10000], data[10000])
         else:                       # hires-era blob
@@ -852,8 +882,9 @@ class ProtocolHandler:
         await self.send_status("Illustrating... (10-20s)")
         hb = asyncio.create_task(self._heartbeat("Illustrating..."))
         try:
+            caption = await self._make_caption(prompt)
             blob, stem, bg = await self.images.generate_blob(
-                prompt, self.conv_manager.current_id)
+                prompt, self.conv_manager.current_id, caption)
         except Exception as e:
             self.logger.error(f"Image generation failed: {e}")
             await self.send_status("Illustration failed.")
@@ -862,9 +893,13 @@ class ProtocolHandler:
             hb.cancel()
         pics = self.conv_manager.get_meta('images', [])
         pics.append({'stem': stem, 'prompt': prompt[:200],
+                     'caption': caption[:100],
                      'at_msg': len(self.conv_manager.get_messages())})
         self.conv_manager.set_meta('images', pics)
         self.conv_manager.save()
+        # The caption lands in the scrollback before the screen freezes,
+        # so it's also the last chat line when the picture is dismissed
+        await self._send_canned(f'"{caption}"')
         await self.send_image_blob(blob, bg)
 
     async def _send_text_chunk(self, seq: int, piece: bytes) -> int:

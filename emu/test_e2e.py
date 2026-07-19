@@ -377,7 +377,8 @@ def main():
                          'from src.imaging import convert_to_c64_mc;'
                          'from PIL import Image;'
                          f'i = Image.open("{REPO}/emu/fixtures/scene.png");'
-                         'b, s, c, bg = convert_to_c64_mc(i);'
+                         'b, s, c, bg = convert_to_c64_mc(i, caption='
+                         '"The crystal deep hums with cold light.");'
                          'sys.stdout.write(b[:16].hex() + s[-16:].hex()'
                          ' + c[-16:].hex())'],
                         cwd=str(PROXY_DIR), capture_output=True, text=True
@@ -422,15 +423,17 @@ def main():
                     if re.search(r'!p', screen):
                         raise AssertionError(
                             f'pic indicator not cleared after /pic\n{screen}')
+                    wait_for_screen(monitor, r'the crystal deep hums', 10,
+                                    artifacts, f'{tag}-caption')
                     print('  PASS: image dismissed, chat restored, '
-                          'indicator cleared')
+                          'indicator cleared, caption in scrollback')
 
                     # Picture browser: list + re-show from cache
                     monitor.keyboard_feed('/pics\r')
                     wait_for_screen(monitor, r'1\. a vast crystal cavern',
                                     30, artifacts, f'{tag}-pics-list')
                     monitor.keyboard_feed('/pic 1\r')
-                    wait_for_screen(monitor, r'showing: a vast crystal',
+                    wait_for_screen(monitor, r'showing: the crystal deep',
                                     30, artifacts, f'{tag}-pic-reshow')
                     deadline = time.time() + 60
                     while True:

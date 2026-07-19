@@ -85,6 +85,10 @@ class MockHandler(BaseHTTPRequestHandler):
             # hold-back stripping
             text = ('[[MUSIC: festive]] The carnival begins! Lanterns '
                     'bob between the stalls.')
+        elif 'ATMOSPHERIC CAPTION' in upper:
+            # Deterministic caption: the e2e converter probe bakes the
+            # same text into its expected caption band
+            text = 'The crystal deep hums with cold light.'
         elif 'BEGIN THE ADVENTURE' in upper:
             text = ('You awaken in a dark room smelling of ozone. A single '
                     'door stands to the north. Your quest awaits.')
