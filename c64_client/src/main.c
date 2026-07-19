@@ -123,6 +123,11 @@ static void img_restore_vic(void) {
     }
 }
 
+/* Ext music silenced for the image transfer (some SID play routines
+   SEI long enough to blind the ACIA - field: Niwashi killed every
+   image pass until the tune was stopped); restart on close. */
+static uint8_t img_music_was;
+
 /* Leave the fullscreen image: the picture painted over the input rows
    too, so the editor needs repainting along with frame and chat. */
 static void img_close(void) {
@@ -130,6 +135,10 @@ static void img_close(void) {
     ui_frozen = 0;
     ui_redraw_all();
     editor_redraw();
+    if (img_music_was) {
+        img_music_was = 0;
+        music_ext_begin();
+    }
 }
 #endif
 
@@ -666,6 +675,10 @@ static void handle_message(uint8_t msg_type) {
                untouched, so dismissing is a local redraw - no reload. */
             uint8_t* p = proto_get_payload(&proto);
             img_restore_vic();       /* a retry may follow a failed mc */
+            if (music_state == 0xFF) {
+                img_music_was = 1;
+                music_ext_stop();    /* silence during the transfer */
+            }
             img_active = 1;
             img_shown = 0;
             /* payload: fmt(1) bg(1) resume(1) */

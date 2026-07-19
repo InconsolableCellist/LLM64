@@ -417,6 +417,14 @@ def main():
                                 f'got  {got} colram {colram}')
                         time.sleep(2)
                     print('  PASS: image streamed to bitmap+matrix+colram')
+                    # Heavy SID play routines blind the ACIA mid-transfer
+                    # (field: Niwashi), so ext music must be silenced
+                    # while the image is up...
+                    if monitor.read_memory(
+                            labels['_music_state'],
+                            labels['_music_state'])[0] != 0:
+                        raise AssertionError(
+                            'ext music not silenced during image')
                     monitor.keyboard_feed(' ')   # dismiss
                     screen = wait_for_screen(monitor, r'> pictest', 15,
                                              artifacts, f'{tag}-img-dismiss')
@@ -425,8 +433,17 @@ def main():
                             f'pic indicator not cleared after /pic\n{screen}')
                     wait_for_screen(monitor, r'the crystal deep hums', 10,
                                     artifacts, f'{tag}-caption')
+                    # ...and restart when the picture closes
+                    deadline = time.time() + 15
+                    while monitor.read_memory(
+                            labels['_music_state'],
+                            labels['_music_state'])[0] != 0xFF:
+                        if time.time() > deadline:
+                            raise AssertionError(
+                                'ext music not restarted after image')
+                        time.sleep(1)
                     print('  PASS: image dismissed, chat restored, '
-                          'indicator cleared, caption in scrollback')
+                          'caption shown, music paused + resumed')
 
                     # Picture browser: list + re-show from cache
                     monitor.keyboard_feed('/pics\r')
