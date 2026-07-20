@@ -100,3 +100,12 @@ deploy-c64u-80:
 	$(MAKE) -C c64_client clean
 	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
 	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm.prg
+
+# The canonical deploy: one d64 with the client + overlay module,
+# mounted on the Ultimate's 1541 (JiffyDOS fastload applies, config
+# saves persist inside the image, burnable to a real floppy).
+deploy-c64u-disk-80:
+	$(MAKE) -C c64_client clean
+	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
+	$(MAKE) -C c64_client disk
+	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm.d64

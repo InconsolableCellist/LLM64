@@ -104,31 +104,23 @@ $(TARGETDIR)/%.o: src/%.s
 MOD1 = $(PRG).1
 D64 = $(TARGETDIR)/c64llm.d64
 
-# default.cfg mirrors cfg.c's NetConfig blob: 2-byte PRG load-address
-# header (ignored - the client loads with secondary address 0, same as
-# cbm_save emits), then magic, version, host[32], port[6]. Letters are
-# mapped to the PETSCII codes cc65 uses for string literals (a-z ->
-# $41-$5A, A-Z -> $C1-$DA) so disk and baked defaults compare equal.
-$(TARGETDIR)/default.cfg: FORCE | $(TARGETDIR)
-	@python3 -c 'import sys; \
-	pet = lambda s: bytes((c-0x20 if 0x61<=c<=0x7a else c+0x80 if 0x41<=c<=0x5a else c) for c in s.encode()); \
-	open(sys.argv[3],"wb").write(b"\x00\x10" + bytes([0xC6,1]) + pet(sys.argv[1]).ljust(32,b"\x00") + pet(sys.argv[2]).ljust(6,b"\x00"))' \
-	'$(SERVER_IP)' '$(SERVER_PORT)' $@
-
-# Bootable data disk for device 8: the config-editor module + a default
-# config. Tests build their own variants (e.g. no cfg) with c1541.
+# Bootable distribution disk: client PRG first (LOAD"*",8,1 / the
+# Ultimate's Run Disk boots it), then the overlay module. No config
+# file on a fresh disk - first boot opens the editor and the save
+# lands in the image (the C64U writes mounted d64s through), so the
+# disk carries its own settings from then on. Burnable to real media.
 disk: $(D64)
-$(D64): $(PRG) $(TARGETDIR)/default.cfg
+$(D64): $(PRG)
 	@test -f $(MOD1) || { echo "No $(MOD1) - build with MODE80=1"; exit 1; }
 	@c1541 -format "c64llm,01" d64 $(D64) \
-	       -write $(MOD1) "c64llm.1" \
-	       -write $(TARGETDIR)/default.cfg "c64llm.cfg" >/dev/null
+	       -write $(PRG) "c64llm" \
+	       -write $(MOD1) "c64llm.1" >/dev/null
 	@echo "Disk image: $(D64)"
 
 # Clean
 clean:
 	@echo "Cleaning..."
-	rm -f $(TARGETDIR)/*.o $(TARGETDIR)/*.map $(PRG) $(MOD1) $(D64) $(TARGETDIR)/default.cfg
+	rm -f $(TARGETDIR)/*.o $(TARGETDIR)/*.map $(PRG) $(MOD1) $(D64)
 	@echo "Clean complete"
 
 # Run in VICE emulator (if available)

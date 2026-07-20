@@ -87,19 +87,19 @@ wiring details (and the archaeology of why naive VICE setups fail).
 ## Quick start (real C64 Ultimate)
 
 ```bash
-make -C c64_client clean
-make -C c64_client CONNECT=hayes SERVER_IP=<proxy-lan-ip> MODE80=1
-make -C c64_client disk   # builds the overlay-module boot disk too
-# copy build/c64llm.prg + build/c64llm.prg.1 (as C64LLM.1) next to it
-# on the Ultimate, run the proxy, LOAD"C64LLM",8,1
+make deploy-c64u-disk-80   # build, make the d64, mount + run on the U64
 ```
 
-The client reads its proxy address from `c64llm.cfg` on device 8; if
-it's missing, the config editor opens at boot (edit later via F1 → E).
-The baked `SERVER_IP` is only the pre-filled default.
+Everything ships as one disk image: `make -C c64_client disk` produces
+`build/c64llm.d64` holding the client (`LOAD"*",8,1` boots it) and the
+overlay module. Mount it on the Ultimate's 1541 (JiffyDOS fastload
+applies) — or write it to a real floppy. On first boot the config
+editor asks for the proxy address and saves `c64llm.cfg` back onto the
+disk itself; from then on the disk carries its own settings (edit any
+time via F1 → E). The baked `SERVER_IP` is only the pre-filled default.
 
-Note: `c64llm.1` (the overlay module) is linked against its exact PRG —
-always deploy the pair from the same build, never mix versions.
+Note: the overlay module is linked against its exact PRG — the two
+always travel together on the disk, never mix builds.
 
 Checklist: [docs/05-ultimate-setup.md](docs/05-ultimate-setup.md)
 (ACIA/SwiftLink at $DE00 + modem emulation enabled). Modem settings

@@ -79,22 +79,59 @@ class U64Screen:
         except OSError: pass
 
 
-def deploy_and_run(prg_path, host='192.168.1.64'):
-    """Upload a PRG to /Temp via FTP and run it through the telnet menu."""
+def _context_pick(u, entry):
+    """In an open context menu, arrow down to the line containing
+    `entry` (case-insensitive) and hit Return. Raises if absent."""
+    import time
+    text = u.text().lower()
+    lines = text.splitlines()
+    hits = [i for i, l in enumerate(lines) if entry.lower() in l]
+    if not hits:
+        raise RuntimeError(
+            f'menu entry {entry!r} not on screen:\n{u.text()}')
+    # The highlighted entry is the first menu line; count menu lines
+    # between it and the target. Menu entries are the contiguous
+    # non-empty block around the hit.
+    row = hits[0]
+    first = row
+    while first > 0 and lines[first - 1].strip():
+        first -= 1
+    for _ in range(row - first):
+        u.key('down')
+        time.sleep(0.1)
+    u.key('enter')
+
+
+def deploy_and_run(path, host='192.168.1.64'):
+    """Upload a PRG or D64 to /Temp via FTP and run it via the telnet
+    menu. For a .d64 the Ultimate's 'Run Disk' mounts it on the drive
+    (JiffyDOS-fast, config saves write back into the image) and boots
+    LOAD"*",8,1.
+
+    NOTE: the screen reconstruction can't see the browser highlight,
+    so this assumes the uploaded file is the FIRST entry the cursor
+    lands on - keep /Temp free of other c64llm files (the deploy
+    targets overwrite in place, so this holds in practice)."""
     import subprocess
-    subprocess.run(['curl', '-sS', '-T', prg_path,
-                    f'ftp://{host}/Temp/c64llm.prg', '--user', 'anonymous:'],
+    is_d64 = path.lower().endswith('.d64')
+    name = 'c64llm.d64' if is_d64 else 'c64llm.prg'
+    subprocess.run(['curl', '-sS', '-T', path,
+                    f'ftp://{host}/Temp/{name}', '--user', 'anonymous:'],
                    check=True)
     u = U64Screen(host)
     u.pump(1.0)
     u.key('left', 6)   # up to the root listing from wherever we are
     u.key('down', 2)   # SD -> Flash -> Temp
     u.key('right')     # enter Temp
-    u.key('enter')     # context menu on c64llm.prg
-    u.key('enter')     # Run
+    u.key('enter')     # context menu on the highlighted file
+    u.pump(0.5)
+    if is_d64:
+        _context_pick(u, 'run disk')
+    else:
+        u.key('enter')  # first entry: Run
     u.pump(1.0)
     u.close()
-    print('deployed and running')
+    print('deployed and running' + (' (disk mounted)' if is_d64 else ''))
 
 
 if __name__ == '__main__':
