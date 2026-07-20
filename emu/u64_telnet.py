@@ -118,6 +118,11 @@ def deploy_and_run(path, host='192.168.1.64'):
     subprocess.run(['curl', '-sS', '-T', path,
                     f'ftp://{host}/Temp/{name}', '--user', 'anonymous:'],
                    check=True)
+    # /Temp is a RAM disk (gone on power-off); keep a persistent copy
+    # in /Flash so a cold boot has the current build on hand.
+    subprocess.run(['curl', '-sS', '-T', path,
+                    f'ftp://{host}/Flash/{name}', '--user', 'anonymous:'],
+                   check=True)
     u = U64Screen(host)
     u.pump(1.0)
     u.key('left', 6)   # up to the root listing from wherever we are
