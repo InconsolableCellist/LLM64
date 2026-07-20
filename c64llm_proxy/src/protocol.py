@@ -113,6 +113,7 @@ class ProtocolHandler:
         self._img_sent = False
         self._sid_retry = None
         self._claude = None          # ClaudeSession when in code mode
+        self._claude_model = None    # remembered Claude Code model
 
         # SID music library (optional: absent moods.json disables music)
         self.music = MusicLibrary(
@@ -394,7 +395,7 @@ class ProtocolHandler:
             await self._send_canned(
                 "Commands:\n"
                 "/chat - plain chat mode\n"
-                "/code - Claude Code (drive a coding agent)\n"
+                "/code [model] - Claude Code (drive a coding agent)\n"
                 "/adventure [theme] - text adventure\n"
                 "/chars - list character cards\n"
                 "/char <name> - roleplay with a card\n"
@@ -419,7 +420,7 @@ class ProtocolHandler:
             await self._send_canned("Chat mode. New conversation started.")
 
         elif cmd in ('code', 'claude'):
-            await self._start_claude()
+            await self._start_claude(arg)
 
         elif cmd in ('adventure', 'adv'):
             mode = AdventureMode(self.config, theme=arg)
@@ -572,7 +573,20 @@ class ProtocolHandler:
                 await self._send_canned("Could not fetch the model list.")
 
         elif cmd == 'model':
-            if arg:
+            # In Claude Code mode /model targets the CLI's model, which
+            # means restarting the session (Claude Code can't hot-swap
+            # models mid-session). Elsewhere it's the API chat model.
+            if self.mode.name == 'claude':
+                if arg:
+                    await self._send_canned(
+                        f"Restarting Claude Code with {arg}...")
+                    await self._start_claude(arg)
+                else:
+                    await self._send_canned(
+                        f"Claude Code model: "
+                        f"{self._claude_model or 'default'}. "
+                        "/model <opus|sonnet|haiku> to switch.")
+            elif arg:
                 match = await self._set_model(arg)
                 await self._send_canned(f"Now using: {match}")
             else:
@@ -1118,15 +1132,25 @@ class ProtocolHandler:
 
     # --- Claude Code mode ---------------------------------------------
 
-    async def _start_claude(self):
-        """Enter Claude Code mode: spin up the CLI session."""
+    # Claude Code has its own model namespace, distinct from the API
+    # chat model (/model). Aliases the CLI accepts; a full model id is
+    # also allowed and passed through.
+    CLAUDE_MODELS = ('opus', 'sonnet', 'haiku')
+
+    async def _start_claude(self, model_arg: str = ''):
+        """Enter Claude Code mode: spin up the CLI session. Optional
+        model alias (opus/sonnet/haiku) or full id; else the config
+        default, else the CLI's own default."""
+        model = (model_arg.strip() or self._claude_model
+                 or self.config.claude_model or None)
+        self._claude_model = model
         await self._stop_claude()
         self._switch_mode(ClaudeMode(self.config))
         try:
             self._claude = ClaudeSession(
                 self.config.claude_command,
                 self.config.claude_workdir,
-                model=self.model_override)
+                model=model)
             await self._claude.start()
         except Exception as e:
             self.logger.error(f"Claude Code start failed: {e}")
@@ -1136,8 +1160,9 @@ class ProtocolHandler:
                 "Couldn't start Claude Code on the server.")
             return
         await self._send_canned(
-            "Claude Code ready. Tell me what to build; I'll ask "
-            "before running tools (reply y or n). /chat to exit.\n"
+            f"Claude Code ready ({model or 'default model'}). Tell me "
+            "what to build; I'll ask before running tools (reply y or "
+            "n). /model <opus|sonnet|haiku> switches, /chat exits.\n"
             f"Working in: {self.config.claude_workdir}")
 
     async def _stop_claude(self):

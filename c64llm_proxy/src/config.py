@@ -117,6 +117,9 @@ class Config:
         # ~ won't expand under create_subprocess_exec; do it here
         self.claude_workdir = os.path.expanduser(
             cc.get('workdir', str(Path.home())))
+        # Default Claude Code model (opus/sonnet/haiku or a full id);
+        # empty = the CLI's own default. Distinct from the API model.
+        self.claude_model = cc.get('model', '')
 
         # API key is optional: local servers (llama.cpp, Ollama, ...) accept
         # any bearer token. Cloud providers still need a real key.
