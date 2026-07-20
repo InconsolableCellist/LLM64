@@ -298,8 +298,31 @@ static uint8_t at_command(const char* cmd, char* resp, uint8_t max_len) {
     return n;
 }
 
+/* Hayes escape guard time (~1.2s of 60Hz ticks, wrap-safe) */
+static void guard_pause(void) {
+    uint8_t last = sys_ticks[0];
+    uint8_t elapsed = 0;
+    while (elapsed < 72) {
+        uint8_t now = sys_ticks[0];
+        elapsed += (uint8_t)(now - last);
+        last = now;
+    }
+}
+
 static uint8_t modem_connect(void) {
     char resp[64];
+
+    /* The C64U's modem survives a C64 reset: rebooting mid-session
+       leaves it in data mode, where every AT command below would
+       vanish into the OLD connection as data (field: 'Connect
+       failed' after a warm reboot). Escape and hang up first; in
+       command mode the stray +++ is harmless. */
+    ui_status("Hanging up any old session...");
+    guard_pause();
+    serial_write('+'); serial_write('+'); serial_write('+');
+    serial_flush();
+    guard_pause();
+    at_command("ATH", resp, sizeof(resp));
 
     ui_status("Resetting modem...");
     at_command("ATZ", resp, sizeof(resp));
@@ -1040,17 +1063,20 @@ int main(void) {
     acia_init_hw();
 
 #ifndef CONNECT_DIRECT
-    if (!modem_connect()) {
-        ui_status("Connect failed! Check server/modem.");
-        for (;;) { if (kbhit()) cgetc(); }
+    while (!modem_connect()) {
+        ui_status("Connect failed - any key retries.");
+        while (!kbhit());
+        cgetc();
     }
 #endif
 
-    ui_status("Contacting server...");
-    proto_send_ping();
-    if (!wait_for_ack(8000)) {
-        ui_status("No server response! Check proxy.");
-        for (;;) { if (kbhit()) cgetc(); }
+    for (;;) {
+        ui_status("Contacting server...");
+        proto_send_ping();
+        if (wait_for_ack(8000)) break;
+        ui_status("No server response - any key retries.");
+        while (!kbhit());
+        cgetc();
     }
 
     proto_send_new_conversation();

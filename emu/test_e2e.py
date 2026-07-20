@@ -257,12 +257,21 @@ def main():
         d64_path = None
         mod1 = Path(args.prg + '.1')
         mod2 = Path(args.prg + '.2')
-        if args.mode == 'direct' and mod1.exists() and shutil.which('c1541'):
+        if mod1.exists() and shutil.which('c1541'):
             d64_path = artifacts / 'modules.d64'
             cmd = ['c1541', '-format', 'c64llm,01', 'd64', str(d64_path),
                    '-write', str(mod1), 'c64llm.1']
             if mod2.exists():
                 cmd += ['-write', str(mod2), 'c64llm.2']
+            if args.mode == 'hayes':
+                # hayes boots from the DISK config (the real-hardware
+                # path): blob = PRG header, magic, version, host[32],
+                # port[6] - digits/dots are PETSCII-identical
+                cfg = artifacts / 'test.cfg'
+                cfg.write_bytes(b'\x00\x10\xc6\x01'
+                                + b'127.0.0.1'.ljust(32, b'\x00')
+                                + str(proxy_port).encode().ljust(6, b'\x00'))
+                cmd += ['-write', str(cfg), 'c64llm.cfg']
             subprocess.run(cmd, check=True, capture_output=True)
             print(f"module disk: {d64_path.name}")
 
