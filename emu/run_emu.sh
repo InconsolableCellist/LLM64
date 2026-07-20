@@ -33,7 +33,12 @@ case "$MODE" in
     ;;
 esac
 
+# Overlay-module disk (make disk): mount on unit 8 if built
+DISK8=()
+[ -f c64_client/build/c64llm.d64 ] && DISK8=(-8 c64_client/build/c64llm.d64)
+
 exec x64sc \
   -acia1 -acia1mode 0 -acia1base 0xDE00 -acia1irq 2 -myaciadev 0 \
   "${RSDEV[@]}" -rsdev1baud 9600 \
+  "${DISK8[@]}" \
   -autostartprgmode 1 -autostart "$PRG"

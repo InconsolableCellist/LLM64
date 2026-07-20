@@ -20,6 +20,13 @@
 #include "text.h"
 #include "ui.h"
 #include "editor.h"
+#include "cfg.h"
+#include "loader.h"
+
+#ifdef SOFT80
+/* mod_config.c (overlay module #1) */
+void mod_config_run(void);
+#endif
 
 /* music.s */
 void music_next(void);
@@ -144,8 +151,9 @@ static void img_close(void) {
 }
 #endif
 
-/* Status-line scratch shared by the data-loss diagnostics */
-static char dm[41];
+/* Status-line scratch shared by the data-loss diagnostics and the
+   dial status (sized for "Dialing " + a full-length host:port) */
+static char dm[48];
 static const char hx[] = "0123456789abcdef";
 static void hx2(uint8_t i, uint8_t v) {
     dm[i] = hx[v >> 4];
@@ -276,8 +284,12 @@ static uint8_t modem_connect(void) {
     at_command("ATE0", resp, sizeof(resp));
     at_command("ATV1", resp, sizeof(resp));
 
-    ui_status("Dialing " SERVER_IP ":" SERVER_PORT "...");
-    at_command("ATDT" SERVER_IP ":" SERVER_PORT, resp, sizeof(resp));
+    /* g_dial holds "ATDT<host>:<port>" from the disk config (or the
+       baked default); +4 skips the ATDT for the status line */
+    strcpy(dm, "Dialing ");
+    strcat(dm, g_dial + 4);
+    ui_status(dm);
+    at_command(g_dial, resp, sizeof(resp));
 
     if (strstr(resp, "CONNECT") == 0 && strstr(resp, "connect") == 0) {
         return 0;
@@ -321,6 +333,9 @@ static void menu_open(void) {
     } else {
         ui_draw_row(11, "  S  music: streamed (s stops)", COLOR_CYAN, 0);
     }
+#ifdef SOFT80
+    ui_draw_row(12, "  E  server config", COLOR_CYAN, 0);
+#endif
     ui_draw_row(13, "  F1 or stop: close", COLOR_GRAY2, 0);
 }
 
@@ -849,6 +864,21 @@ static void handle_key(uint8_t k) {
                 }
                 break;
             case 'h': send_command("/help"); break;
+#ifdef SOFT80
+            case 'e':
+                /* Overlay module: mask serial RX around the disk LOAD
+                   (JiffyDOS IEC timing); unmasking is automatic once
+                   the main loop pumps again */
+                serial_rx_pause();
+                if (module_load("c64llm.1")) {
+                    mod_config_run();
+                    build_dial_string();  /* used on next boot/redial */
+                } else {
+                    ui_status("Module load failed - drive 8?");
+                }
+                chat_redraw();
+                break;
+#endif
             default: break;  /* F1/STOP/anything else: just close */
         }
         return;
@@ -915,6 +945,23 @@ int main(void) {
     proto_init(&proto, payload_buffer, MAX_PAYLOAD);
     ui_init();
     editor_init();
+
+#ifndef CONNECT_DIRECT
+    /* Disk config before the ACIA wakes: the KERNAL still owns the
+       interrupt vectors, so the (JiffyDOS) LOAD runs undisturbed.
+       No valid c64llm.cfg -> pull in the config editor module. */
+    if (!config_load()) {
+#ifdef SOFT80
+        if (module_load("c64llm.1")) {
+            mod_config_run();
+            ui_redraw_all();
+            editor_redraw();
+        }
+#endif
+    }
+    build_dial_string();
+#endif
+
     ui_status("Initializing ACIA...");
     acia_init_hw();
 
@@ -936,7 +983,10 @@ int main(void) {
     wait_for_ack(4000);
 
     chat_start(2);
-    chat_append_petscii("Connected to " SERVER_IP ":" SERVER_PORT);
+    chat_append_petscii("Connected to ");
+    chat_append_petscii(g_host);
+    chat_append_petscii(":");
+    chat_append_petscii(g_port);
     chat_finish();
 
     /* Drop any autostart leftovers before accepting input; the harness

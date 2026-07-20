@@ -18,6 +18,7 @@
         .export _serial_write
         .export _serial_can_write
         .export _serial_flush
+        .export _serial_rx_pause
         .export _acia_init_hw
         .export _acia_send_at_command
         .export _acia_get_status
@@ -406,6 +407,28 @@ _serial_available:
         rts
 @empty: lda #0
         ldx #0
+        rts
+
+;---------------------------------------
+; void serial_rx_pause(void)
+;
+; Mask the ACIA RX interrupt before a KERNAL disk LOAD (overlay
+; modules): JiffyDOS bit-bangs cycle-exact IEC transfers and a serial
+; NMI mid-byte would corrupt them. Piggybacks on the ring-full mask
+; machinery - _serial_available unmasks automatically once the main
+; loop resumes and the ring is drained, so there is no explicit
+; resume call.
+;---------------------------------------
+_serial_rx_pause:
+        php
+        sei
+        lda rx_masked
+        bne @done               ; already masked (ring full)
+        lda #ACIA_CMD_VALUE | 2
+        sta ACIA_COMMAND
+        lda #1
+        sta rx_masked
+@done:  plp
         rts
 
 ;---------------------------------------

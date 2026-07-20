@@ -250,11 +250,26 @@ def main():
         else:
             rsdev = ['-rsdev1', f'127.0.0.1:{proxy_port}', '+rsdev1ip232']
 
+        # 3.5 Overlay-module disk: direct mode mounts a d64 on unit 8
+        # carrying the config-editor module (c64llm.1), so the F1->E
+        # module test exercises the real disk-load path. Built fresh in
+        # artifacts per run - the editor's save writes into it.
+        d64_path = None
+        mod1 = Path(args.prg + '.1')
+        if args.mode == 'direct' and mod1.exists() and shutil.which('c1541'):
+            d64_path = artifacts / 'modules.d64'
+            subprocess.run(
+                ['c1541', '-format', 'c64llm,01', 'd64', str(d64_path),
+                 '-write', str(mod1), 'c64llm.1'],
+                check=True, capture_output=True)
+            print(f"module disk: {d64_path.name} (c64llm.1)")
+
         # 4. VICE. No warp in hayes mode: the client's AT-response timeouts
         # are cycle-based, but tcpser answers in wall-clock time, so a warped
         # C64 gives up long before the modem replies.
         mon_port = find_free_port()
         speed = [] if (args.mode == 'hayes' or args.no_warp) else ['-warp']
+        disk8 = ['-8', str(d64_path)] if d64_path else []
         stack.start('vice', [
             'x64sc', '-default', *speed, '-sounddev', 'dummy',
             '+confirmonexit',
@@ -262,6 +277,7 @@ def main():
             '-acia1base', '0xDE00',
             '-acia1irq', '2', '-myaciadev', '0',
             *rsdev, '-rsdev1baud', str(args.baud),
+            *disk8,
             '-binarymonitor',
             '-binarymonitoraddress', f'ip4://127.0.0.1:{mon_port}',
             '-exitscreenshot', str(artifacts / f'{args.mode}-final.png'),
@@ -622,6 +638,40 @@ def main():
                 final = wait_for_screen(monitor, r'now using: mock-large',
                                         15, artifacts, f'{tag}-modelset')
 
+                # Overlay module system (SOFT80): F1 -> E pulls the
+                # config editor from the d64 on unit 8. Segment OVERLAY1
+                # is NOT in the resident PRG, so the editor appearing at
+                # all proves the disk load; the save is verified against
+                # the d64 after VICE exits.
+                if d64_path and args.cols80:
+                    monitor.keyboard_feed_petscii(b'\x85')  # F1
+                    wait_for_screen(monitor, r'server config', 15,
+                                    artifacts, f'{tag}-menu-mod')
+                    monitor.keyboard_feed('e')
+                    wait_for_screen(monitor, r'host:', 20,
+                                    artifacts, f'{tag}-mod-editor')
+                    print('  PASS: config module loaded from drive 8')
+                    monitor.keyboard_feed_petscii(b'\x14' * 24)  # clear host
+                    monitor.keyboard_feed('10.0.0.7')
+                    wait_for_screen(monitor, r'host: 10\.0\.0\.7', 15,
+                                    artifacts, f'{tag}-mod-host')
+                    monitor.keyboard_feed('\r')                  # -> port
+                    monitor.keyboard_feed_petscii(b'\x14' * 8)   # clear port
+                    monitor.keyboard_feed('6502\r')              # save
+                    wait_for_screen(monitor, r'config saved', 15,
+                                    artifacts, f'{tag}-mod-saved')
+                    print('  PASS: config editor saved to drive 8')
+                    # Reopen: module reloads, fields show the live values
+                    monitor.keyboard_feed_petscii(b'\x85')
+                    time.sleep(1)
+                    monitor.keyboard_feed('e')
+                    wait_for_screen(monitor, r'port: 6502', 20,
+                                    artifacts, f'{tag}-mod-reopen')
+                    monitor.keyboard_feed('\r\r')                # save again
+                    wait_for_screen(monitor, r'config saved', 15,
+                                    artifacts, f'{tag}-mod-resave')
+                    print('  PASS: module reload shows live config')
+
                 # Roleplay restore: /chat leaves the card, reloading the
                 # conversation (newest saved - the empty chat one is
                 # in-memory only) must bring the character back via the
@@ -710,6 +760,24 @@ def main():
 
         monitor.quit()
         time.sleep(2)  # let -exitscreenshot write
+
+        # The config editor's save must have landed on the d64 itself:
+        # read c64llm.cfg back out and check the blob (magic C6 01,
+        # host at +2, port at +34, NUL-padded PETSCII).
+        if d64_path and args.tui and args.cols80:
+            saved = artifacts / 'saved.cfg'
+            subprocess.run(
+                ['c1541', str(d64_path), '-read', 'c64llm.cfg', str(saved)],
+                check=True, capture_output=True)
+            blob = saved.read_bytes()[2:]  # skip the PRG load-address header
+            host = blob[2:34].rstrip(b'\0').decode('ascii', 'replace')
+            port = blob[34:40].rstrip(b'\0').decode('ascii', 'replace')
+            if blob[:2] != b'\xc6\x01' or host != '10.0.0.7' or port != '6502':
+                raise AssertionError(
+                    f'cfg on disk wrong: magic={blob[:2].hex()} '
+                    f'host={host!r} port={port!r}')
+            print('  PASS: c64llm.cfg on the d64 holds the edited config')
+
         print(f"\nE2E {args.mode} mode: PASS")
         status = 0
 

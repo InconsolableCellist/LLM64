@@ -80,6 +80,11 @@ uint8_t serial_rx_count(void);
 uint8_t serial_overflows(void);
 uint8_t serial_overruns(void);
 
+/* Mask the ACIA RX interrupt around a KERNAL disk LOAD (module loads).
+   Unmasking is automatic: serial_available() restores it once the main
+   loop resumes and the RX ring is drained. */
+void serial_rx_pause(void);
+
 /* Internal functions (implemented in ASM) */
 void __fastcall__ acia_init_hw(void);
 uint8_t __fastcall__ acia_send_at_command(const char* cmd);

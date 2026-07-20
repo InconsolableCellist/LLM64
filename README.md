@@ -54,6 +54,13 @@ whole stack is verified end-to-end by automated tests running in VICE.
   image metadata (loading one restores the adventure, the soundtrack,
   and the character), `/history` paging, `/find` search, `/findall`
   cross-conversation search, `/save`//`/restore` checkpoints
+- **Disk-loaded overlay modules**: sub-applications live on the boot
+  disk (device 8) as cc65 overlay files and load on demand into a
+  fixed RAM slot below the C stack — modal UIs without growing the
+  resident client. First module: a config editor that un-bakes the
+  proxy address into `c64llm.cfg` on disk (runs at boot when no config
+  exists, or from the F1 menu). JiffyDOS (or any fastloader) strongly
+  recommended — stock KERNAL loads work but crawl
 - **Automated end-to-end tests in VICE**: `make test-all` boots mock
   LLM → proxy → emulated C64 and asserts on actual screen contents and
   memory (70+ asserts, including image bitmap bytes and SID play
@@ -82,8 +89,17 @@ wiring details (and the archaeology of why naive VICE setups fail).
 ```bash
 make -C c64_client clean
 make -C c64_client CONNECT=hayes SERVER_IP=<proxy-lan-ip> MODE80=1
-# copy build/c64llm.prg to the Ultimate, run the proxy, LOAD"C64LLM",8,1
+make -C c64_client disk   # builds the overlay-module boot disk too
+# copy build/c64llm.prg + build/c64llm.prg.1 (as C64LLM.1) next to it
+# on the Ultimate, run the proxy, LOAD"C64LLM",8,1
 ```
+
+The client reads its proxy address from `c64llm.cfg` on device 8; if
+it's missing, the config editor opens at boot (edit later via F1 → E).
+The baked `SERVER_IP` is only the pre-filled default.
+
+Note: `c64llm.1` (the overlay module) is linked against its exact PRG —
+always deploy the pair from the same build, never mix versions.
 
 Checklist: [docs/05-ultimate-setup.md](docs/05-ultimate-setup.md)
 (ACIA/SwiftLink at $DE00 + modem emulation enabled). Modem settings
@@ -96,7 +112,7 @@ re-evaluated on ACIA command writes and the wrong settings drop data.
 | Key | Action |
 |-----|--------|
 | Return | Send message |
-| F1 | Menu (models, modes, music toggle) |
+| F1 | Menu (models, modes, music toggle, server config) |
 | F2 / F3 | New conversation / cancel reply |
 | F4 / F6 | Page chat up / down |
 | F5 | Conversation browser |
@@ -129,7 +145,7 @@ docs/           design docs + setup guides
 | `MODE80=1` | Soft-80 bitmap UI (the primary experience) |
 | `CONNECT=direct` | No modem handshake; ACIA pipe is the connection (VICE) |
 | `CONNECT=hayes` | AT-command dial (C64 Ultimate, or VICE+tcpser) |
-| `SERVER_IP=` / `SERVER_PORT=` | Proxy address baked into the PRG |
+| `SERVER_IP=` / `SERVER_PORT=` | Default proxy address (overridden by `c64llm.cfg` on disk) |
 | `DEBUG_CLIENT=1` | Scripted diagnostic session instead of the TUI |
 
 ## Configuration (proxy)
@@ -142,11 +158,10 @@ at your server. Optional sections enable the extras: `[images]`
 
 ## Roadmap
 
-Overlay/module system (stream UI modules from the proxy into a fixed
-RAM slot — modal sub-applications without growing the resident
-client), a full conversation manager, Claude Code integration (the
-proxy drives a coding-agent session; the C64 approves tool use),
-19200/38400 baud, screensaver/ambient mode.
+More overlay modules (a full conversation manager, sound window with
+oscilloscope), 19200/38400 baud, screensaver/ambient mode. Claude Code
+integration shipped: `/code` drives a coding-agent session from the
+C64, tool approvals answered at the prompt.
 
 ## Documentation
 
