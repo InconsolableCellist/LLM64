@@ -100,8 +100,9 @@ $(TARGETDIR)/%.o: src/%.s
 	@echo "Assembling $<..."
 	CC65_HOME=$(CC65_HOME) $(AS) $(ASFLAGS) -o $@ $<
 
-# Overlay module + boot disk (MODE80 builds emit the module as $(PRG).1)
+# Overlay modules + boot disk (MODE80 builds emit $(PRG).1, .2, ...)
 MOD1 = $(PRG).1
+MOD2 = $(PRG).2
 D64 = $(TARGETDIR)/c64llm.d64
 
 # Bootable distribution disk: client PRG first (LOAD"*",8,1 / the
@@ -114,13 +115,14 @@ $(D64): $(PRG)
 	@test -f $(MOD1) || { echo "No $(MOD1) - build with MODE80=1"; exit 1; }
 	@c1541 -format "c64llm,01" d64 $(D64) \
 	       -write $(PRG) "c64llm" \
-	       -write $(MOD1) "c64llm.1" >/dev/null
+	       -write $(MOD1) "c64llm.1" \
+	       -write $(MOD2) "c64llm.2" >/dev/null
 	@echo "Disk image: $(D64)"
 
 # Clean
 clean:
 	@echo "Cleaning..."
-	rm -f $(TARGETDIR)/*.o $(TARGETDIR)/*.map $(PRG) $(MOD1) $(D64)
+	rm -f $(TARGETDIR)/*.o $(TARGETDIR)/*.map $(PRG) $(MOD1) $(MOD2) $(D64)
 	@echo "Clean complete"
 
 # Run in VICE emulator (if available)
@@ -139,10 +141,12 @@ upload: $(PRG)
 	@echo "Uploading $(PRG) to C64 at $(C64_IP)..."
 	@curl -T $(PRG) ftp://$(C64_IP)$(C64_PATH)/$(TARGET).prg --user anonymous: || \
 		(echo "Upload failed! Make sure C64 FTP server is running at $(C64_IP)" && exit 1)
-	@if [ -f $(MOD1) ]; then \
-		curl -T $(MOD1) ftp://$(C64_IP)$(C64_PATH)/C64LLM.1 --user anonymous: && \
-		echo "Module uploaded: C64LLM.1"; \
-	fi
+	@for m in $(MOD1) $(MOD2); do \
+		[ -f $$m ] || continue; \
+		ext=$${m##*.}; \
+		curl -T $$m ftp://$(C64_IP)$(C64_PATH)/C64LLM.$$ext --user anonymous: && \
+		echo "Module uploaded: C64LLM.$$ext"; \
+	done
 	@echo "Upload complete: ftp://$(C64_IP)$(C64_PATH)/$(TARGET).prg"
 
 # Build and upload in one step

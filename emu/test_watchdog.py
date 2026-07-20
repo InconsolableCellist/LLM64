@@ -16,6 +16,7 @@ test is quick.
 import json
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -130,6 +131,14 @@ def main():
         relay_port = find_free_port()
         relay = FrameDropRelay(relay_port, pport)
         relay.start()
+        # F5 loads the conversation-manager module from disk in SOFT80
+        # builds - mount a d64 carrying it
+        d64 = artifacts / 'modules.d64'
+        subprocess.run(
+            ['c1541', '-format', 'c64llm,01', 'd64', str(d64),
+             '-write', str(REPO / 'c64_client/build/c64llm.prg.2'),
+             'c64llm.2'],
+            check=True, capture_output=True)
         mon_port = find_free_port()
         stack.start('vice', [
             'x64sc', '-default', '-sounddev', 'dummy', '+confirmonexit',
@@ -138,6 +147,7 @@ def main():
             '-rsdev1', f'127.0.0.1:{relay_port}', '+rsdev1ip232',
             '-rsdev1baud', '9600', '-binarymonitor',
             '-binarymonitoraddress', f'ip4://127.0.0.1:{mon_port}',
+            '-8', str(d64),
             '-autostartprgmode', '1',
             '-autostart', str(REPO / 'c64_client/build/c64llm.prg')])
         if not wait_for_port(mon_port, timeout=30):

@@ -105,6 +105,8 @@ typedef enum {
 #define MSG_PING                0x36  /* '6' - was 0x06 */
 #define MSG_LIST_MODELS         0x37  /* '7' */
 #define MSG_SET_MODEL           0x38  /* '8' */
+#define MSG_DELETE_CONVERSATION 0x39  /* '9' - id(4); ACK/NAK */
+#define MSG_STAR_CONVERSATION   0x3A  /* ':' - id(4) toggle star; ACK/NAK */
 #define MSG_ACK                 0x40  /* '@' - was 0x10 */
 #define MSG_NAK                 0x41  /* 'A' - was 0x11 */
 #define MSG_CHAT_CHUNK          0x50  /* 'P' - was 0x20 */

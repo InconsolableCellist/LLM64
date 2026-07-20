@@ -52,8 +52,10 @@ whole stack is verified end-to-end by automated tests running in VICE.
   and illustration directives), `/chat` plain chat — per-mode sampling
 - **Conversation tooling**: persistent conversations with mode/music/
   image metadata (loading one restores the adventure, the soundtrack,
-  and the character), `/history` paging, `/find` search, `/findall`
-  cross-conversation search, `/save`//`/restore` checkpoints
+  and the character), a full conversation manager (F5: paged list,
+  starring, delete-with-confirm — an overlay module), `/history`
+  paging, `/find` search, `/findall` cross-conversation search,
+  `/save`//`/restore` checkpoints
 - **Disk-loaded overlay modules**: sub-applications live on the boot
   disk (device 8) as cc65 overlay files and load on demand into a
   fixed RAM slot below the C stack — modal UIs without growing the
@@ -115,7 +117,7 @@ re-evaluated on ACIA command writes and the wrong settings drop data.
 | F1 | Menu (models, modes, music toggle, server config) |
 | F2 / F3 | New conversation / cancel reply |
 | F4 / F6 | Page chat up / down |
-| F5 | Conversation browser |
+| F5 | Conversation manager (load, star, delete, pages) |
 | F7 | Help |
 | CRSR up/down | Scroll chat |
 | Ctrl-A/E, Ctrl-K/D, CLR | Editor: home/end, kill, delete, clear |
@@ -158,8 +160,8 @@ at your server. Optional sections enable the extras: `[images]`
 
 ## Roadmap
 
-More overlay modules (a full conversation manager, sound window with
-oscilloscope), 19200/38400 baud, screensaver/ambient mode. Claude Code
+More overlay modules (sound window with oscilloscope, prompt/template
+editor), 19200/38400 baud, screensaver/ambient mode. Claude Code
 integration shipped: `/code` drives a coding-agent session from the
 C64, tool approvals answered at the prompt.
 

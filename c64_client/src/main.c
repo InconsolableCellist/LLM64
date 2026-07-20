@@ -22,10 +22,12 @@
 #include "editor.h"
 #include "cfg.h"
 #include "loader.h"
+#include "modapi.h"
 
 #ifdef SOFT80
-/* mod_config.c (overlay module #1) */
+/* Overlay module entries (module #1 config, #2 conversation manager) */
 void mod_config_run(void);
+void mod_convmgr_run(void);
 #endif
 
 /* music.s */
@@ -78,9 +80,10 @@ void music_ext_stop(void);
 #define ST_LOADING   3  /* bulk conversation load, chat frozen */
 
 /* Modal overlays */
-#define MODAL_NONE 0
-#define MODAL_CONV 1
-#define MODAL_MENU 3
+#define MODAL_NONE   0
+#define MODAL_CONV   1
+#define MODAL_MENU   3
+#define MODAL_MODULE 4  /* an overlay module owns keys + screen */
 
 ProtoContext proto;
 static uint8_t payload_buffer[MAX_PAYLOAD];
@@ -212,18 +215,37 @@ static uint8_t watchdog_expired(void) {
 #define PA_CANCEL  2
 static uint8_t pending_ack = PA_NONE;
 
-/* Conversation browser */
-#define MAX_CONVS 17
-typedef struct {
-    uint32_t id;
-    char title[37];  /* PETSCII, null-terminated */
-} ConvEntry;
-static ConvEntry convs[MAX_CONVS];
-static uint8_t conv_count;
-static uint8_t conv_sel;
-static uint8_t conv_loading;
+/* Conversation list state - shared with overlay modules (modapi.h);
+   the resident 40-col browser and the SOFT80 manager module both
+   render from these */
+ConvEntry convs[MAX_CONVS];
+uint8_t conv_count;
+uint8_t conv_sel;
+uint8_t conv_loading;
+uint8_t conv_more_pages;
 static uint8_t load_count;   /* messages received during a bulk load */
 static uint8_t load_open;    /* a split message is mid-assembly */
+
+#ifdef SOFT80
+/* Module-modal hooks (modapi.h): while a module modal is open it gets
+   first chance at messages and owns the keyboard, but the main loop
+   keeps pumping serial */
+uint8_t (*mod_msg_hook)(uint8_t msg_type);
+void (*mod_key_hook)(uint8_t key);
+
+void mod_modal_begin(uint8_t (*msg)(uint8_t), void (*key)(uint8_t)) {
+    mod_msg_hook = msg;
+    mod_key_hook = key;
+    modal = MODAL_MODULE;
+}
+
+void mod_modal_end(void) {
+    mod_msg_hook = 0;
+    mod_key_hook = 0;
+    modal = MODAL_NONE;
+    chat_redraw();
+}
+#endif
 
 /* Model browser */
 
@@ -342,7 +364,62 @@ static void menu_open(void) {
 /* Model browser removed: /models lists (numbered), /model <n> or a
    name prefix switches - ~900 bytes reclaimed for the module slot. */
 
-/* --- modal: conversation browser ------------------------------------ */
+/* --- conversation list: shared parser + load kickoff ----------------- */
+
+/* Start loading a conversation (called from the browser or the
+   manager module; the caller has already closed its modal) */
+void load_conversation_by_id(uint32_t id) {
+#ifdef SOFT80
+    /* A playing tune's SEI windows corrupt the incoming load frames
+       (field: big load stalled at 'Loading... 19'); the loaded
+       conversation's own soundtrack resumes from meta afterwards */
+    music_ext_stop();
+#endif
+    chat_clear();
+    chat_freeze(1);  /* render once at the end: jump straight to the bottom */
+    load_count = 0;
+    load_open = 0;
+    /* Arm the watchdog: a frame lost in transit would otherwise leave the
+       chat frozen at 'Loading... NN' forever */
+    state = ST_LOADING;
+    watchdog_reset();
+    ui_status("Loading conversation...");
+    proto_send_message(MSG_LOAD_CONVERSATION, (uint8_t*)&id, 4);
+}
+
+/* Parse a CONVERSATION_LIST frame: count, more, then
+   [id(4) timestamp(4) title\0] per entry. 'more' is a bitfield:
+   bit0 = more frames coming, bit1 = more pages exist beyond these.
+   Callers draw; this only fills convs[]. */
+void conv_list_frame(void) {
+    uint8_t* p = proto_get_payload(&proto);
+    uint16_t plen = proto_get_length(&proto);
+    uint8_t n = p[0];
+    uint8_t more = p[1];
+    uint16_t off = 2;
+    uint8_t i;
+
+    for (i = 0; i < n && conv_count < MAX_CONVS && off + 8 < plen; ++i) {
+        ConvEntry* e = &convs[conv_count];
+        uint8_t t = 0;
+        memcpy(&e->id, p + off, 4);
+        off += 8;  /* id + timestamp */
+        while (off < plen && p[off] && t < sizeof(e->title) - 1) {
+            e->title[t++] = ascii_to_petscii(p[off++]);
+        }
+        e->title[t] = 0;
+        ++off;  /* null */
+        ++conv_count;
+    }
+    conv_more_pages = (more >> 1) & 1;
+    if (!(more & 1) || conv_count >= MAX_CONVS) {
+        conv_loading = 0;
+    }
+}
+
+#ifndef SOFT80
+/* --- modal: conversation browser (40-col builds only; SOFT80 uses
+   the manager module on disk, loaded via F5) ------------------------- */
 
 static void conv_draw(void) {
     uint8_t i;
@@ -379,51 +456,24 @@ static void conv_close(void) {
 static void conv_load_selected(void) {
     uint32_t id = convs[conv_sel].id;
     conv_close();
+    load_conversation_by_id(id);
+}
+#endif /* !SOFT80 */
+
 #ifdef SOFT80
-    /* A playing tune's SEI windows corrupt the incoming load frames
-       (field: big load stalled at 'Loading... 19'); the loaded
-       conversation's own soundtrack resumes from meta afterwards */
-    music_ext_stop();
+/* Open the conversation manager module (F5 / menu C) */
+static void convmgr_open(void) {
+    uint8_t ok;
+    serial_rx_pause();
+    ok = module_load("c64llm.2");
+    serial_rx_resume();  /* BEFORE the module runs: it requests+renders */
+    if (ok) {
+        mod_convmgr_run();
+    } else {
+        ui_status("Module load failed - drive 8?");
+    }
+}
 #endif
-    chat_clear();
-    chat_freeze(1);  /* render once at the end: jump straight to the bottom */
-    load_count = 0;
-    load_open = 0;
-    /* Arm the watchdog: a frame lost in transit would otherwise leave the
-       chat frozen at 'Loading... NN' forever */
-    state = ST_LOADING;
-    watchdog_reset();
-    ui_status("Loading conversation...");
-    proto_send_message(MSG_LOAD_CONVERSATION, (uint8_t*)&id, 4);
-}
-
-/* Parse a CONVERSATION_LIST frame: count, more, then
-   [id(4) timestamp(4) title\0] per entry */
-static void conv_list_frame(void) {
-    uint8_t* p = proto_get_payload(&proto);
-    uint16_t plen = proto_get_length(&proto);
-    uint8_t n = p[0];
-    uint8_t more = p[1];
-    uint16_t off = 2;
-    uint8_t i;
-
-    for (i = 0; i < n && conv_count < MAX_CONVS && off + 8 < plen; ++i) {
-        ConvEntry* e = &convs[conv_count];
-        uint8_t t = 0;
-        memcpy(&e->id, p + off, 4);
-        off += 8;  /* id + timestamp */
-        while (off < plen && p[off] && t < sizeof(e->title) - 1) {
-            e->title[t++] = ascii_to_petscii(p[off++]);
-        }
-        e->title[t] = 0;
-        ++off;  /* null */
-        ++conv_count;
-    }
-    if (!more || conv_count >= MAX_CONVS) {
-        conv_loading = 0;
-    }
-    if (modal == MODAL_CONV) conv_draw();
-}
 
 /* Parse a CONVERSATION_DATA frame: count, more, then [role text\0].
    Long messages arrive split across frames - role bit 7 marks a
@@ -475,6 +525,12 @@ static void conv_data_frame(void) {
 /* --- protocol dispatch ---------------------------------------------- */
 
 static void handle_message(uint8_t msg_type) {
+#ifdef SOFT80
+    /* An open module modal gets first chance (conversation manager
+       consumes list frames and its op ACKs; anything it declines
+       falls through to the resident cases below) */
+    if (mod_msg_hook && mod_msg_hook(msg_type)) return;
+#endif
     switch (msg_type) {
         case MSG_STATUS: {
             char* p = (char*)proto_get_payload(&proto);
@@ -573,6 +629,9 @@ static void handle_message(uint8_t msg_type) {
             break;
         case MSG_CONVERSATION_LIST:
             conv_list_frame();
+#ifndef SOFT80
+            if (modal == MODAL_CONV) conv_draw();
+#endif
             break;
         case MSG_CONVERSATION_DATA:
             conv_data_frame();
@@ -840,6 +899,10 @@ static void handle_key(uint8_t k) {
         img_close();
         return;
     }
+    if (modal == MODAL_MODULE) {
+        if (mod_key_hook) mod_key_hook(k);
+        return;
+    }
 #endif
     if (modal == MODAL_MENU) {
         modal = MODAL_NONE;
@@ -847,7 +910,11 @@ static void handle_key(uint8_t k) {
         switch (k) {
             case 'n': new_conversation(); break;
             case 'm': send_command("/models"); break;
+#ifdef SOFT80
+            case 'c': if (state == ST_IDLE) convmgr_open(); break;
+#else
             case 'c': if (state == ST_IDLE) conv_open(); break;
+#endif
             case 'a': send_command("/adventure"); break;
             case 'r': send_command("/chars"); break;
             case 'x': cancel_stream(); break;
@@ -867,13 +934,14 @@ static void handle_key(uint8_t k) {
 #ifdef SOFT80
             case 'e':
                 /* Overlay module: mask serial RX around the disk LOAD
-                   (JiffyDOS IEC timing); unmasking is automatic once
-                   the main loop pumps again */
+                   (JiffyDOS IEC timing), resume immediately after */
                 serial_rx_pause();
                 if (module_load("c64llm.1")) {
+                    serial_rx_resume();
                     mod_config_run();
                     build_dial_string();  /* used on next boot/redial */
                 } else {
+                    serial_rx_resume();
                     ui_status("Module load failed - drive 8?");
                 }
                 chat_redraw();
@@ -883,6 +951,7 @@ static void handle_key(uint8_t k) {
         }
         return;
     }
+#ifndef SOFT80
     if (modal == MODAL_CONV) {
         switch (k) {
             case KEY_CRSR_UP:
@@ -901,6 +970,7 @@ static void handle_key(uint8_t k) {
         }
         return;
     }
+#endif
 
     switch (k) {
         case KEY_RETURN:
@@ -917,7 +987,11 @@ static void handle_key(uint8_t k) {
             cancel_stream();
             break;
         case KEY_F5:
+#ifdef SOFT80
+            if (state == ST_IDLE) convmgr_open();
+#else
             if (state == ST_IDLE) conv_open();
+#endif
             break;
         case 136: /* F7 */
             send_command("/help");

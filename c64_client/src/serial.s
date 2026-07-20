@@ -19,6 +19,7 @@
         .export _serial_can_write
         .export _serial_flush
         .export _serial_rx_pause
+        .export _serial_rx_resume
         .export _acia_init_hw
         .export _acia_send_at_command
         .export _acia_get_status
@@ -26,6 +27,9 @@
         .export _serial_overflows
         .export _serial_overruns
         .export rx_used
+        ; exported for e2e memory probes via labels.txt (no code cost)
+        .export overflows
+        .export rx_masked
 
         .import popa, popax
         .import _kb_scan
@@ -427,6 +431,32 @@ _serial_rx_pause:
         lda #ACIA_CMD_VALUE | 2
         sta ACIA_COMMAND
         lda #1
+        sta rx_masked
+@done:  plp
+        rts
+
+;---------------------------------------
+; void serial_rx_resume(void)
+;
+; Explicit unmask after a KERNAL disk LOAD. The automatic drain-path
+; unmask (in _serial_available) only runs once the main loop pumps
+; again - too late when the caller sends a request and then renders
+; a full modal before returning (the reply's first ~200 bytes died
+; in the masked ACIA's data register: no ring, no counters, no CRC,
+; just silence - found via the conversation manager's missing page
+; head). Call as soon as the LOAD returns.
+;---------------------------------------
+_serial_rx_resume:
+        php
+        sei
+        lda rx_masked
+        beq @done
+        lda rx_used+1           ; genuinely full ring: stay masked,
+        cmp #>RX_RING_SIZE      ; the drain path owns the unmask
+        bcs @done
+        lda #ACIA_CMD_VALUE
+        sta ACIA_COMMAND
+        lda #0
         sta rx_masked
 @done:  plp
         rts

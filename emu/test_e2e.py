@@ -256,13 +256,15 @@ def main():
         # artifacts per run - the editor's save writes into it.
         d64_path = None
         mod1 = Path(args.prg + '.1')
+        mod2 = Path(args.prg + '.2')
         if args.mode == 'direct' and mod1.exists() and shutil.which('c1541'):
             d64_path = artifacts / 'modules.d64'
-            subprocess.run(
-                ['c1541', '-format', 'c64llm,01', 'd64', str(d64_path),
-                 '-write', str(mod1), 'c64llm.1'],
-                check=True, capture_output=True)
-            print(f"module disk: {d64_path.name} (c64llm.1)")
+            cmd = ['c1541', '-format', 'c64llm,01', 'd64', str(d64_path),
+                   '-write', str(mod1), 'c64llm.1']
+            if mod2.exists():
+                cmd += ['-write', str(mod2), 'c64llm.2']
+            subprocess.run(cmd, check=True, capture_output=True)
+            print(f"module disk: {d64_path.name}")
 
         # 4. VICE. No warp in hayes mode: the client's AT-response timeouts
         # are cycle-based, but tcpser answers in wall-clock time, so a warped
@@ -316,14 +318,20 @@ def main():
                                f'{tag}-done')
             # F7 = server-side /help streamed into the scrollback
             monitor.keyboard_feed_petscii(b'\x88')
-            wait_for_screen(monitor, r'search all conversations', 30,
+            # phrase must survive 40-col wrapping: keep it short
+            wait_for_screen(monitor, r'/findall <text>', 30,
                             artifacts, f'{tag}-help')
             final = wait_ready(monitor, 30, artifacts, f'{tag}-restore')
             if not args.live:
-                # Conversation browser: F5, load newest (= this session)
+                # Conversation browser: F5, load newest (= this session).
+                # The header draws before the list frames arrive (the
+                # manager module requests the list only after its disk
+                # load), and Return on an empty list is ignored - give
+                # the frames time to land before pressing it.
                 monitor.keyboard_feed_petscii(b'\x87')
                 wait_for_screen(monitor, r'conversations \(return=load',
                                 15, artifacts, f'{tag}-browser')
+                time.sleep(2)
                 monitor.keyboard_feed('\r')
                 wait_for_screen(monitor, r'conversation loaded', 30,
                                 artifacts, f'{tag}-loadstatus')
@@ -672,6 +680,39 @@ def main():
                                     artifacts, f'{tag}-mod-resave')
                     print('  PASS: module reload shows live config')
 
+                # Conversation manager (module #2): F5 loads it from
+                # disk; star the newest conversation (refresh shows the
+                # '*' prefix), unstar it, then delete an OLDER one (the
+                # newest is needed by the roleplay-restore test below).
+                if d64_path and args.cols80:
+                    monitor.keyboard_feed_petscii(b'\x87')  # F5
+                    wait_for_screen(monitor,
+                                    r'conversations \(return=load, d=del',
+                                    20, artifacts, f'{tag}-mgr-open')
+                    print('  PASS: conversation manager loaded from disk')
+                    time.sleep(2)  # keys during 'loading...' are ignored
+                    monitor.keyboard_feed('s')
+                    wait_for_screen(monitor, r'star toggled', 15,
+                                    artifacts, f'{tag}-mgr-star')
+                    wait_for_screen(monitor, r'\*', 15,
+                                    artifacts, f'{tag}-mgr-starred')
+                    print('  PASS: star toggle + starred prefix')
+                    monitor.keyboard_feed('s')  # unstar (row 0 again)
+                    wait_for_screen(monitor, r'star toggled', 15,
+                                    artifacts, f'{tag}-mgr-unstar')
+                    time.sleep(2)  # list refresh settles
+                    monitor.keyboard_feed_petscii(b'\x11')  # crsr down
+                    monitor.keyboard_feed('d')
+                    wait_for_screen(monitor, r'delete selected', 15,
+                                    artifacts, f'{tag}-mgr-delconfirm')
+                    monitor.keyboard_feed('y')
+                    wait_for_screen(monitor, r'deleted\.', 15,
+                                    artifacts, f'{tag}-mgr-deleted')
+                    print('  PASS: delete with confirm')
+                    time.sleep(2)  # post-delete refresh settles
+                    monitor.keyboard_feed_petscii(b'\x87')  # F5 closes
+                    wait_ready(monitor, 15, artifacts, f'{tag}-mgr-close')
+
                 # Roleplay restore: /chat leaves the card, reloading the
                 # conversation (newest saved - the empty chat one is
                 # in-memory only) must bring the character back via the
@@ -697,6 +738,7 @@ def main():
                 monitor.keyboard_feed_petscii(b'\x87')  # F5 browser
                 wait_for_screen(monitor, r'conversations \(return=load',
                                 15, artifacts, f'{tag}-rp-browser')
+                time.sleep(2)  # list frames land after the header draws
                 monitor.keyboard_feed('\r')
                 wait_for_screen(monitor, r'conversation loaded', 30,
                                 artifacts, f'{tag}-rp-loadstatus')

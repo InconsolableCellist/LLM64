@@ -81,9 +81,12 @@ uint8_t serial_overflows(void);
 uint8_t serial_overruns(void);
 
 /* Mask the ACIA RX interrupt around a KERNAL disk LOAD (module loads).
-   Unmasking is automatic: serial_available() restores it once the main
-   loop resumes and the RX ring is drained. */
+   Pair with serial_rx_resume() as soon as the LOAD returns - waiting
+   for the main loop's automatic drain-path unmask loses any reply
+   that arrives while a module still renders inside the key handler
+   (bytes die silently in the masked ACIA's data register). */
 void serial_rx_pause(void);
+void serial_rx_resume(void);
 
 /* Internal functions (implemented in ASM) */
 void __fastcall__ acia_init_hw(void);

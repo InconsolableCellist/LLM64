@@ -26,6 +26,8 @@ class MessageType(IntEnum):
     PING = 0x36  # '6' - was 0x06
     LIST_MODELS = 0x37  # '7'
     SET_MODEL = 0x38  # '8'
+    DELETE_CONVERSATION = 0x39  # '9' - id(4); ACK/NAK
+    STAR_CONVERSATION = 0x3A  # ':' - id(4); toggles starred, ACK/NAK
     ACK = 0x40  # '@' - was 0x10
     NAK = 0x41  # 'A' - was 0x11
 
@@ -221,6 +223,10 @@ class ProtocolHandler:
                 await self.handle_list_models()
             elif msg_type == MessageType.SET_MODEL:
                 await self.handle_set_model()
+            elif msg_type == MessageType.DELETE_CONVERSATION:
+                await self.handle_delete_conversation()
+            elif msg_type == MessageType.STAR_CONVERSATION:
+                await self.handle_star_conversation()
             elif msg_type == MessageType.ACK:
                 self.logger.debug("ACK received")
                 if self._begin_ack is not None \
@@ -1438,26 +1444,52 @@ class ProtocolHandler:
             self.stream_task = None
         await self.send_ack()
 
+    # One page of the conversation manager's list; also the cap for the
+    # legacy no-payload request (the client stores 17 entries max)
+    LIST_PAGE = 16
+
+    def _resolve_masked_id(self, masked_id: int) -> int:
+        """The wire id is 32-bit; stored ids may be wider (ms
+        timestamps), so resolve by masked comparison."""
+        for conv in self.conv_manager.list_conversations():
+            if int(conv['id']) & 0xFFFFFFFF == masked_id:
+                return int(conv['id'])
+        return masked_id
+
     async def handle_list_conversations(self):
-        """Send conversation list to C64"""
-        self.logger.info("List conversations request")
+        """Send one page of the conversation list to the C64. Optional
+        payload byte = page number (0-based; absent = page 0, which
+        keeps old clients working). Starred conversations sort first
+        and get a '*' title prefix - the client renders titles as-is,
+        so starring costs zero client bytes."""
+        page = self.payload[0] if len(self.payload) >= 1 else 0
+        self.logger.info(f"List conversations request (page {page})")
         await self.send_ack()
 
         conversations = self.conv_manager.list_conversations()
-        self.logger.info(f"Found {len(conversations)} conversations")
+        for conv in conversations:
+            if conv.get('starred'):
+                conv['title'] = '*' + str(conv['title'])
+        start = page * self.LIST_PAGE
+        window = conversations[start:start + self.LIST_PAGE]
+        more_pages = 1 if len(conversations) > start + self.LIST_PAGE else 0
+        self.logger.info(f"Found {len(conversations)} conversations, "
+                         f"sending {len(window)}")
 
         # Zero frames would leave the browser at 'loading...' forever
-        # (fresh install): an explicit empty frame, like MODEL_LIST's
-        if not conversations:
+        # (fresh install or past-the-end page): an explicit empty frame
+        if not window:
             await self.send_message(MessageType.CONVERSATION_LIST,
                                     bytes([0, 0]))
             return
 
-        # Send in chunks (max 5 per message to keep under size limit)
+        # Send in chunks (max 5 per message to keep under size limit).
+        # 'more' is a bitfield: bit0 = more frames in this response,
+        # bit1 = more pages exist beyond this one.
         chunk_size = 5
-        for i in range(0, len(conversations), chunk_size):
-            chunk = conversations[i:i+chunk_size]
-            more = 1 if (i + chunk_size) < len(conversations) else 0
+        for i in range(0, len(window), chunk_size):
+            chunk = window[i:i+chunk_size]
+            more = 1 if (i + chunk_size) < len(window) else (more_pages << 1)
 
             payload = bytearray()
             payload.append(len(chunk))  # Count
@@ -1486,6 +1518,34 @@ class ProtocolHandler:
 
             await self._send_bulk(MessageType.CONVERSATION_LIST, bytes(payload))
 
+    async def handle_delete_conversation(self):
+        """Delete a conversation (id in payload). The manager module
+        confirms client-side; this is the point of no return."""
+        if len(self.payload) < 4:
+            await self.send_nak()
+            return
+        conv_id = self._resolve_masked_id(
+            struct.unpack('<I', self.payload[:4])[0])
+        if self.conv_manager.delete_conversation(conv_id):
+            self.logger.info(f"Deleted conversation {conv_id}")
+            await self.send_ack()
+        else:
+            await self.send_nak()
+
+    async def handle_star_conversation(self):
+        """Toggle a conversation's starred flag (id in payload)."""
+        if len(self.payload) < 4:
+            await self.send_nak()
+            return
+        conv_id = self._resolve_masked_id(
+            struct.unpack('<I', self.payload[:4])[0])
+        starred = self.conv_manager.toggle_star(conv_id)
+        if starred is None:
+            await self.send_nak()
+        else:
+            self.logger.info(f"Conversation {conv_id} starred={starred}")
+            await self.send_ack()
+
     async def handle_load_conversation(self):
         """Load a conversation"""
         if len(self.payload) < 4:
@@ -1502,13 +1562,7 @@ class ProtocolHandler:
 
         await self.send_ack()
 
-        # The wire id is 32-bit; stored ids may be wider (ms timestamps),
-        # so resolve by masked comparison.
-        conv_id = masked_id
-        for conv in self.conv_manager.list_conversations():
-            if int(conv['id']) & 0xFFFFFFFF == masked_id:
-                conv_id = int(conv['id'])
-                break
+        conv_id = self._resolve_masked_id(masked_id)
 
         if self.conv_manager.load_conversation(conv_id):
             messages = self.conv_manager.get_messages()

@@ -221,8 +221,46 @@ class ConversationManager:
         hits.sort(key=lambda x: x['timestamp'], reverse=True)
         return hits[:limit]
 
+    def delete_conversation(self, conv_id: int) -> bool:
+        """Delete a stored conversation. Deleting the one currently
+        loaded also resets the in-memory state to a fresh conversation
+        (its next save would otherwise resurrect the file)."""
+        filepath = self.data_dir / f"{conv_id}.json"
+        if not filepath.exists():
+            return False
+        try:
+            filepath.unlink()
+        except OSError as e:
+            self.logger.error(f"Error deleting {conv_id}: {e}")
+            return False
+        if self.current_id == conv_id:
+            self.new_conversation()
+        return True
+
+    def toggle_star(self, conv_id: int):
+        """Flip a conversation's starred flag on disk. Returns the new
+        state, or None if the conversation doesn't exist."""
+        filepath = self.data_dir / f"{conv_id}.json"
+        if not filepath.exists():
+            return None
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+            meta = data.setdefault('meta', {})
+            meta['starred'] = not meta.get('starred', False)
+            with open(filepath, 'w') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            self.logger.error(f"Error starring {conv_id}: {e}")
+            return None
+        # Keep the live copy in sync if it's the loaded conversation
+        if self.current_id == conv_id and self.current_conversation:
+            self.current_conversation.setdefault(
+                'meta', {})['starred'] = meta['starred']
+        return meta['starred']
+
     def list_conversations(self) -> List[Dict]:
-        """List all conversations (sorted by updated_at, newest first)"""
+        """List all conversations: starred first, then newest first"""
         conversations = []
 
         for filepath in self.data_dir.glob('*.json'):
@@ -233,13 +271,17 @@ class ConversationManager:
                         'id': int(data['id']),
                         'title': data['title'],
                         'timestamp': data['updated_at'],
+                        'starred': bool(
+                            data.get('meta', {}).get('starred')),
                         'message_count': len(data['chat']['messages'])
                     })
             except Exception as e:
                 self.logger.error(f"Error loading {filepath}: {e}")
 
-        # Sort by timestamp, newest first
+        # Two stable sorts: newest first, then starred bubbled to the
+        # top (recency order preserved within each group)
         conversations.sort(key=lambda x: x['timestamp'], reverse=True)
+        conversations.sort(key=lambda x: not x['starred'])
 
         # Limit to 50 most recent
         return conversations[:50]
