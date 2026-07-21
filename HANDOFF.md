@@ -325,13 +325,28 @@ user cards shadowing bundled ones by name. Menu key is **`i`**, not `t` —
 key that means different things per mode would eventually cost someone a
 conversation (this one starts a new one).
 
-### 2. Sound window module (overlay #5)
+### 2. Sound window module (overlay #5) — IN PROGRESS
 Song name, progress bar, volume (vol_byte), prev/next, favorite
-(proxy-side), oscilloscope via $D41B/$D41C reads. Needs Songlengths
-durations merged into moods.json for real progress. Use the hook-modal
-pattern + OVL5BSS. Slot budget is fine (~3.5KB); resident cost must stay
-near zero (headroom ~305 bytes — consider the modules-1-3 OVL-BSS
-retrofit first to bank more).
+(proxy-side), oscilloscope via $D41B/$D41C reads. Use the hook-modal
+pattern + OVL5BSS.
+
+**Durations DONE (e8fbe84, deployed).** `tools/sid_songlengths.py`
+parses HVSC `DOCUMENTS/Songlengths.md5` (keyed off the path comment, not
+the MD5 — that hash is of the original .sid, which our relocated copies
+no longer match); `sid_makedb.py --songlengths` stamps `secs` on each
+tune, picking the subtune `start_song` actually selects. moods.json on
+mlboy now carries `secs` for all 10,032 tunes, median 103s. Regenerating
+was verified byte-comparable to the deployed library apart from the new
+field, so tune selection is unchanged.
+
+Remaining: put the duration on the wire (SID_BEGIN grows a field —
+**wire change, lockstep deploy**), then the module itself. Headroom is
+492 bytes now and OVL5BSS costs zero resident, so the modules-1-3
+OVL-BSS retrofit is no longer a prerequisite.
+
+Natural follow-on once the duration is known client-side: MusicLibrary's
+`stale()` still hardcodes 300s for the tune-staleness nudge; it could
+count actual loops instead.
 
 ### 3. Baud doubling (38400)
 SwiftLink's doubled crystal makes its "19200" divisor yield 38400; the
