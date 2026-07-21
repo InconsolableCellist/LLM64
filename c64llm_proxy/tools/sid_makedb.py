@@ -42,6 +42,9 @@ def main():
                     help="d418 trace JSON (sid_loudness.py --d418-only): "
                          "tunes whose play writes a single constant $D418 "
                          "value are safe to override despite being 'live'")
+    ap.add_argument("--songlengths", type=Path,
+                    help="durations JSON from sid_songlengths.py: adds a "
+                         "'secs' field for the sound window's progress bar")
     ap.add_argument("-o", "--output", type=Path, required=True)
     args = ap.parse_args()
 
@@ -55,6 +58,10 @@ def main():
         d418 = {r["file"]: r.get("d418_values")
                 for r in json.loads(args.d418.read_text())
                 if "d418_values" in r}
+
+    lengths = {}
+    if args.songlengths:
+        lengths = json.loads(args.songlengths.read_text())
 
     # Keyed by path-derived unique filename: bare stems collide in HVSC
     tags = {unique_name(t["path"]): t
@@ -81,6 +88,14 @@ def main():
                 args.output.resolve().parent)),
             **hdr,
         })
+        # Duration of the subtune we actually play. start_song is the
+        # PSID field and is 1-based (protocol.py subtracts 1 for the
+        # wire); fall back to the first entry when the file claims a
+        # subtune Songlengths does not list.
+        secs = lengths.get(sid.name)
+        if secs:
+            tunes[-1]["secs"] = secs[min(max(hdr["start_song"], 1),
+                                         len(secs)) - 1]
         lr = loud.get(sid.name)
         if lr:
             # Near-silent output = broken under our player; drop it
