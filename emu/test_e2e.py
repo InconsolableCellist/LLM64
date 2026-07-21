@@ -377,9 +377,15 @@ def main():
                 wait_for_screen(monitor, r'> hello computer', 15,
                                 artifacts, f'{tag}-loaded')
 
-                # Adventure mode: kickoff goes through the API (mock
-                # answers the hidden 'Begin the adventure' message)
+                # Adventure mode. /adventure now opens the chooser
+                # (docs/09-adventure-setup.md); option 1 is the old
+                # behaviour - kickoff straight through the API, with the
+                # mock answering the hidden 'Begin the adventure'.
                 monitor.keyboard_feed('/adventure\r')
+                wait_for_screen(monitor, r'surprise me', 30,
+                                artifacts, f'{tag}-adv-chooser')
+                wait_ready(monitor, 30, artifacts, f'{tag}-adv-chooser-rdy')
+                monitor.keyboard_feed('1\r')
                 wait_for_screen(monitor, r'dark room', 60,
                                 artifacts, f'{tag}-adventure')
                 # Status bar (visible) and [[STATE]] block (stripped)
@@ -960,6 +966,63 @@ def main():
                     # expansion, which is asserted against the stored
                     # conversation after the run.
                     print('  PASS: [roll:1d20] rolls and reports back')
+
+                    # /adventure front door (docs/09-adventure-setup.md):
+                    # chooser -> four stages -> review -> edit one line
+                    # and come back -> begin. Zero client bytes, so this
+                    # is purely proxy behaviour seen through the C64.
+                    monitor.keyboard_feed('/adventure\r')
+                    wait_for_screen(monitor, r'surprise me', 30,
+                                    artifacts, f'{tag}-adv-menu')
+                    wait_ready(monitor, 30, artifacts, f'{tag}-adv-w0')
+                    monitor.keyboard_feed('3\r')
+                    wait_for_screen(monitor, r'step 1 of 4', 20,
+                                    artifacts, f'{tag}-adv-s1')
+                    for n, answer in ((2, 'a drowned temple city'),
+                                      (3, 'grim and wet'),
+                                      (4, 'a salvage diver')):
+                        wait_ready(monitor, 30, artifacts, f'{tag}-adv-w{n}')
+                        monitor.keyboard_feed(answer + '\r')
+                        wait_for_screen(monitor, f'step {n} of 4', 20,
+                                        artifacts, f'{tag}-adv-s{n}')
+                    wait_ready(monitor, 30, artifacts, f'{tag}-adv-w5')
+                    monitor.keyboard_feed('waking in the nave\r')
+                    scr = wait_for_screen(monitor, r'your adventure:', 20,
+                                          artifacts, f'{tag}-adv-review')
+                    if 'drowned temple city' not in scr.lower():
+                        raise AssertionError(
+                            f'review lost an answer:\n{scr}')
+                    print('  PASS: adventure setup reaches the review')
+                    # Each screen is a canned reply, so wait for ready
+                    # before every keystroke: a Return that lands while
+                    # text is still streaming is swallowed as 'Busy'.
+                    wait_ready(monitor, 30, artifacts, f'{tag}-adv-r1')
+                    # Edit line 2 and confirm it returns to the review
+                    # rather than walking forward through stages 3 and 4.
+                    monitor.keyboard_feed('2\r')
+                    wait_for_screen(monitor, r'change: tone', 20,
+                                    artifacts, f'{tag}-adv-edit')
+                    monitor.keyboard_feed('hopeful\r')
+                    # Wait for the EDITED value, not for 'your adventure:'
+                    # - the first review is still on screen, so that would
+                    # match instantly and the next key would land mid-stream
+                    # and be swallowed as 'Busy'.
+                    scr = wait_for_screen(monitor, r'Tone\s+hopeful', 20,
+                                          artifacts, f'{tag}-adv-back')
+                    print('  PASS: an edit returns to the review')
+                    wait_ready(monitor, 30, artifacts, f'{tag}-adv-r2')
+                    monitor.keyboard_feed('y\r')
+                    # Assert on the adventure's OWN output rather than a
+                    # /mode round trip: an extra turn here just races the
+                    # kickoff stream. The review screen is what is on the
+                    # display right now, so this is a fresh signal.
+                    wait_for_screen(monitor, r'dark room', 60,
+                                    artifacts, f'{tag}-adv-begun')
+                    print('  PASS: review confirmed starts the adventure')
+                    wait_ready(monitor, 60, artifacts, f'{tag}-adv-idle')
+                    monitor.keyboard_feed('/chat\r')
+                    wait_for_screen(monitor, r'chat mode', 20,
+                                    artifacts, f'{tag}-adv-done')
 
                     # Inline colour (docs/08-inline-color.md). Two
                     # things must hold: the SHADOW shows plain text with

@@ -14,6 +14,8 @@ from .modes import (Mode, AdventureMode, RoleplayMode, ClaudeMode,
 from .claude_session import ClaudeSession
 from .music import MusicLibrary, MusicDirectiveFilter
 from .dice import expand as expand_dice
+from .advsetup import (AdventureSetup, STAGES, ACT_QUICK,
+                       ACT_THEME, ACT_BEGIN)
 from .markup import colorize_for_wire, split_safe
 from .markup import prompt_snippet as color_prompt_snippet
 from .images import ImageService
@@ -130,6 +132,7 @@ class ProtocolHandler:
         self._music_manual = False
         self._manual_notice_sent = False
         self._wire_hold = ''
+        self._adv_setup = None
         self._img_sent = False
         self._sid_retry = None
         self._claude = None          # ClaudeSession when in code mode
@@ -390,6 +393,13 @@ class ProtocolHandler:
                     self._claude_turn(text))
             return
 
+        # A setup in progress owns plain messages until it finishes or
+        # is cancelled (/chat). Commands were handled above, so this
+        # cannot swallow one.
+        if self._adv_setup is not None:
+            await self._adv_setup_input(text)
+            return
+
         # Dice macros are rolled HERE, before the model ever sees the
         # message: [roll:1d20] becomes [you rolled 1d20: 14] in the text
         # that gets stored, sent and replied to. Asking a model to roll
@@ -464,6 +474,10 @@ class ProtocolHandler:
             await self._send_canned(f"Current mode: {self.mode.label}")
 
         elif cmd == 'chat':
+            if self._adv_setup is not None:
+                self._adv_setup = None
+                await self._send_canned("Adventure setup cancelled.")
+                return
             await self._stop_claude()
             self._switch_mode(Mode(self.config))
             await self._send_canned("Chat mode. New conversation started.")
@@ -472,12 +486,13 @@ class ProtocolHandler:
             await self._start_claude(arg)
 
         elif cmd in ('adventure', 'adv'):
-            mode = AdventureMode(self.config, theme=arg)
-            self._attach_snippets(mode)
-            self._switch_mode(mode)
-            await self.send_status("Generating your adventure...")
-            self.stream_task = asyncio.create_task(
-                self._stream_response(hidden_user_msg=self.mode.kickoff()))
+            if arg:
+                # /adventure <theme> is unchanged - anyone who learned it
+                # keeps it, and it is option 2 without the asking.
+                await self._start_adventure(arg)
+            else:
+                self._adv_setup = AdventureSetup()
+                await self._send_canned(self._adv_setup.opening_screen())
 
         elif cmd == 'chars':
             cards = self._all_cards()
@@ -1768,6 +1783,40 @@ class ProtocolHandler:
             count += 1
         payload[0] = count
         await self._send_bulk(MessageType.MENU_LIST, bytes(payload))
+
+    async def _start_adventure(self, theme: str):
+        """Shared by /adventure <theme> and the setup flow, so both take
+        exactly the same path into play."""
+        mode = AdventureMode(self.config, theme=theme)
+        self._attach_snippets(mode)
+        self._switch_mode(mode)
+        await self.send_status("Generating your adventure...")
+        self.stream_task = asyncio.create_task(
+            self._stream_response(hidden_user_msg=self.mode.kickoff()))
+
+    async def _adv_setup_input(self, text: str):
+        """One turn of the front door (docs/09-adventure-setup.md). The
+        state machine decides what to show; this only performs what it
+        asks for."""
+        setup = self._adv_setup
+        reply, act = setup.feed(text)
+        if act in (ACT_QUICK, ACT_THEME, ACT_BEGIN):
+            self._adv_setup = None
+            if act == ACT_QUICK:
+                theme = ''
+            elif act == ACT_THEME:
+                theme = setup.theme
+            else:
+                # Answers become the theme. '?' answers were dropped by
+                # bundle(), so an unanswered stage is left to the model
+                # rather than becoming a literal question mark.
+                labels = {k: lbl for k, lbl, _q, _n in STAGES}
+                theme = ". ".join(f"{labels[k]}: {v}"
+                                  for k, v in setup.bundle().items())
+            await self._start_adventure(theme)
+            return
+        if reply:
+            await self._send_canned(reply)
 
     def _current_tune(self):
         """(tune, mood) for whatever is playing, or (None, '')."""
