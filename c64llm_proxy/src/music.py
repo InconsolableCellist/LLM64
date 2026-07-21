@@ -187,7 +187,13 @@ class MusicDirectiveFilter:
         self.states = []
 
     # Openers worth holding a partial tail for (see _could_become_directive)
-    _PREFIXES = ("[[MUSIC:", "[[IMAGE:", "[[STATE:", "[MUSIC:", "[IMAGE:")
+    # Colour markup is NOT extracted here - the tags stay in the text so
+    # saved history and the model's own context keep them (see
+    # docs/08-inline-color.md); they are turned into marker cells at
+    # egress. They are listed only so a tag split across stream chunks
+    # is held back instead of going out half-written.
+    _PREFIXES = ("[[MUSIC:", "[[IMAGE:", "[[STATE:", "[MUSIC:", "[IMAGE:",
+                 "[COLOR", "[COLOUR", "[/COLOR", "[/COLOUR")
 
     def _extract(self, text: str) -> str:
         def grab(m):

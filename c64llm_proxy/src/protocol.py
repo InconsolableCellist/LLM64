@@ -14,6 +14,8 @@ from .modes import (Mode, AdventureMode, RoleplayMode, ClaudeMode,
 from .claude_session import ClaudeSession
 from .music import MusicLibrary, MusicDirectiveFilter
 from .dice import expand as expand_dice
+from .markup import colorize_for_wire, split_safe
+from .markup import prompt_snippet as color_prompt_snippet
 from .images import ImageService
 
 
@@ -127,6 +129,7 @@ class ProtocolHandler:
         # manual stretch, not every time a directive is ignored.
         self._music_manual = False
         self._manual_notice_sent = False
+        self._wire_hold = ''
         self._img_sent = False
         self._sid_retry = None
         self._claude = None          # ClaudeSession when in code mode
@@ -726,6 +729,9 @@ class ProtocolHandler:
             snippet += self.music.prompt_snippet()
         if self.images.available:
             snippet += self.images.prompt_snippet()
+        # Colour needs no server capability - the client renders it - so
+        # it is unconditional, unlike music and images.
+        snippet += color_prompt_snippet()
         mode.music_snippet = snippet
 
     def _switch_mode(self, mode):
@@ -1199,6 +1205,39 @@ class ProtocolHandler:
         await self._send_canned(f'"{caption}"')
         await self.send_image_blob(blob, bg)
 
+    async def _send_text(self, seq: int, text: str) -> int:
+        """Every path that streams prose to the C64 goes through here.
+
+        This is where colour markup becomes in-band marker cells
+        (docs/08-inline-color.md): tags stay in stored history and in the
+        model's context, and only the client-bound bytes carry markers.
+        Splitting the result into frames is safe at any offset - a marker
+        is a single byte and the client consumes the stream in order.
+        """
+        # Hold back any tail that could still become markup - a partial
+        # tag, an open **bold**, or a space an incoming tag will swallow.
+        # The transform works on whole strings; a stream hands it slices,
+        # and markup cut across one matches nothing and prints literally.
+        emit, self._wire_hold = split_safe(
+            self._wire_hold + text.translate(UNICODE_TO_ASCII))
+        data = colorize_for_wire(emit)
+        for i in range(0, len(data), self.CHUNK_TEXT_MAX):
+            seq = await self._send_text_chunk(
+                seq, data[i:i + self.CHUNK_TEXT_MAX])
+        return seq
+
+    async def _flush_text(self, seq: int) -> int:
+        """Emit whatever split_safe held back. Must run before CHAT_DONE
+        or a reply ending mid-markup loses its tail."""
+        if not self._wire_hold:
+            return seq
+        held, self._wire_hold = self._wire_hold, ''
+        data = colorize_for_wire(held)
+        for i in range(0, len(data), self.CHUNK_TEXT_MAX):
+            seq = await self._send_text_chunk(
+                seq, data[i:i + self.CHUNK_TEXT_MAX])
+        return seq
+
     async def _send_text_chunk(self, seq: int, piece: bytes) -> int:
         """Send one CHAT_CHUNK frame and pace; returns next seq."""
         payload = bytearray()
@@ -1234,11 +1273,8 @@ class ProtocolHandler:
 
     async def _send_canned(self, text: str):
         """Stream local text to the C64 as a normal reply (no API call)."""
-        seq = 0
-        data = text.encode('ascii', errors='replace')
-        for i in range(0, len(data), self.CHUNK_TEXT_MAX):
-            seq = await self._send_text_chunk(
-                seq, data[i:i + self.CHUNK_TEXT_MAX])
+        seq = await self._send_text(0, text)
+        seq = await self._flush_text(seq)
         await self.send_message(MessageType.CHAT_DONE,
                                 struct.pack('<BH', seq, len(text)))
 
@@ -1307,26 +1343,16 @@ class ProtocolHandler:
             async for ev in self._claude.events():
                 kind = ev.get("kind")
                 if kind == "text":
-                    data = ev["text"].translate(UNICODE_TO_ASCII).encode(
-                        'ascii', errors='replace')
-                    for i in range(0, len(data), self.CHUNK_TEXT_MAX):
-                        seq = await self._send_text_chunk(
-                            seq, data[i:i + self.CHUNK_TEXT_MAX])
+                    seq = await self._send_text(seq, ev["text"])
                 elif kind == "tool":
                     line = self._describe_tool(ev["name"], ev["input"])
-                    data = ("\n> " + line + "\n").encode(
-                        'ascii', errors='replace')
-                    for i in range(0, len(data), self.CHUNK_TEXT_MAX):
-                        seq = await self._send_text_chunk(
-                            seq, data[i:i + self.CHUNK_TEXT_MAX])
+                    seq = await self._send_text(seq, "\n> " + line + "\n")
                 elif kind == "permission":
                     q = (f"Allow {ev['name']}"
                          f"{' ' + ev['description'] if ev['description'] else ''}"
                          "? (y/n)")
-                    data = ("\n" + q).encode('ascii', errors='replace')
-                    for i in range(0, len(data), self.CHUNK_TEXT_MAX):
-                        seq = await self._send_text_chunk(
-                            seq, data[i:i + self.CHUNK_TEXT_MAX])
+                    seq = await self._send_text(seq, "\n" + q)
+                    seq = await self._flush_text(seq)
                     await self.send_message(
                         MessageType.CHAT_DONE,
                         struct.pack('<BH', seq, 0))
@@ -1382,9 +1408,14 @@ class ProtocolHandler:
             # the C64 sees (and from saved history) and act on them
             # after the response completes. Always on for these modes -
             # the state block flows even with music/images disabled.
-            mfilter = None
-            if self.mode.name in ('adventure', 'roleplay'):
-                mfilter = MusicDirectiveFilter()
+            # Always on, in every mode. It was adventure/roleplay only
+            # while its whole job was directives, but it is also what
+            # holds back markup split across SSE chunk boundaries - and
+            # colour tags can appear in any mode. Without it a tag cut in
+            # half by the API's chunking matches nothing and both halves
+            # print literally. Directives simply never appear in chat, so
+            # extracting them there costs nothing.
+            mfilter = MusicDirectiveFilter()
 
             # Nudge, don't nag: after ~5 minutes of one tune looping,
             # remind the narrator it owns the soundtrack
@@ -1437,21 +1468,15 @@ class ProtocolHandler:
 
                     # Split into small paced frames regardless of the size
                     # the API chose to emit (see CHUNK_TEXT_MAX comment)
-                    data = chunk.translate(UNICODE_TO_ASCII).encode(
-                        'ascii', errors='replace')
-                    for i in range(0, len(data), self.CHUNK_TEXT_MAX):
-                        seq = await self._send_text_chunk(
-                            seq, data[i:i + self.CHUNK_TEXT_MAX])
+                    seq = await self._send_text(seq, chunk)
 
             if mfilter:
                 tail = mfilter.flush()
                 if tail:
                     full_response += tail
-                    data = tail.translate(UNICODE_TO_ASCII).encode(
-                        'ascii', errors='replace')
-                    for i in range(0, len(data), self.CHUNK_TEXT_MAX):
-                        seq = await self._send_text_chunk(
-                            seq, data[i:i + self.CHUNK_TEXT_MAX])
+                    seq = await self._send_text(seq, tail)
+
+            seq = await self._flush_text(seq)
 
             # Send completion
             payload = struct.pack('<BH', seq,
@@ -1867,20 +1892,24 @@ class ProtocolHandler:
             # with bit 7 of the role byte so the client appends instead
             # of starting a new chat block.
             FRAME_TEXT = 380
+            # Colour markup becomes marker cells HERE, before slicing:
+            # stored history keeps its tags, and colorizing a frame at a
+            # time could cut a tag across the boundary.
             frames = []
             if omitted > 0:
-                frames.append((2, f'(... {omitted} earlier messages '
-                                  f'not shown - /history has them ...)'))
+                frames.append((2, colorize_for_wire(
+                    f'(... {omitted} earlier messages '
+                    f'not shown - /history has them ...)')))
             for m in window:
                 role = 0 if m['role'] == 'user' else 1
-                text = clip(m['content'])
-                for i in range(0, len(text), FRAME_TEXT):
+                data = colorize_for_wire(clip(m['content']))
+                for i in range(0, len(data), FRAME_TEXT):
                     frames.append((role if i == 0 else role | 0x80,
-                                   text[i:i + FRAME_TEXT]))
+                                   data[i:i + FRAME_TEXT]))
             # Zero frames would leave the client waiting forever: the
             # 'load done' signal is the final more=0 frame
             if not frames:
-                frames.append((2, '(empty conversation)'))
+                frames.append((2, colorize_for_wire('(empty conversation)')))
 
             # One message per frame: the C64 client's payload buffer is
             # small (512 bytes), so keep each frame well under that.
@@ -1891,7 +1920,7 @@ class ProtocolHandler:
                 payload.append(1)
                 payload.append(more)
                 payload.append(role)
-                payload.extend(text.encode('ascii', errors='replace'))
+                payload.extend(text)        # already colorized bytes
                 payload.append(0x00)
 
                 await self._send_bulk(MessageType.CONVERSATION_DATA,

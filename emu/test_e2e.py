@@ -960,6 +960,35 @@ def main():
                     # expansion, which is asserted against the stored
                     # conversation after the run.
                     print('  PASS: [roll:1d20] rolls and reports back')
+
+                    # Inline colour (docs/08-inline-color.md). Two
+                    # things must hold: the SHADOW shows plain text with
+                    # ordinary spacing - proving markers render as the
+                    # space they replaced, not as glyphs or gaps - and
+                    # the colour MATRIX actually carries the run colour.
+                    monitor.keyboard_feed('colortest\r')
+                    scr = wait_for_screen(monitor, r'steel door', 40,
+                                          artifacts, f'{tag}-color')
+                    line = [l for l in scr.splitlines()
+                            if 'steel door' in l][0]
+                    if 'approach the steel door, your torch' not in line:
+                        raise AssertionError(
+                            f'marker did not render as its swallowed '
+                            f'space:\n{line!r}')
+                    if '[' in line or 'color' in line.lower():
+                        raise AssertionError(f'tag leaked: {line!r}')
+                    print('  PASS: colour markers render as plain spacing')
+                    # GREY is 12; the matrix stores fg in the high nibble,
+                    # one entry per 8x8 cell (two characters).
+                    row = scr.splitlines().index(line)
+                    mat = monitor.read_memory(0xCC00 + row * 40,
+                                              0xCC00 + row * 40 + 39)
+                    if not any((b >> 4) == 12 for b in mat):
+                        raise AssertionError(
+                            f'no grey pairs in the colour matrix for the '
+                            f'coloured row: {bytes(mat).hex()}')
+                    print('  PASS: colour matrix carries the run colour')
+                    wait_ready(monitor, 40, artifacts, f'{tag}-color-done')
                     # Picture tally in the status corner. This
                     # conversation is fresh, so it must read 00 - the
                     # count belongs to the conversation, not the session.

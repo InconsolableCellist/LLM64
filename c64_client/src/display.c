@@ -89,6 +89,18 @@ uint8_t ui_cell_from_petscii(uint8_t c) {
     return cell_from_petscii(c);
 }
 
+/* Inline colour markup (docs/08-inline-color.md). Marker cells travel
+   INSIDE the text: the soft-80 renderer draws anything below 0x20 as a
+   space (soft80.s clamps an underflowing font index to glyph 0), so a
+   marker costs the column the proxy swallowed a space from. Nothing
+   downstream needs to know - wrap, scrollback and reload treat them as
+   ordinary cells. */
+#define MK_CLOSE     0x01
+#define MK_BOLD_ON   0x02
+#define MK_BOLD_OFF  0x03
+#define MK_COLOR_LO  0x11      /* 0x10|c, c = 1..14 */
+#define MK_COLOR_HI  0x1E
+
 /* --- low-level row output ------------------------------------------- */
 
 /* Hard freeze: while a fullscreen image owns the bitmap, every draw
@@ -120,6 +132,65 @@ void ui_blit_row(uint8_t row, const uint8_t* cells, uint8_t color) {
 #endif
 }
 
+#ifdef SOFT80
+/* Per-PAIR colour for one chat row. The C64's matrix is one entry per
+   8x8 cell = two soft-80 glyphs, so a pair takes the run colour when it
+   holds a run glyph; the proxy's space-swallow means the only cells that
+   can be caught by that granularity are the marker-spaces themselves.
+   Markers are rewritten to spaces in place - rowbuf is scratch that
+   every caller rebuilds, and soft80.s then sees pure ASCII. */
+static uint8_t matbuf[40];
+
+static uint8_t colorize_row(uint8_t* buf, uint8_t carry, uint8_t base) {
+    uint8_t i;
+    uint8_t run = carry;
+    uint8_t any = carry ? 1 : 0;
+    for (i = 0; i < 40; ++i) matbuf[i] = base;
+    for (i = 0; i < TEXT_COLS; ++i) {
+        uint8_t c = buf[i] & 0x7F;      /* bit 7 is reverse, not colour */
+        if (c == MK_CLOSE) {
+            run = 0;
+            buf[i] = 0x20;
+            any = 1;
+        } else if (c >= MK_COLOR_LO && c <= MK_COLOR_HI) {
+            run = c & 0x0F;
+            buf[i] = 0x20;
+            any = 1;
+        } else if (run) {
+            matbuf[i >> 1] = run;
+        }
+    }
+    return any;
+}
+
+/* Chat rows only: chrome (status, title, editor) never carries markers
+   and must not pay for the scan. `color` is the encoded line_color -
+   carry in the high nibble, base in the low. */
+static void chat_row_blit(uint8_t row, uint8_t* cells, uint8_t color) {
+    uint8_t base, carry;
+    if (ui_frozen) return;
+    if (color == 0xFF) {          /* attention line: rainbow, no runs */
+        ui_blit_row(row, cells, color);
+        return;
+    }
+    base = color & 0x0F;
+    carry = color >> 4;
+    if (!carry && !colorize_row(cells, 0, base)) {
+        ui_blit_row(row, cells, base);
+        return;
+    }
+    if (carry) colorize_row(cells, carry, base);
+    soft80_row(row, cells, base);
+    {
+        uint8_t* mat = (uint8_t*)(0xCC00 + (uint16_t)row * 40);
+        uint8_t i;
+        for (i = 0; i < 40; ++i) mat[i] = matbuf[i] << 4;
+    }
+}
+#else
+#define chat_row_blit(row, cells, color) ui_blit_row((row), (cells), (color))
+#endif
+
 /* Repaint only cells [first, first+count) of a row whose color hasn't
    changed. Much cheaper than a full row in SOFT80 (~0.2ms/cell). */
 void ui_blit_span(uint8_t row, const uint8_t* cells, uint8_t first,
@@ -139,6 +210,10 @@ void ui_blit_span(uint8_t row, const uint8_t* cells, uint8_t first,
 
 /* --- chat ring ------------------------------------------------------ */
 
+/* Colour-run state for the inline markup (defined with the append path
+   below; declared here because commit_line records the carry). */
+static uint8_t run_color, run_at_line_start;
+
 static void cur_reset(void) {
     memset(cur, 0x20, TEXT_COLS);
     cur_len = 0;
@@ -146,7 +221,20 @@ static void cur_reset(void) {
 
 static void commit_line(void) {
     memcpy(line_text[line_head], cur, TEXT_COLS);
-    line_color[line_head] = cur_color;
+    /* Wrap carry (docs/08-inline-color.md §4): the colour run in force
+       when this line STARTED rides the spare high nibble, so a run that
+       crosses the break resumes without the proxy re-emitting a marker.
+       Costs no RAM. The rainbow sentinel is stored whole and never
+       carries - which is why the palette forbids colour 15, so an
+       encoded byte can never be mistaken for it. */
+#ifdef SOFT80
+    line_color[line_head] = (cur_color == 0xFF)
+        ? 0xFF
+        : (uint8_t)((run_at_line_start << 4) | cur_color);
+    run_at_line_start = run_color;
+#else
+    line_color[line_head] = cur_color;   /* no runs in 40 columns */
+#endif
     ++line_head;
     if (line_head >= MAX_LINES) line_head = 0;
     if (line_count < MAX_LINES) ++line_count;
@@ -176,11 +264,44 @@ void chat_start(uint8_t role) {
     view_scroll = 0;
 }
 
+/* Reverse video is per-CHARACTER (cell bit 7) with no pair-granularity
+   limit, so bold is consumed at append time and stored in the cell
+   itself - zero columns, zero extra RAM. */
+static uint8_t rev_on;
+
 void chat_append_ascii_char(uint8_t c) {
     if (c == 0x0D) return;
     if (c == 0x0A) {
         flush_word();
         commit_line();
+        return;
+    }
+    if (c == MK_BOLD_ON || c == MK_BOLD_OFF) {
+        rev_on = (c == MK_BOLD_ON) ? 0x80 : 0x00;
+        return;
+    }
+    if (c == MK_CLOSE) {
+        /* Glue the close marker to the word it ends, then break: the
+           marker replaced the space that followed the run. */
+#ifdef SOFT80
+        if (wlen < TEXT_COLS) wbuf[wlen++] = MK_CLOSE;
+#endif
+        flush_word();
+        run_color = 0;
+        return;
+    }
+    if (c >= MK_COLOR_LO && c <= MK_COLOR_HI) {
+        /* The marker replaced the space BEFORE the run, so it breaks the
+           word like that space did, then leads the next one.
+           40 columns consumes markers without storing them: a cell there
+           is a screen code, so 0x01-0x1E would print as letters. The
+           hardware could colour per character, but that build paints one
+           colour per row and adventure ships on soft-80. */
+        flush_word();
+        run_color = c & 0x0F;
+#ifdef SOFT80
+        wbuf[wlen++] = c;
+#endif
         return;
     }
     if (c == 0x20) {
@@ -190,7 +311,7 @@ void chat_append_ascii_char(uint8_t c) {
         }
         return;
     }
-    wbuf[wlen++] = cell_from_ascii(c);
+    wbuf[wlen++] = cell_from_ascii(c) | rev_on;
     if (wlen >= TEXT_COLS) {
         /* Word longer than a line: hard wrap */
         flush_word();
@@ -316,7 +437,7 @@ void chat_redraw(void) {
             rowbuf[TEXT_COLS - 1] = 0x20 | 0x80;
             if (color == COLOR_BLACK) color = COLOR_WHITE;
         }
-        ui_blit_row(CHAT_START_ROW + r, rowbuf, color);
+        chat_row_blit(CHAT_START_ROW + r, rowbuf, color);
     }
     lines_dirty = 0;
     commits_pending = 0;
@@ -358,7 +479,7 @@ void chat_redraw_stream(void) {
         if (from < 0) from = 0;
         for (r = (uint8_t)from; r < (uint8_t)total; ++r) {
             color = build_view_row(r);
-            ui_blit_row(CHAT_START_ROW + r, rowbuf, color);
+            chat_row_blit(CHAT_START_ROW + r, rowbuf, color);
         }
         lines_dirty = 0;
         commits_pending = 0;
@@ -384,7 +505,7 @@ void chat_redraw_stream(void) {
             soft80_scroll_chat(n);
             for (r = CHAT_HEIGHT - n - 1; r < CHAT_HEIGHT; ++r) {
                 color = build_view_row(r);
-                ui_blit_row(CHAT_START_ROW + r, rowbuf, color);
+                chat_row_blit(CHAT_START_ROW + r, rowbuf, color);
             }
             lines_dirty = 0;
             commits_pending = 0;
@@ -409,7 +530,7 @@ void chat_redraw_stream(void) {
         uint8_t from = stream_partial_end ? stream_partial_end - 1 : 0;
         ui_blit_span(CHAT_START_ROW + r, rowbuf, from, new_end - from);
     } else {
-        ui_blit_row(CHAT_START_ROW + r, rowbuf, color);
+        chat_row_blit(CHAT_START_ROW + r, rowbuf, color);
     }
 #else
     ui_blit_row(CHAT_START_ROW + r, rowbuf, color);

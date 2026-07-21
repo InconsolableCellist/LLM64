@@ -85,6 +85,12 @@ class MockHandler(BaseHTTPRequestHandler):
             # hold-back stripping
             text = ('[[MUSIC: festive]] The carnival begins! Lanterns '
                     'bob between the stalls.')
+        elif 'COLORTEST' in upper:
+            # Colour markup split across SSE chunk boundaries, so the
+            # proxy's hold-back has to reassemble a tag before the
+            # marker transform runs. Both a colour run and **bold**.
+            text = ('You approach the [color=grey]steel door[/color], '
+                    'your torch guttering. Go **north** now.')
         elif 'ATMOSPHERIC CAPTION' in upper:
             # Deterministic caption: the e2e converter probe bakes the
             # same text into its expected caption band
