@@ -1497,10 +1497,20 @@ class ProtocolHandler:
                     state = json.dumps(json.loads(state),
                                        separators=(',', ':'))
                 except (ValueError, TypeError):
-                    self.logger.warning("STATE block is not valid JSON, "
-                                        "keeping raw")
-                self.conv_manager.set_meta('adv_state', state)
-                self.conv_manager.save()
+                    # Do NOT store it. adv_state is re-injected into the
+                    # system prompt every turn as authoritative, so
+                    # keeping malformed JSON teaches the model that
+                    # malformed JSON is acceptable and the damage
+                    # compounds. A slightly stale but valid state is
+                    # strictly better. (Field: a block arrived with
+                    # "companions:[] - one missing quote.)
+                    self.logger.warning(
+                        "STATE block is not valid JSON, keeping the "
+                        "previous state: %.120s", state)
+                    state = None
+                if state is not None:
+                    self.conv_manager.set_meta('adv_state', state)
+                    self.conv_manager.save()
 
             self.logger.info(f"Response complete: {len(full_response)} bytes")
 

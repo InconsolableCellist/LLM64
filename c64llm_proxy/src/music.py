@@ -31,7 +31,22 @@ DIRECTIVE_RE = re.compile(
     # arriving it briefly reads as "[[MUSIC: calm]", and without it this
     # alternative would match the inner "[MUSIC: calm]" and leave a
     # stray "[]" on the screen.
-    r"(?<!\[)\[\s*(MUSIC|IMAGE)\s*:\s*([^\]\n]*?)\s*\]",
+    r"(?<!\[)\[\s*(MUSIC|IMAGE)\s*:\s*([^\]\n]*?)\s*\]"
+    r"|(?!)",     # placeholder group 5, only ever filled at flush
+    re.IGNORECASE | re.DOTALL)
+
+# End-of-response only. A STATE block the model closed with ONE bracket
+# instead of two (field 2026-07-21: "...\"companions:[]}]") - the whole
+# block leaked onto the screen and the state was lost. Anchored on the
+# JSON OBJECT, so the ']' inside "inventory":[...] cannot end it early.
+#
+# Deliberately NOT used while streaming: mid-stream a well-formed "]]"
+# exists as "]" for one chunk, and this rule would match it there and
+# leave the second bracket on screen. At flush there is no more text
+# coming, so a single bracket really is all we are going to get.
+DIRECTIVE_FINAL_RE = re.compile(
+    DIRECTIVE_RE.pattern.replace(r"|(?!)",
+                                 r"|\[\[\s*STATE\s*:\s*(\{.*?\})\s*\]"),
     re.IGNORECASE | re.DOTALL)
 
 # Never repeat any of the last N tunes (demo library is small; keep this
@@ -195,12 +210,17 @@ class MusicDirectiveFilter:
     _PREFIXES = ("[[MUSIC:", "[[IMAGE:", "[[STATE:", "[MUSIC:", "[IMAGE:",
                  "[COLOR", "[COLOUR", "[/COLOR", "[/COLOUR")
 
-    def _extract(self, text: str) -> str:
+    def _extract(self, text: str, final: bool = False) -> str:
         def grab(m):
-            # Groups 1/2 are the canonical form, 3/4 the single-bracket
-            # fallback; exactly one alternative participates per match.
-            kind = (m.group(1) or m.group(3)).upper()
-            value = m.group(2) if m.group(1) else m.group(4)
+            # Groups 1/2 canonical, 3/4 single-bracket MUSIC/IMAGE,
+            # 5 a STATE block that closed with one bracket. Exactly one
+            # alternative participates per match.
+            if m.group(1):
+                kind, value = m.group(1).upper(), m.group(2)
+            elif m.group(3):
+                kind, value = m.group(3).upper(), m.group(4)
+            else:
+                kind, value = "STATE", m.group(5)
             if kind == "MUSIC":
                 self.moods.append(value.lower())
             elif kind == "STATE":
@@ -208,7 +228,8 @@ class MusicDirectiveFilter:
             else:
                 self.images.append(value)
             return ""
-        return DIRECTIVE_RE.sub(grab, text)
+        return (DIRECTIVE_FINAL_RE if final else DIRECTIVE_RE).sub(
+            grab, text)
 
     @classmethod
     def _could_become_directive(cls, tail: str) -> bool:
@@ -243,6 +264,6 @@ class MusicDirectiveFilter:
         return text
 
     def flush(self) -> str:
-        text = self._extract(self.held)
+        text = self._extract(self.held, final=True)
         self.held = ""
         return text

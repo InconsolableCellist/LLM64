@@ -71,6 +71,21 @@ check("status bar alone", f"{BAR}\nYou wait.", f"{BAR}\nYou wait.")
 check("state json", f"Text.\n[[STATE: {STATE_JSON}]]", "Text.\n",
       want_states=[STATE_JSON])
 
+# A STATE block the model closed with ONE bracket instead of two. Field
+# case 2026-07-21: the whole block printed on screen and the state was
+# lost. Accepting it is safe because this rule is anchored on the JSON
+# OBJECT - the match must end at '}', so the ']' closing "inventory"
+# cannot terminate it early.
+BROKEN = ('{"hp":18,"maxhp":20,"inventory":["iron key"],'
+          '"companions:[]}')
+check("state closed with one bracket", f"Text.\n[[STATE: {BROKEN}]",
+      "Text.\n", want_states=[BROKEN])
+
+# ...and the same leniency must not let a one-bracket MUSIC/IMAGE be
+# mistaken for a state block, nor swallow following text.
+check("one-bracket state does not eat the tail",
+      f"[[STATE: {BROKEN}] and more", " and more", want_states=[BROKEN])
+
 # A single-bracket value may not swallow a newline or a ']'.
 check("not a directive", "[MUSIC no colon] stays", "[MUSIC no colon] stays")
 check("bracketed prose", "He said [see below] and left.",
