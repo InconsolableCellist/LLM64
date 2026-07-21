@@ -158,6 +158,11 @@ uint8_t editor_key(uint8_t key) {
             cur = 0;
             break;
         default:
+            /* SHIFT+SPACE is its own PETSCII code ($A0), not a space.
+               Under SHIFT LOCK it is the only space reachable, and it
+               would otherwise fail is_printable() and be swallowed -
+               the same trap SHIFT+DEL had. Fold it to a plain space. */
+            if (key == 0xA0) key = 0x20;
             if (is_printable(key) && len < EDIT_MAX) {
                 memmove(buf + cur + 1, buf + cur, len - cur);
                 buf[cur] = key;

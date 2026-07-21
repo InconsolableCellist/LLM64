@@ -502,6 +502,27 @@ filters candidates, so a blocklist drops straight into the same place
 the recent-repeat and confidence filters live. Natural jukebox key next
 to `f`.
 
+### 3c5. Music through module loads - TRIED, REVERTED, open idea
+Playing the tune across an F1 module load was tested on hardware and is
+WORSE than silence: audible warble/distortion. Cause is starvation, not
+load. IEC transfers hold interrupts disabled to keep their bit-banged
+timing, so the 60Hz CIA tick driving `music_play` arrives late and
+bunched, and a SID whose envelopes and pitch slides advance at irregular
+intervals warbles. Uneven playback is worse than a clean gap, so
+`mod_open` holds the tune again.
+
+**Baud doubling does NOT help this** - the disk never touches the serial
+link. Do not conflate them.
+
+The real fix, if it is ever worth it: replace `cbm_load` with a chunked
+reader (`cbm_open`/`cbm_read`, the pattern mod_diskcopy.c already uses)
+and call `music_play` between chunks, with the CIA tick held so the
+manual calls are the only ones. The hard part is CADENCE - a fixed
+bytes-per-tick guess is wrong across JiffyDOS vs stock vs the FPGA
+drive, so it needs a real time source (the CIA timer read directly,
+since its IRQ is what is being starved). Cheaper half-measure: a short
+volume fade out/in around the hold so the gap is less abrupt.
+
 ### 3d. Music browser (overlay #6, bigger - after the above)
 Browse by mood, favourites first, page through ~10k tunes. This is what
 makes the jukebox's `f` key worth pressing: favourites are stored

@@ -111,9 +111,14 @@ def prompt_snippet() -> str:
         "\nColour: wrap a noun in [color=NAME]...[/color] to tint it on "
         "the player's screen, and **word** for emphasis. Colours: "
         + ", ".join(sorted(set(PALETTE))) +
-        ". Use it SPARINGLY - objects the player can take, exits, and "
-        "hazards. Most sentences should have no colour at all. Never "
-        "colour a whole sentence, and never nest tags."
+        ". Tag the WHOLE noun phrase, not just its head word: write "
+        "[color=blue]pool of dark water[/color] and "
+        "[color=brown]rusted iron key[/color], NOT "
+        "[color=blue]pool[/color] of dark water. Adjectives and 'of' "
+        "phrases belong inside the tag. Use it SPARINGLY - objects the "
+        "player can take, exits, and hazards. Most sentences should have "
+        "no colour at all. Never colour a whole sentence, and never nest "
+        "tags."
     )
 
 

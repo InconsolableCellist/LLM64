@@ -537,17 +537,21 @@ static uint8_t mod_open(const char* name, void (*run)(void)) {
     uint8_t ok;
     diag_note_mod(name[7]);   /* "c64llm.N" -> N */
     diag_crumb(DC_MODLOAD);
-    /* The tune plays THROUGH the load, deliberately. Holding it was
-       added as IEC-timing hardening, but the crash it was meant to
-       guard turned out to be something else entirely - the post-mortem
-       trail showed no MODLOAD anywhere near it - and a second of silence
-       every time F1 is pressed is a real cost for a theoretical risk.
-       music_hold_begin/end still exist in music.s: if module loads start
-       coming back corrupt (garbage in the slot, a jump into nothing),
-       bracket the LOAD with them again and the question is answered. */
+    /* The tune is HELD across the load - tried playing through it, and
+       it is worse. IEC transfers keep interrupts disabled to hold their
+       bit-banged timing, so the 60Hz CIA tick that drives music_play is
+       not stopped but STARVED: calls arrive late and bunched, and a SID
+       whose envelopes and pitch slides advance at irregular intervals
+       warbles audibly. Even silence beats uneven playback (field
+       verdict, 2026-07-21). Fixing it properly means replacing
+       cbm_load with a chunked reader that ticks the music between
+       chunks - see HANDOFF.md; baud rate is irrelevant here, the disk
+       does not touch the serial link. */
+    music_hold_begin();
     serial_rx_pause();
     ok = module_load(name);
     serial_rx_resume();
+    music_hold_end();
     diag_crumb(DC_MODLOADED);
     if (ok) run();
     else ui_status("Module load failed - boot disk?");
