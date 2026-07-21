@@ -1,9 +1,11 @@
 /**
  * C64 LLM Client - jukebox / sound window (overlay module #5)
  *
- * A floating panel showing what the LLM put on: title, author, mood, a
- * progress bar against the tune's real length, a volume control and a
- * signal meter driven off the SID's own voice-3 oscillator.
+ * A floating panel showing what the LLM put on: title, author, a
+ * progress bar against the tune's real length, and a meter driven off
+ * the SID's own voice-3 oscillator ($D41B) - the classic way to get
+ * audio feedback out of the chip. It reflects voice 3 only, which is
+ * why it is labelled that rather than dressed up as a master level.
  *
  * Everything except the meter comes from the proxy in one NOWPLAYING
  * frame - the client never knew a tune's duration (nothing in a SID
@@ -35,7 +37,6 @@
 extern ProtoContext proto;          /* RX context (main.c) */
 extern volatile uint8_t sys_ticks[2];
 extern uint8_t music_state;
-extern uint8_t music_ext_vol;
 
 void mod_sound_run(void);
 
@@ -53,15 +54,15 @@ void mod_sound_run(void);
 /* cc65 emits anonymous string literals into "RODATA" whatever the
    pragma says; named const arrays honor it and stay in the overlay */
 static const char S_TITLE[] = " c64 llm jukebox ";
-static const char S_FETCH[] = "   asking the server...";
-static const char S_SILENT[] = "   nothing playing";
-static const char S_FOOT1[] = " n = next tune    f = favorite    + - = volume";
-static const char S_FOOT2[] = " f1 or stop = close";
+static const char S_FETCH[] = "asking the server...";
+static const char S_SILENT[] = "nothing playing";
+static const char S_HINT[]  = "type /music <mood> to start one";
+static const char S_FOOT1[] = "n = next tune     f = favorite";
+static const char S_FOOT2[] = "f1 or stop = close";
 static const char S_READY[] = "Ready.";
 static const char S_BY[]    = "by ";
 static const char S_FAV[]   = "*favorite*";
-static const char S_VOL[]   = "vol";
-static const char S_SIG[]   = "sig";
+static const char S_SIG[]   = "voice 3";
 static const char S_NEXT[]  = "/music ";   /* + mood, built at send time */
 
 /* Panel geometry, mirroring the menu module: all even so the 2-column
@@ -84,14 +85,17 @@ static const char S_NEXT[]  = "/music ";   /* + mood, built at send time */
 #define R_SONG    (PN_TOP + 2)
 #define R_AUTHOR  (PN_TOP + 3)
 #define R_BAR     (PN_TOP + 5)
-#define R_VOL     (PN_TOP + 7)
-#define R_SIG     (PN_TOP + 8)
-#define R_FOOT1   (PN_TOP + 10)
-#define R_FOOT2   (PN_TOP + 11)
-#define R_BOT     (PN_TOP + 12)
+#define R_SIG     (PN_TOP + 7)
+#define R_FOOT1   (PN_TOP + 9)
+#define R_FOOT2   (PN_TOP + 10)
+#define R_BOT     (PN_TOP + 11)
+
+/* Text starts past the two-cell left border. Writing at 0 overwrote it
+   and punched holes in the frame - the border IS reverse-space cells. */
+#define TX 3
 
 #define BAR_CELLS 28          /* progress bar width in cells */
-#define MET_CELLS 16          /* volume / signal meter width */
+#define MET_CELLS 16          /* voice-3 meter width */
 
 static uint8_t pbuf[80];
 static char jb_title[37];
@@ -192,14 +196,28 @@ static void draw_meter(uint8_t x, uint8_t cells, uint8_t on) {
 
 /* --- rows ------------------------------------------------------------ */
 
+/* Every panel row goes through one of these two, so none can be left
+   undrawn: an undrawn row keeps the chat's black background and reads
+   as a hole punched through the panel. */
+static void pn_blank(uint8_t row) {
+    pn_fill();
+    pn_line(row, MC_TEXT);
+}
+
+static void pn_text(uint8_t row, const char* pet, uint8_t colour) {
+    pn_fill();
+    pn_write(TX, pet, 0);
+    pn_line(row, colour);
+}
+
 static void jb_draw_song(void) {
     pn_fill();
-    pn_ascii(3, jb_title);
+    pn_ascii(TX, jb_title);
     pn_line(R_SONG, MC_HI);
     pn_fill();
     if (jb_author[0]) {
-        pn_write(3, S_BY, 0);
-        pn_ascii(6, jb_author);
+        pn_write(TX, S_BY, 0);
+        pn_ascii(TX + 3, jb_author);
     }
     if (jb_flags & 2) pn_write(PN_W - 4 - 10, S_FAV, 0);
     pn_line(R_AUTHOR, MC_DIM);
@@ -208,7 +226,7 @@ static void jb_draw_song(void) {
 static void jb_draw_bar(void) {
     char t[TIME_W + 1];
     uint8_t on = 0;
-    uint8_t x = 3 + BAR_CELLS + 2;
+    uint8_t x = TX + BAR_CELLS + 2;
     pn_fill();
     if (jb_secs) {
         /* Deliberately 16-bit: a uint32 divide would drag cc65's long
@@ -219,7 +237,7 @@ static void jb_draw_bar(void) {
         on = (uint8_t)((jb_elapsed * (uint16_t)BAR_CELLS) / jb_secs);
         if (on > BAR_CELLS) on = BAR_CELLS;
     }
-    draw_meter(3, BAR_CELLS, on);
+    draw_meter(TX, BAR_CELLS, on);
     fmt_time(t, jb_elapsed);
     pn_ascii(x, t);
     if (jb_secs) {
@@ -230,51 +248,36 @@ static void jb_draw_bar(void) {
     pn_line(R_BAR, MC_TEXT);
 }
 
-static void jb_draw_vol(void) {
-    pn_fill();
-    pn_write(3, S_VOL, 0);
-    draw_meter(7, MET_CELLS, music_ext_vol & 0x0F);
-    pn_line(R_VOL, MC_TEXT);
-}
-
 static void jb_draw_sig(void) {
     uint8_t lvl = jb_peak >> 4;          /* 0..15 */
     pn_fill();
-    pn_write(3, S_SIG, 0);
-    draw_meter(7, MET_CELLS, lvl);
+    pn_write(TX, S_SIG, 0);
+    draw_meter(TX + 8, MET_CELLS, lvl);
     pn_line(R_SIG, MC_DIM);
 }
 
+/* Draws EVERY row, in order, on every path - the earlier version left
+   PN_TOP+4 undrawn when nothing was playing, and that row showed the
+   chat's black background straight through the panel. */
 static void jb_draw(void) {
     pn_bar_row(R_TITLE, S_TITLE);
-    pn_fill();
-    pn_line(PN_TOP + 1, MC_TEXT);
-    if (jb_loading || !(jb_flags & 1)) {
-        pn_fill();
-        pn_write(0, jb_loading ? S_FETCH : S_SILENT, 0);
-        pn_line(R_SONG, MC_DIM);
-        pn_fill();
-        pn_line(R_AUTHOR, MC_TEXT);
-        pn_fill();
-        pn_line(R_BAR, MC_TEXT);
+    pn_blank(PN_TOP + 1);
+    if (jb_loading) {
+        pn_text(R_SONG, S_FETCH, MC_DIM);
+        pn_blank(R_AUTHOR);
+    } else if (!(jb_flags & 1)) {
+        pn_text(R_SONG, S_SILENT, MC_DIM);
+        pn_text(R_AUTHOR, S_HINT, MC_DIM);
     } else {
         jb_draw_song();
-        pn_fill();
-        pn_line(PN_TOP + 4, MC_TEXT);
-        jb_draw_bar();
     }
-    pn_fill();
-    pn_line(PN_TOP + 6, MC_TEXT);
-    jb_draw_vol();
+    pn_blank(PN_TOP + 4);
+    jb_draw_bar();
+    pn_blank(PN_TOP + 6);
     jb_draw_sig();
-    pn_fill();
-    pn_line(PN_TOP + 9, MC_TEXT);
-    pn_fill();
-    pn_write(0, S_FOOT1, 0);
-    pn_line(R_FOOT1, MC_DIM);
-    pn_fill();
-    pn_write(0, S_FOOT2, 0);
-    pn_line(R_FOOT2, MC_DIM);
+    pn_blank(PN_TOP + 8);
+    pn_text(R_FOOT1, S_FOOT1, MC_DIM);
+    pn_text(R_FOOT2, S_FOOT2, MC_DIM);
     pn_bar_row(R_BOT, 0);
     pn_shadow(R_BOT + 1);
 }
@@ -346,12 +349,13 @@ static void jb_ticker(void) {
 
 /* --- keys ------------------------------------------------------------ */
 
-static void jb_setvol(uint8_t nib) {
-    /* Preserve the filter bits the loudness pass chose; only the low
-       nibble is volume. A tune with no override starts from full. */
-    uint8_t filt = music_ext_vol & 0xF0;
-    music_ext_vol = filt | nib;
-}
+/* No volume control here, deliberately. $D418 is a single global
+   register that the tune's own play routine writes; 4187 of the 10032
+   tunes have no vol_byte at all, so the client leaves that register
+   entirely to them. Setting music_ext_vol from here would start
+   overwriting it 60 times a second with a zero filter nibble, fighting
+   the tune - which on real hardware is a loud buzz, not a volume
+   change. The loudness pass already normalizes across the library. */
 
 static void jb_key(uint8_t k) {
     uint8_t v;
@@ -360,16 +364,7 @@ static void jb_key(uint8_t k) {
         ui_status(S_READY);
         return;
     }
-    v = music_ext_vol & 0x0F;
     switch (petscii_to_ascii(k)) {
-        case '+':
-            if (v < 15) jb_setvol(v + 1);
-            jb_draw_vol();
-            return;
-        case '-':
-            if (v) jb_setvol(v - 1);
-            jb_draw_vol();
-            return;
         case 'f':
             if (jb_flags & 1) {
                 jb_flags ^= 2;          /* optimistic: server confirms */
