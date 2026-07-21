@@ -352,6 +352,13 @@ def main():
                 monitor.keyboard_feed('/adventure\r')
                 wait_for_screen(monitor, r'dark room', 60,
                                 artifacts, f'{tag}-adventure')
+                # Status bar (visible) and [[STATE]] block (stripped)
+                adv_screen = wait_for_screen(monitor, r'\[hp 10/10', 15,
+                                             artifacts, f'{tag}-adv-status')
+                if '[[state' in adv_screen.lower():
+                    raise AssertionError(
+                        'STATE block leaked to the screen')
+                print('  PASS: adventure status bar shown, state stripped')
                 wait_ready(monitor, 30, artifacts, f'{tag}-adventure-ready')
 
                 if args.cols80:
@@ -713,7 +720,9 @@ def main():
                     wait_for_screen(monitor, r'star toggled', 15,
                                     artifacts, f'{tag}-mgr-unstar')
                     time.sleep(2)  # list refresh settles
-                    monitor.keyboard_feed_petscii(b'\x11')  # crsr down
+                    # two rows down: row 0/1 are the roleplay and
+                    # adventure convs later tests still need
+                    monitor.keyboard_feed_petscii(b'\x11\x11')
                     monitor.keyboard_feed('d')
                     wait_for_screen(monitor, r'delete selected', 15,
                                     artifacts, f'{tag}-mgr-delconfirm')
@@ -831,6 +840,24 @@ def main():
                     f'cfg on disk wrong: magic={blob[:2].hex()} '
                     f'host={host!r} port={port!r}')
             print('  PASS: c64llm.cfg on the d64 holds the edited config')
+
+        # The adventure's [[STATE]] block must have landed in the
+        # conversation's meta (normalized JSON with the mock's stats)
+        if args.tui and not args.live:
+            import json as _json
+            found = False
+            for fp in (artifacts / 'data' / 'conversations').glob('*.json'):
+                try:
+                    meta = _json.load(open(fp)).get('meta', {})
+                except Exception:
+                    continue
+                st = meta.get('adv_state', '')
+                if '"hp":10' in st and 'patched gray cloak' in st:
+                    found = True
+                    break
+            if not found:
+                raise AssertionError('adv_state missing from meta')
+            print('  PASS: adventure state persisted to meta')
 
         print(f"\nE2E {args.mode} mode: PASS")
         status = 0

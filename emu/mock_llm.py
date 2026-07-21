@@ -90,8 +90,14 @@ class MockHandler(BaseHTTPRequestHandler):
             # same text into its expected caption band
             text = 'The crystal deep hums with cold light.'
         elif 'BEGIN THE ADVENTURE' in upper:
-            text = ('You awaken in a dark room smelling of ozone. A single '
-                    'door stands to the north. Your quest awaits.')
+            # Status bar (visible) + [[STATE]] block (stripped + saved
+            # to meta) - the e2e asserts both behaviors
+            text = ('[HP 10/10 | The Dark Room]\n'
+                    'You awaken in a dark room smelling of ozone. A single '
+                    'door stands to the north. Your quest awaits.\n'
+                    '[[STATE: {"hp":10,"maxhp":10,"location":"dark room",'
+                    '"inventory":[],"appearance":"a wiry traveler in a '
+                    'patched gray cloak","companions":[]}]]')
         else:
             text = DEFAULT_RESPONSE
 

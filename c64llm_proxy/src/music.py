@@ -17,7 +17,8 @@ from collections import deque
 from pathlib import Path
 
 DIRECTIVE_RE = re.compile(
-    r"\[\[\s*(MUSIC|IMAGE)\s*:\s*(.*?)\s*\]\]", re.IGNORECASE | re.DOTALL)
+    r"\[\[\s*(MUSIC|IMAGE|STATE)\s*:\s*(.*?)\s*\]\]",
+    re.IGNORECASE | re.DOTALL)
 
 # Never repeat any of the last N tunes (demo library is small; keep this
 # below library size or selection starves)
@@ -116,28 +117,34 @@ class MusicLibrary:
 
 
 class MusicDirectiveFilter:
-    """Strips [[MUSIC: x]] / [[IMAGE: desc]] from streamed text without
-    leaking partials.
+    """Strips [[MUSIC: x]] / [[IMAGE: desc]] / [[STATE: json]] from
+    streamed text without leaking partials.
 
     feed() returns text safe to forward; anything that could be the start
     of a directive is held back until it resolves either way. flush()
     returns whatever is still held at end of stream. Parsed directives
-    accumulate in .moods (music) and .images (image descriptions).
+    accumulate in .moods (music), .images (image descriptions) and
+    .states (adventure game-state JSON, newest last).
     """
 
-    # Image descriptions can be a sentence; hold generously before
-    # concluding a '[[' wasn't a directive after all
-    MAX_HOLD = 300
+    # Image descriptions can be a sentence and a state block carries a
+    # whole JSON object; hold generously before concluding a '[[' wasn't
+    # a directive after all
+    MAX_HOLD = 600
 
     def __init__(self):
         self.held = ""
         self.moods = []
         self.images = []
+        self.states = []
 
     def _extract(self, text: str) -> str:
         def grab(m):
-            if m.group(1).upper() == "MUSIC":
+            kind = m.group(1).upper()
+            if kind == "MUSIC":
                 self.moods.append(m.group(2).lower())
+            elif kind == "STATE":
+                self.states.append(m.group(2))
             else:
                 self.images.append(m.group(2))
             return ""
@@ -146,7 +153,7 @@ class MusicDirectiveFilter:
     @staticmethod
     def _could_become_directive(tail: str) -> bool:
         t = tail.upper().replace(" ", "")
-        for p in ("[[MUSIC:", "[[IMAGE:"):
+        for p in ("[[MUSIC:", "[[IMAGE:", "[[STATE:"):
             if p.startswith(t) if len(t) <= len(p) else t.startswith(p):
                 return True
         return False

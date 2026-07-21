@@ -1,5 +1,6 @@
 """Protocol message encoding/decoding and handling"""
 
+import json
 import struct
 import asyncio
 import time
@@ -914,6 +915,19 @@ class ProtocolHandler:
                 + "\n".join(f"- {p}" for p in prior)
                 + "\nKeep characters and places visually consistent "
                   "with those.")
+        # The adventure's state block is the strongest consistency
+        # anchor: who the player character IS (stable appearance),
+        # where they are, and who is actually present - the model
+        # otherwise loves to invent dragons and crowds.
+        adv_state = self.conv_manager.get_meta('adv_state')
+        if adv_state:
+            consistency += (
+                "\n\nAuthoritative game state: " + adv_state +
+                "\nDepict ONLY the player character (matching the "
+                "state's appearance phrase) plus any companions the "
+                "state lists. Do NOT add other people or creatures "
+                "unless the current scene in the transcript explicitly "
+                "names them as present.")
         return await self._ask_model(
             "Below is the latest part of a text adventure. Write ONE "
             "sentence visually describing the CURRENT scene for an "
@@ -1271,17 +1285,31 @@ class ProtocolHandler:
                 messages = messages + [
                     {'role': 'user', 'content': hidden_user_msg}]
 
-            # In adventure mode the model may steer the soundtrack with
-            # [[MUSIC: mood]]; strip that from what the C64 sees (and from
-            # saved history) and act on it after the response completes.
+            # In adventure/roleplay the model may emit directives
+            # ([[MUSIC:]], [[IMAGE:]], [[STATE:]]); strip them from what
+            # the C64 sees (and from saved history) and act on them
+            # after the response completes. Always on for these modes -
+            # the state block flows even with music/images disabled.
             mfilter = None
-            if self.mode.name in ('adventure', 'roleplay') and (
-                    self.music.available or self.images.available):
+            if self.mode.name in ('adventure', 'roleplay'):
                 mfilter = MusicDirectiveFilter()
 
             # Nudge, don't nag: after ~5 minutes of one tune looping,
             # remind the narrator it owns the soundtrack
             sys_prompt = self.mode.system_prompt()
+
+            # Re-inject the adventure's authoritative state each turn:
+            # it survives even when early messages fall out of the
+            # context window, so stats/inventory/appearance stay
+            # consistent across a long game.
+            if self.mode.name == 'adventure' and sys_prompt:
+                adv_state = self.conv_manager.get_meta('adv_state')
+                if adv_state:
+                    sys_prompt += (
+                        "\n\nAUTHORITATIVE GAME STATE from your previous "
+                        "turn - trust it over your reading of the "
+                        "transcript, and update it in this reply's "
+                        "[[STATE: ...]] block: " + adv_state)
             if (mfilter and self.music.available and self.music.stale()
                     and sys_prompt):
                 sys_prompt += ("\n(The background music has been looping "
@@ -1342,6 +1370,20 @@ class ProtocolHandler:
             # Save assistant response to conversation
             self.conv_manager.add_message('assistant', full_response)
             self.conv_manager.save()
+
+            # Adventure state block: persist the newest one in meta
+            # (normalized if it parses; kept raw otherwise - still
+            # useful as context next turn)
+            if mfilter and mfilter.states:
+                state = mfilter.states[-1].strip()
+                try:
+                    state = json.dumps(json.loads(state),
+                                       separators=(',', ':'))
+                except (ValueError, TypeError):
+                    self.logger.warning("STATE block is not valid JSON, "
+                                        "keeping raw")
+                self.conv_manager.set_meta('adv_state', state)
+                self.conv_manager.save()
 
             self.logger.info(f"Response complete: {len(full_response)} bytes")
 

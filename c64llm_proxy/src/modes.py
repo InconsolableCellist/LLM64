@@ -65,6 +65,19 @@ ADVENTURE_PROMPT = (
     "consequences, including failure and death (offer to restart). "
     "Write in normal mixed-case prose; never write whole sentences or "
     "headers in all capitals. "
+    "Begin every reply with one short status line in square brackets, "
+    "under 60 characters, showing the stats that fit this story - e.g. "
+    "[HP 12/20 | Gold 3 | The Fungal Vault]. "
+    "End every reply with a machine-readable state block on its own "
+    "line, exactly one, in this form: "
+    '[[STATE: {"hp":12,"maxhp":20,"mana":0,"gold":3,"score":0,'
+    '"location":"...","inventory":["..."],'
+    '"appearance":"one short visual phrase describing the player '
+    'character","companions":[]}]] '
+    "- compact single-line JSON, updated every turn to reflect what "
+    "just happened; omit stats the story does not use. The player "
+    "never sees this block. Establish the appearance phrase early and "
+    "keep it stable for the whole adventure. "
     + C64_STYLE_RULES
 )
 
