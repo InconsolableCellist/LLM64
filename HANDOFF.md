@@ -81,8 +81,8 @@ VICE-based e2e test suite.
    growth all eat the module-slot headroom 1:1. After ANY resident change:
    `make -C c64_client clean && make -C c64_client MODE80=1` must link
    (default CONNECT=hayes), then check headroom (BSS end vs $9C00 in
-   `build/c64llm.map`). Currently ~277 bytes free (a `DIAG=1` build
-   spends ~170 more; that is expected and opt-in).
+   `build/c64llm.map`). Currently ~492 bytes free (a `DIAG=1` build
+   spends ~200 more; that is expected and opt-in).
 10. **In c64_client/Makefile**, conditional `+=` blocks must come after
     base assignments, and new rules go AFTER `all:` (first rule = default
     target).
@@ -249,18 +249,44 @@ mode, where `sei` genuinely masks. 3 SID transfers + 1 image over ~11
 minutes, no crash. In NMI mode it died on the 3rd SID transfer ~9 minutes
 in. Same shape of workload, survived.
 
-**The fix, when confirmed:** `ACIA_DATA` needs a single owner — the
-mainline pickup must either go away or hold the RX interrupt off across
-its read-and-store. LANDMINE: `785131e` gated ACIA command-register
-writes to real mask transitions because the modem re-evaluates DTR/RTS on
-every write; any fix must not reintroduce gratuitous command writes.
+**The fix, when confirmed — HARDER THAN IT LOOKS.** `ACIA_DATA` needs a
+single owner, but the obvious approaches all have a catch:
+- *Delete the mainline pickup.* It is load-bearing. **6502 NMI is
+  edge-triggered** while the 6551 asserts its interrupt on a level, so a
+  byte that arrives without producing an edge is stranded with no further
+  NMI ever coming. The pickup is what rescues it; removing it also broke
+  SID transfers in e2e once already.
+- *Have the NMI bail out when a flag says mainline is mid-pickup.* Same
+  edge-trigger problem — returning without reading `ACIA_DATA` leaves the
+  line asserted and serial dies.
+- *Reserve the ring slot before reading.* Does not help: the read IS the
+  consuming operation, so both readers still race for the same byte.
+- *Mask the RX interrupt around the pickup* is the plausible one, but
+  LANDMINE: `785131e` gated ACIA command-register writes to real mask
+  transitions because the modem re-evaluates DTR/RTS on every write. A
+  mask/unmask pair per stranded byte must stay rare or it reintroduces
+  that bug.
 Then replace XOR with an order-sensitive checksum (Fletcher-16 is cheap
 on 6502) so corruption can never again pass as valid. **Wire-format
 change — client and proxy must deploy in lockstep.**
 
-**Also still open:** `bank01` (soft80.s:61, at $9ACB) is a **single
-non-reentrant `$01` save slot**. Re-entering `_soft80_scroll_chat` would
-restore a stale bank byte. Not audited.
+**`bank01` — CLOSED (299b3e8).** It was a single non-reentrant `$01`
+save slot, but `_soft80_scroll_chat` has one call site and it sits inside
+`#if defined(SOFT80) && defined(SCROLL_OPT)`, which nothing defines. The
+routine has never run in a shipped client, `bank01` is never written, and
+after cc65's startup **nothing in the client touches `$01` at all** — it
+runs at `$36` from boot to crash. That also rules banking out as a
+mechanism entirely. The dead path is now behind `.ifdef SCROLL_OPT`
+(Makefile flag drives C and asm together): 215 bytes reclaimed.
+
+**C-stack — CLOSED (6440b11).** The IRQ now samples cc65's `sp` and keeps
+the minimum in the block at `$02B7/8`, where PEEK can reach it. A full
+e2e run peaks at **23 bytes of the 1536 reserved** — unsurprising, since
+CFLAGS carries `-Cl` (locals are static, so the C stack holds little
+beyond parameters). `__STACKSIZE__` is therefore wildly oversized;
+cutting it raises `__OVERLAYSTART__` one-for-one and hands the difference
+to BSS headroom. Not done: one emulator run is not a proof about every
+path on real hardware.
 
 **Do not try to read the C-stack canary from BASIC.** `$AA00` is under
 BASIC ROM, so `PEEK` returns ROM, not the RAM the client used — and that
