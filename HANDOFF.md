@@ -81,7 +81,7 @@ VICE-based e2e test suite.
    growth all eat the module-slot headroom 1:1. After ANY resident change:
    `make -C c64_client clean && make -C c64_client MODE80=1` must link
    (default CONNECT=hayes), then check headroom (BSS end vs $9C00 in
-   `build/c64llm.map`). Currently ~391 bytes free (a `DIAG=1` build
+   `build/c64llm.map`). Currently ~216 bytes free (a `DIAG=1` build
    spends ~200 more; that is expected and opt-in).
 10. **In c64_client/Makefile**, conditional `+=` blocks must come after
     base assignments, and new rules go AFTER `all:` (first rule = default
@@ -433,13 +433,26 @@ instead. Also fixed a latent race in the jukebox test that this exposed:
 it asserted on the first screen showing the panel title, which is drawn
 before NOWPLAYING arrives. It now polls for the content.
 
-### 3c2. Picture count in the chrome (USER REQUEST, small)
-Show how many illustrations this conversation has, up top or in the
-status bar - "almost like a high score", and a standing nudge toward
-/pics. Likely cheap: MSG_HINT 0x5D and ui_set_hints()/draw_hints()
-already exist for the '!P' pic-ready indicator in the status row's last
-cells, and the proxy already tracks meta['images']. Mostly a question of
-where it looks good and how few bytes the client side costs.
+### 3c2. Picture count in the chrome — DONE
+The status row's right corner now reads `!P` / ` P03` / `!P03`: the
+pending-scene indicator as before, plus a running tally of this
+conversation's pictures. Carried as a second byte on the existing
+HINT frame, so nothing new was invented; a frame without it leaves the
+tally alone. Sent when a scene becomes available, when a picture lands,
+on conversation load and on new-conversation - the count belongs to the
+conversation, not the session, and is read from meta rather than
+tracked separately so a loaded conversation shows its own.
+
+COST: 134 bytes, which is a lot for a corner. Two things made it worse
+before they were fixed, both worth remembering: a `uint8` divide for the
+two digits drags cc65's runtime helper into the RESIDENT image, and four
+ternaries generate far worse code than blank-then-fill straight-line
+stores. Passing the count as a second argument to ui_set_hints() also
+cost ~20 bytes (cc65 puts it on the C stack) - it is a plain global now.
+
+Careful with the `!P` pair: it must render even when the count is zero,
+since a scene can be pending before any picture exists. Gating the 'P'
+on the count broke the existing indicator and the e2e caught it.
 
 ### 3c3. Adventure ideas (USER, 2026-07-21 - design work, not yet scoped)
 Four related asks, all pointing at "make adventure mode feel prepared

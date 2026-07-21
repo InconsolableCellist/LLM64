@@ -1168,7 +1168,7 @@ class ProtocolHandler:
             await self._send_canned(
                 "Couldn't picture the scene - try /pic <description>.")
             return
-        await self.send_message(MessageType.HINT, bytes([0]))
+        await self._send_hint(0)
         # Complete the chat round-trip first: the client must return
         # to idle before the image transfer starts
         await self._send_canned(f"Illustrating: {prompt[:300]}")
@@ -1193,6 +1193,7 @@ class ProtocolHandler:
                      'at_msg': len(self.conv_manager.get_messages())})
         self.conv_manager.set_meta('images', pics)
         self.conv_manager.save()
+        await self._send_hint(0)      # the tally just went up
         # The caption lands in the scrollback before the screen freezes,
         # so it's also the last chat line when the picture is dismissed
         await self._send_canned(f'"{caption}"')
@@ -1221,6 +1222,15 @@ class ProtocolHandler:
                 await self.send_status(f"{label} ({int(i * interval)}s)")
         except asyncio.CancelledError:
             pass
+
+    async def _send_hint(self, pending: int):
+        """Status-row indicators: '!P' when a scene is waiting, plus the
+        running picture count. One frame carries both so they can never
+        disagree, and the count is read from meta rather than tracked
+        separately - a loaded conversation then shows its own tally."""
+        pics = len(self.conv_manager.get_meta('images', []) or [])
+        await self.send_message(MessageType.HINT,
+                                bytes([pending & 1, min(pics, 255)]))
 
     async def _send_canned(self, text: str):
         """Stream local text to the C64 as a normal reply (no API call)."""
@@ -1480,7 +1490,7 @@ class ProtocolHandler:
                     self.images.pending_prompt = prompt
                     await self.send_status(
                         "Scene available - /pic to illustrate")
-                    await self.send_message(MessageType.HINT, bytes([1]))
+                    await self._send_hint(1)
 
             # Model asked for a music change: honor at most one, after the
             # text is fully delivered (the client is idle again), unless a
@@ -1933,6 +1943,11 @@ class ProtocolHandler:
                         or self.music.pick(music_meta.get('mood', '')))
                 if tune:
                     self._spawn_media(self._resume_tune(tune, len(frames)))
+
+            # The tally belongs to the conversation, so a load has to
+            # restate it - otherwise the corner keeps showing the count
+            # from whatever was open before.
+            await self._send_hint(0)
         else:
             error = b"Conversation not found\x00"
             await self.send_message(MessageType.CHAT_ERROR, error)
@@ -1946,3 +1961,4 @@ class ProtocolHandler:
         self._manual_notice_sent = False
         self.conv_manager.new_conversation()
         await self.send_ack()
+        await self._send_hint(0)      # fresh conversation, empty tally

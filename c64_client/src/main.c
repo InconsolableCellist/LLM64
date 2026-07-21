@@ -742,7 +742,16 @@ static void handle_message(uint8_t msg_type) {
             conv_data_frame();
             break;
         case MSG_HINT: {
-            uint8_t f = proto_get_payload(&proto)[0];
+            uint8_t* hp = proto_get_payload(&proto);
+            uint8_t f = hp[0];
+            /* Byte 1 (picture count) was added later; a frame that
+               predates it carries only the flags, and proto zero-fills
+               so an absent count reads as none. */
+            /* Byte 1 (picture count) was added after the flags byte;
+               a frame without it leaves the tally alone. Assigned
+               directly rather than passed - a second argument would go
+               on the C stack for no gain. */
+            if (proto_get_length(&proto) > 1) ui_pics = hp[1];
             /* A scene became ready (bit0 rising): announce it with a
                rainbow attention line, not just the quiet status
                indicator. Only while idle - never mid-stream. */

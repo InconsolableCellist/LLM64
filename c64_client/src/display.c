@@ -447,26 +447,59 @@ void ui_draw_row(uint8_t row, const char* petscii, uint8_t color,
    them - every status repaint re-draws the indicators on top. */
 uint8_t ui_hints;
 
+/* How many pictures this conversation has. Shown as a running tally
+   rather than only when one is pending - it reads like a score, and it
+   is a standing reminder that /pics can bring them back. */
+uint8_t ui_pics;
+
+/* Right-hand corner of the status row: "!P" when a scene is waiting,
+   then the picture count. Ordinary status text can never clobber it -
+   every status repaint redraws this on top. */
+/* Soft-80 cells are ASCII; 40-col writes screen codes, where the digits
+   happen to coincide with ASCII but the letters do not. */
+#ifdef SOFT80
+#define HINT_P     'P'
+#define HINT_BANG  '!'
+#define HINT_BLANK ' '
+#else
+#define HINT_P     0x10
+#define HINT_BANG  0x21
+#define HINT_BLANK 0x20
+#endif
+
 static void draw_hints(void) {
-    /* bit7 = reverse video, matching the status row */
+    uint8_t n = ui_pics;
+    uint8_t d0, d1;
+    if (n > 99) n = 99;
+    /* Blank the corner, then fill in only what applies. Written as
+       straight-line stores rather than four ternaries: cc65 generates
+       poor code for those, and this corner is not worth much of the
+       module-slot budget. */
+    rowbuf[TEXT_COLS - 4] = HINT_BLANK | 0x80;
+    rowbuf[TEXT_COLS - 3] = HINT_BLANK | 0x80;
+    rowbuf[TEXT_COLS - 2] = HINT_BLANK | 0x80;
+    rowbuf[TEXT_COLS - 1] = HINT_BLANK | 0x80;
+    /* '!P' stays a pair: a pending scene shows it even before any
+       picture exists, which is the whole point of the indicator. The
+       tally sits beside it, so the corner reads "!P" / " P03" / "!P03". */
     if (ui_hints & 1) {
-#ifdef SOFT80
-        rowbuf[TEXT_COLS - 2] = '!' | 0x80;
-        rowbuf[TEXT_COLS - 1] = 'P' | 0x80;
-#else
-        rowbuf[TEXT_COLS - 2] = 0x21 | 0x80;   /* '!' screen code */
-        rowbuf[TEXT_COLS - 1] = 0x10 | 0x80;   /* 'P' screen code */
-#endif
-    } else {
-#ifdef SOFT80
-        rowbuf[TEXT_COLS - 2] = ' ' | 0x80;
-        rowbuf[TEXT_COLS - 1] = ' ' | 0x80;
-#else
-        rowbuf[TEXT_COLS - 2] = 0x20 | 0x80;
-        rowbuf[TEXT_COLS - 1] = 0x20 | 0x80;
-#endif
+        rowbuf[TEXT_COLS - 4] = HINT_BANG | 0x80;
+        rowbuf[TEXT_COLS - 3] = HINT_P | 0x80;
     }
-    ui_blit_span(STATUS_ROW, rowbuf, TEXT_COLS - 2, 2);
+    if (n) {
+        /* Digits by subtraction: a uint8 divide drags cc65's runtime
+           helper into the resident image. */
+        d0 = '0';
+        while (n >= 10) {
+            n -= 10;
+            ++d0;
+        }
+        d1 = '0' + n;
+        rowbuf[TEXT_COLS - 3] = HINT_P | 0x80;
+        rowbuf[TEXT_COLS - 2] = d0 | 0x80;
+        rowbuf[TEXT_COLS - 1] = d1 | 0x80;
+    }
+    ui_blit_span(STATUS_ROW, rowbuf, TEXT_COLS - 4, 4);
 }
 
 void ui_set_hints(uint8_t flags) {
@@ -476,7 +509,7 @@ void ui_set_hints(uint8_t flags) {
 
 void ui_status(const char* msg) {
     ui_draw_row(STATUS_ROW, msg, COLOR_WHITE, 1);
-    if (ui_hints & 1) draw_hints();
+    if (ui_hints || ui_pics) draw_hints();
 }
 
 static void draw_frame(void) {

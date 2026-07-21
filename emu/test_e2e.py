@@ -523,6 +523,12 @@ def main():
                     if re.search(r'!p', screen):
                         raise AssertionError(
                             f'pic indicator not cleared after /pic\n{screen}')
+                    # ...and the tally in the same corner has gone up.
+                    # The '!' clears because nothing is pending now, but
+                    # the count stays: it is the conversation's score.
+                    scr = wait_for_screen(monitor, r'p01\s*$', 15,
+                                          artifacts, f'{tag}-pic-tally')
+                    print('  PASS: picture tally shows 01 in the corner')
                     wait_for_screen(monitor, r'the crystal deep hums', 10,
                                     artifacts, f'{tag}-caption')
                     # ...and restart when the picture closes
@@ -943,6 +949,15 @@ def main():
                     # expansion, which is asserted against the stored
                     # conversation after the run.
                     print('  PASS: [roll:1d20] rolls and reports back')
+                    # Picture tally in the status corner. This
+                    # conversation is fresh, so it must read 00 - the
+                    # count belongs to the conversation, not the session.
+                    scr = monitor.screen_text()
+                    corner = scr.splitlines()[24][-4:]
+                    if re.search(r'\d', corner):
+                        raise AssertionError(
+                            f'fresh conversation should show no picture '
+                            f'tally, got {corner!r}')
                     wait_ready(monitor, 40, artifacts, f'{tag}-dice-done')
 
                     scr = open_f1_menu(f'{tag}-qs-menu')
