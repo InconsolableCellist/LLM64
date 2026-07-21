@@ -17,7 +17,21 @@ from collections import deque
 from pathlib import Path
 
 DIRECTIVE_RE = re.compile(
-    r"\[\[\s*(MUSIC|IMAGE|STATE)\s*:\s*(.*?)\s*\]\]",
+    # Canonical form. DOTALL so a STATE block's JSON may wrap, and ']]'
+    # as the terminator so the JSON's own ']' cannot close it early.
+    r"\[\[\s*(MUSIC|IMAGE|STATE)\s*:\s*(.*?)\s*\]\]"
+    r"|"
+    # Single-bracket fallback. Adventure replies open with a status line
+    # that is itself single-bracketed - "[HP 15/20 | Gold 0 | ...]" - so
+    # models copy that shape and emit "[MUSIC: eerie]". Those used to
+    # leak onto the screen as text and silently do nothing.
+    # MUSIC/IMAGE only, and the value may not span ']' or a newline:
+    # STATE's JSON contains ']', so it has no safe single-bracket form.
+    # The lookbehind matters mid-stream: while "[[MUSIC: calm]]" is still
+    # arriving it briefly reads as "[[MUSIC: calm]", and without it this
+    # alternative would match the inner "[MUSIC: calm]" and leave a
+    # stray "[]" on the screen.
+    r"(?<!\[)\[\s*(MUSIC|IMAGE)\s*:\s*([^\]\n]*?)\s*\]",
     re.IGNORECASE | re.DOTALL)
 
 # Never repeat any of the last N tunes (demo library is small; keep this
@@ -49,7 +63,9 @@ class MusicLibrary:
         """Instruction block appended to the adventure system prompt."""
         return (
             "\nBackground music: you control the soundtrack. To change it, "
-            "output [[MUSIC: mood]] on its own at the START of a reply, "
+            "output [[MUSIC: mood]] on its own at the START of a reply - "
+            "TWO square brackets each side, not one (the status line's "
+            "single brackets are a different thing) - "
             "picking mood from: " + ", ".join(self.moods) + ". "
             "Use it sparingly - only when the scene's emotional tone truly "
             "shifts (a new area, combat starting, victory). Most replies "
@@ -138,39 +154,54 @@ class MusicDirectiveFilter:
         self.images = []
         self.states = []
 
+    # Openers worth holding a partial tail for (see _could_become_directive)
+    _PREFIXES = ("[[MUSIC:", "[[IMAGE:", "[[STATE:", "[MUSIC:", "[IMAGE:")
+
     def _extract(self, text: str) -> str:
         def grab(m):
-            kind = m.group(1).upper()
+            # Groups 1/2 are the canonical form, 3/4 the single-bracket
+            # fallback; exactly one alternative participates per match.
+            kind = (m.group(1) or m.group(3)).upper()
+            value = m.group(2) if m.group(1) else m.group(4)
             if kind == "MUSIC":
-                self.moods.append(m.group(2).lower())
+                self.moods.append(value.lower())
             elif kind == "STATE":
-                self.states.append(m.group(2))
+                self.states.append(value)
             else:
-                self.images.append(m.group(2))
+                self.images.append(value)
             return ""
         return DIRECTIVE_RE.sub(grab, text)
 
-    @staticmethod
-    def _could_become_directive(tail: str) -> bool:
+    @classmethod
+    def _could_become_directive(cls, tail: str) -> bool:
         t = tail.upper().replace(" ", "")
-        for p in ("[[MUSIC:", "[[IMAGE:", "[[STATE:"):
+        for p in cls._PREFIXES:
             if p.startswith(t) if len(t) <= len(p) else t.startswith(p):
                 return True
         return False
 
+    @staticmethod
+    def _closed(tail: str) -> bool:
+        """A '[[' opener is only finished by ']]'; a single '[' by ']'."""
+        return "]]" in tail if tail.startswith("[[") else "]" in tail
+
     def feed(self, chunk: str) -> str:
         text = self._extract(self.held + chunk)
         self.held = ""
-        idx = text.rfind("[[")
-        if idx != -1:
-            tail = text[idx:]
-            if (len(tail) <= self.MAX_HOLD and "]]" not in tail
-                    and self._could_become_directive(tail)):
-                self.held = tail
-                return text[:idx]
-        if text.endswith("["):  # lone '[' could become '[['
-            self.held = "["
-            return text[:-1]
+        # Walk '[' positions backwards and hold from the EARLIEST one that
+        # still looks unfinished. Anchoring on the last '[' would break
+        # [[STATE: ...]], whose JSON contains its own '[' - the outer
+        # opener is the one that has to be held back.
+        hold_at = -1
+        i = text.rfind("[")
+        while i != -1 and len(text) - i <= self.MAX_HOLD:
+            tail = text[i:]
+            if self._could_become_directive(tail) and not self._closed(tail):
+                hold_at = i
+            i = text.rfind("[", 0, i)
+        if hold_at != -1:
+            self.held = text[hold_at:]
+            return text[:hold_at]
         return text
 
     def flush(self) -> str:
