@@ -771,13 +771,21 @@ class ProtocolHandler:
     # when that buffer fills - losing the final more=0 frame left the
     # client frozen at 'Loading... NN' forever.
     BULK_PACE_BASE = 0.01
-    BULK_PACE_PER_BYTE = 0.0012   # ~15% over the 1.04ms/byte wire rate
+    # Derived rather than magic: 10 bits per byte over the wire, plus a
+    # 15% margin. At the 9600 default this is exactly the 0.0012 that
+    # ran for months; config [serial] wire_baud retunes it when the
+    # client is rebuilt with BAUD38400.
+    BULK_PACE_MARGIN = 1.15
+
+    @property
+    def bulk_pace_per_byte(self) -> float:
+        return (10.0 / self.config.wire_baud) * self.BULK_PACE_MARGIN
 
     async def _send_bulk(self, msg_type: MessageType, payload: bytes):
         """Send one bulk frame and sleep out its wire time."""
         await self.send_message(msg_type, payload)
         await asyncio.sleep(self.BULK_PACE_BASE
-                            + len(payload) * self.BULK_PACE_PER_BYTE)
+                            + len(payload) * self.bulk_pace_per_byte)
 
     SID_CHUNK = 256
 

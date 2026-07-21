@@ -356,13 +356,39 @@ MAX_MENU went 12 → 13 (adventure mode was already at 12). MenuEntry is
 the same 41 bytes as ConvEntry and convs[] holds 17, so the storage was
 always there.
 
-### 3. Baud doubling (38400)
-SwiftLink's doubled crystal makes its "19200" divisor yield 38400; the
-C64U emulation honors it. Client: ACIA control value + retune pacing
-constants; proxy: wire-time constants. RISK: VICE `-acia1mode 1` hangs
-the client at init (open thread) — hardware-speed CI needs that solved,
-otherwise validate on real hardware with the diag counters. Halves every
-transfer; do it before the screensaver (push traffic).
+### 3. Baud doubling (38400) — OPT-IN, NOT YET SAFE TO TURN ON
+`make -C c64_client ... BAUD38400=1` moves the ACIA divisor $1E → $1F.
+By the 6551's table that is 9600 → 19200, but SwiftLink's doubled
+crystal (which the C64U emulates) makes it 19200 → 38400 on hardware.
+Verified the flag reaches the register: the byte pattern
+`a9 1F 8d 03 de` appears only in the BAUD38400 build.
+
+Proxy side: `[serial] wire_baud` (default 9600) now *derives* the bulk
+pacing — `(10 / wire_baud) * 1.15`, which at 9600 reproduces the old
+0.0012 constant exactly. Raise it only in lockstep with the client flag.
+
+**Do not enable it while the client is on IRQ.** At 38400 a byte time is
+~260 cycles, so every interrupts-disabled window longer than that costs
+a byte — and plenty of ordinary code is longer, `kb_scan` included. The
+only reason the *current* rate is safe is that NMI drains the ACIA
+inside SEI sections regardless. serial.s already carries the scar: the
+CLI dance around `_music_play` exists because a play routine outran one
+byte time at 9600. So this wants the NMI read race fixed first, which
+puts it behind that work, not ahead of it.
+
+**Correction to the old note in this file: VICE `-acia1mode 1` does NOT
+hang the client.** Measured 2026-07-21: it boots, reaches Ready, echoes
+input, and streams — but drops chunks (`hw=02 cr=01`, and the client's
+own seq-gap notice fires). Since real hardware runs 19200 cleanly, VICE
+is delivering faster than the nominal rate, so its SwiftLink mode is not
+a trustworthy pass/fail gate for 38400. Validate on hardware with the
+diag counters instead.
+
+Note also that only *bulk* transfers are wire-bound. Text streaming is
+paced by the C64's rendering (~20-30ms/frame plus ~130ms per scrolled
+line, see CHUNK_PACE_* in protocol.py), so doubling the baud does
+nothing for how fast a reply appears - it speeds up pictures, tunes and
+conversation loads.
 
 ### 4. Screensaver / always-on assistant
 Idle detection client-side; unsolicited server frames already work

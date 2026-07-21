@@ -73,6 +73,21 @@ CFLAGS += -DSCROLL_OPT
 ASFLAGS += -D SCROLL_OPT
 endif
 
+# BAUD38400=1 moves the ACIA divisor up one notch. On a real SwiftLink
+# (and the C64U's emulation) the doubled crystal turns the 6551's
+# nominal 19200 into 38400, halving every transfer.
+#
+# NOT the default, and not safe on IRQ: a byte time drops to ~260 cycles,
+# so any interrupts-disabled window longer than that loses a byte, and
+# plenty of ordinary code is longer. NMI keeps draining the ACIA inside
+# SEI sections, which is what makes the current rate safe - so this
+# wants the NMI read race fixed first. Pair with the proxy's
+# [serial] wire_baud so its bulk pacing matches.
+ifdef BAUD38400
+CFLAGS += -DBAUD38400
+ASFLAGS += -D BAUD38400
+endif
+
 # Source files
 C_SOURCES = $(wildcard src/*.c)
 ASM_SOURCES = $(wildcard src/*.s)

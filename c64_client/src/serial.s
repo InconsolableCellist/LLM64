@@ -51,9 +51,24 @@ ACIA_CONTROL = $DE03
 ACIA_SR_RDRF = $08      ; Receive Data Register Full
 ACIA_SR_TDRE = $10      ; Transmit Data Register Empty
 
-; Control register: bit4 = internal baud generator, bits 0-3 = rate
-; %1110 = 9600 baud (standard 6551 crystal; doubled on real SwiftLink)
+; Control register: bit4 = internal baud generator, bits 0-3 = rate.
+; By the 6551's own table %1110 = 9600 and %1111 = 19200, but a real
+; SwiftLink - and the C64U's emulation of one - runs a doubled crystal,
+; so on hardware those land at 19200 and 38400 respectively.
+;
+; BAUD38400 is OPT-IN and should stay that way until the client is back
+; on NMI. On NMI the ACIA is drained even inside SEI sections, which is
+; the only reason the existing rate is safe; on IRQ, every
+; interrupts-disabled window longer than one byte time costs a byte, and
+; at 38400 a byte time is ~260 cycles - shorter than kb_scan, shorter
+; than plenty of ordinary code. See the CLI dance around _music_play
+; below, which exists because a play routine already outran one byte
+; time at 9600.
+.ifdef BAUD38400
+ACIA_CTRL_VALUE = $1F
+.else
 ACIA_CTRL_VALUE = $1E
+.endif
 
 ; Command register: DTR active (bit0=1), RX IRQ enabled (bit1=0),
 ; RTS active + TX IRQ off (bits3-2=10), no echo, no parity

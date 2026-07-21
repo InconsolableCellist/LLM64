@@ -83,6 +83,15 @@ class Config:
             config.get('storage', {}).get('data_dir', './data')
         )
 
+        # Wire speed the client's ACIA is set to. Only the bulk pacing
+        # depends on it (text streaming is bound by the C64's rendering,
+        # not the wire). Default 9600 reproduces the constants this ran
+        # on for months; raise it in lockstep with the client's
+        # BAUD38400 build flag, never on its own.
+        self.wire_baud = int(os.getenv(
+            'C64LLM_WIRE_BAUD',
+            config.get('serial', {}).get('wire_baud', 9600)))
+
         # --- interaction modes -----------------------------------------
         modes = config.get('modes', {})
         self.user_name = modes.get('user_name', 'You')
