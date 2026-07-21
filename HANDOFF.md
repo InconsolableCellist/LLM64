@@ -31,8 +31,16 @@ VICE-based e2e test suite.
   Deploy = `rsync -a --delete c64llm_proxy/src/ mlboy:c64llm_proxy/src/` + restart.
 - **LLM endpoint**: `https://mlboy.tail99c274.ts.net:5000/v1` — TLS only,
   always this hostname even from mlboy itself. Resident model
-  `gemma4-26b-a4b-it-qat-q4-mlboy` is a THINKING fine-tune: requests must
-  send `chat_template_kwargs: {enable_thinking: false}` or replies are empty.
+  `gemma4-26b-a4b-it-qat-q4-mlboy` is a THINKING fine-tune. We send
+  `chat_template_kwargs: {enable_thinking: false}` for ordinary turns
+  because 20-25s per reply would ruin play - NOT because thinking is
+  broken. **Corrected 2026-07-21** (this file previously claimed
+  "replies are empty"): thinking works, but it emits `reasoning_content`
+  BEFORE `content`, so a small `max_tokens` is spent entirely on
+  reasoning and the answer never arrives - `finish_reason: length` with
+  empty content. Measured: 400 tokens -> empty; 2000 -> `stop`, 1285
+  tokens, 24s, full answer. Anything enabling thinking must raise
+  max_tokens to >= ~2000. See docs/09-adventure-setup.md §1.
 - **C64 Ultimate** at 192.168.1.64 (FTP + telnet menu), dials 192.168.1.21:6400.
 - **Canonical client distribution = ONE d64**: PRG + overlay modules
   `c64llm.1`–`.4` + `c64llm.cfg`. `make deploy-c64u-disk-80` builds and
@@ -471,12 +479,10 @@ rather than improvised":
   context. One-shot freeform play loses focus by comparison. Overlaps
   heavily with the map (3e): the prep pass is the natural place for the
   initial map to come from.
-- **Thinking mode.** We currently force it OFF everywhere -
-  `chat_template_kwargs: {enable_thinking: false}` is mandatory for the
-  resident Gemma or replies come back empty (see the config note). The
-  prep pass is exactly the case where you WANT it: slow, once, off the
-  critical path. Wants a per-request switch rather than the global off,
-  exposed as `/thinking` or through `/models`.
+- **Thinking mode.** MEASURED and viable - see docs/09-adventure-setup.md
+  section 1. It is off for ordinary turns because of latency, not because
+  it fails; it just needs max_tokens >= ~2000 or the budget is spent on
+  reasoning and the answer never lands. Wants a per-request switch.
 - **Character creation** when an adventure starts, instead of the model
   assigning an appearance in its first [[STATE]].
 - **Inline colour markup** - DESIGNED, see `docs/08-inline-color.md`
@@ -522,6 +528,19 @@ bytes-per-tick guess is wrong across JiffyDOS vs stock vs the FPGA
 drive, so it needs a real time source (the CIA timer read directly,
 since its IRQ is what is being starved). Cheaper half-measure: a short
 volume fade out/in around the hold so the gap is less abrupt.
+
+### 3c6. Adventure setup: chooser, staged creation, templates
+DESIGNED - see `docs/09-adventure-setup.md`. `/adventure` becomes a
+front door: surprise me / one-line idea / build a world and character /
+load a saved world. Staged interview in a SCRATCH buffer (never the
+conversation - `_switch_mode` opens a new one, so a half-built adventure
+must not exist), then a thinking-enabled prep pass produces the campaign
+bible and the first `[[STATE]]`, then play. The bundle is saved as a
+reusable template in `data/adventures/`.
+
+Costs ZERO client bytes - canned text and numbered replies only, so no
+lockstep deploy. Largest proxy-side feature so far; stages 1-2 of the
+build order are independently shippable.
 
 ### 3d. Music browser (overlay #6, bigger - after the above)
 Browse by mood, favourites first, page through ~10k tunes. This is what
