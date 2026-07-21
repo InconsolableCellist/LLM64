@@ -479,33 +479,20 @@ rather than improvised":
   exposed as `/thinking` or through `/models`.
 - **Character creation** when an adventure starts, instead of the model
   assigning an appearance in its first [[STATE]].
-- **Inline colour markup** - INVESTIGATED 2026-07-21, needs a decision
-  before coding. It is NOT as close as it looks. Findings:
-  - The chat ring stores each wrapped line as cells plus ONE colour
-    (`build_view_row` returns a single colour per row). Per-BLOCK colour
-    is therefore nearly free - `chat_start(role)` already picks from
-    `role_colors[]`, so extra roles could mean colours. But that makes a
-    coloured phrase its own LINE, which butchers the very thing the
-    feature is for ("You approach the [color:red]stone altar[/color],
-    your torch...").
-  - True inline needs per-CELL colour. A parallel array is impossible:
-    MAX_LINES x TEXT_COLS is ~9.7KB.
-  - The viable shape is a small per-line colour-RUN table - say 4
-    (column, colour) pairs per line, ~1KB total, which the 1467-byte
-    headroom can now almost fund. `ui_blit_row`'s 0xFF rainbow path is
-    the model for applying it: draw glyphs, then poke the matrix.
-  - HARD CONSTRAINT: soft-80 colour granularity is one 8x8 cell = TWO
-    characters (a 40-byte matrix over 80 columns). Colour changes snap
-    to even columns, so a span starting mid-cell bleeds one character.
-    Authentic, but the user should know before picking this over
-    per-block colour.
-  - The fiddly part is WRAPPING: a coloured span crossing a line break
-    has to split its runs, so the writer path needs to know about runs
-    too. This is the client's most delicate code and the app's core
-    function - worth doing carefully, not quickly.
-  - Syntax must dodge the directive filter, which now also accepts
-    single brackets for MUSIC/IMAGE. `[color:red]...[/color]` is safe
-    (different keyword), same as the dice macros.
+- **Inline colour markup** - DESIGNED, see `docs/08-inline-color.md`
+  (2026-07-21; supersedes the colour-run-table sketch that used to live
+  here). Short version: in-band marker cells (0x01/0x10|c, dead cell
+  values the renderer already draws as spaces) stored straight in
+  `line_text[]` - ZERO extra scrollback RAM, wrap logic untouched, wrap
+  carry rides a spare nibble of `line_color[]`. The proxy swallows the
+  space adjacent to each tag so the marker takes its column: spacing is
+  preserved and pair-granularity bleed only ever lands on the marker
+  spaces themselves (invisible). Tags stay in saved history/LLM context;
+  a `colorize_for_wire()` helper converts at every client-bound egress
+  (stream, flush, /history, LOAD_CONVERSATION). `**bold**` = reverse
+  video, consumed at append time, zero stored cost. ~250-350 bytes CODE
+  against 1474 measured headroom. Ready to implement; deploy client and
+  proxy in lockstep (rule 2).
 
 ### 3c4. Rate a tune down (USER REQUEST, small)
 A thumbs-down so an annoying tune never comes back. Mirrors favorites
