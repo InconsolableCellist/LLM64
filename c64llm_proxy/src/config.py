@@ -88,6 +88,13 @@ class Config:
         self.user_name = modes.get('user_name', 'You')
         self.cards_dir = os.getenv('C64LLM_CARDS_DIR',
                                    modes.get('cards_dir', './cards'))
+        # Cards that ship with the proxy, so a fresh install has at least
+        # one character to talk to. Lives inside the package: resolved
+        # against __file__ rather than the cwd, and carried along by the
+        # deploy, which rsyncs src/ only. cards_dir is the user's own
+        # (gitignored) folder and wins when both define the same name.
+        self.default_cards_dir = str(
+            Path(__file__).resolve().parent / 'default_cards')
 
         # Gemma's recommended sampling (matches the llama-server preset):
         # temperature 1.0, top-k 64, top-p 0.95. Only keys present are sent;

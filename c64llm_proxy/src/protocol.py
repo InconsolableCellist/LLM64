@@ -411,6 +411,7 @@ class ProtocolHandler:
                 "/adventure [theme] - text adventure\n"
                 "/chars - list character cards\n"
                 "/char <name> - roleplay with a card\n"
+                "/assist - talk to the AI assistant\n"
                 "/models - list models, /model <name> - switch\n"
                 "/music <mood> - play a tune (/music for moods)\n"
                 "/pic [desc|n] - illustrate scene / re-show pic n\n"
@@ -443,7 +444,7 @@ class ProtocolHandler:
                 self._stream_response(hidden_user_msg=self.mode.kickoff()))
 
         elif cmd == 'chars':
-            cards = find_cards(Path(self.config.cards_dir))
+            cards = self._all_cards()
             if cards:
                 lines = ["Characters:"]
                 lines += [f"- {name}" for name, _ in cards]
@@ -456,6 +457,14 @@ class ProtocolHandler:
 
         elif cmd == 'char':
             await self._start_roleplay(arg)
+
+        elif cmd == 'assist':
+            # One-keystroke "talk to the AI assistant" from the F1 menu.
+            # The wire's command field caps at 10 characters, so
+            # '/char Assistant' cannot be a menu entry - this alias can.
+            # _start_roleplay -> _switch_mode already opens a fresh
+            # conversation, so there is nothing to reset first.
+            await self._start_roleplay(arg or 'Assistant')
 
         elif cmd in ('pic', 'pics'):
             if not self.images.available:
@@ -686,10 +695,22 @@ class ProtocolHandler:
             self.conv_manager.set_meta('theme', mode.theme)
         self.logger.info(f"Mode -> {mode.label}")
 
+    def _all_cards(self):
+        """Every available card: the user's own folder plus the ones
+        bundled with the proxy. A user card of the same name shadows a
+        bundled one, so shipping a default 'Assistant' never blocks
+        someone from replacing it with their own."""
+        cards = find_cards(Path(self.config.cards_dir))
+        seen = {name.lower() for name, _ in cards}
+        for name, path in find_cards(Path(self.config.default_cards_dir)):
+            if name.lower() not in seen:
+                cards.append((name, path))
+        return sorted(cards, key=lambda c: c[0].lower())
+
     def _find_card(self, query: str):
         """Match a card by name prefix/substring: (name, path) or None."""
         q = query.lower()
-        for name, path in find_cards(Path(self.config.cards_dir)):
+        for name, path in self._all_cards():
             if name.lower().startswith(q) or q in name.lower():
                 return (name, path)
         return None
@@ -1587,8 +1608,20 @@ class ProtocolHandler:
                 ('m', 'Models', '/models'),
             ]
         else:
+            # The two quick-starts lead: "new conversation, then type
+            # /adventure" was the buried first-run flow. Both commands
+            # switch mode AND open a fresh conversation (_switch_mode),
+            # so one keystroke is genuinely the whole journey. Labels cap
+            # at 26 chars and commands at 10 - '/char Assistant' would
+            # not fit the wire, which is why /assist exists.
             entries += [
-                ('a', 'Adventure mode', '/adventure'),
+                ('a', 'Start an adventure', '/adventure'),
+                # 'i' rather than the more obvious 't': 't' is already
+                # "Save checkpoint" in adventure/roleplay mode. The two
+                # never render together, but a key that means different
+                # things in different modes would eventually cost
+                # someone a conversation, since this one starts a new.
+                ('i', 'Talk to the AI assistant', '/assist'),
                 ('r', 'Roleplay characters', '/chars'),
                 ('m', 'Models', '/models'),
             ]

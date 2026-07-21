@@ -862,6 +862,39 @@ def main():
                 final = wait_for_screen(monitor, r'done, wrote hello',
                                         30, artifacts, f'{tag}-code-done')
                 print('  PASS: Claude Code approval completes the turn')
+
+                # Menu quick-starts. The first-run flow used to be
+                # "new conversation, then remember to type /adventure";
+                # both of these are one keystroke from F1 and open a
+                # fresh conversation themselves (_switch_mode). Runs
+                # last: /assist starts a new conversation, which would
+                # displace the newest-saved one the roleplay-restore
+                # test above depends on.
+                if args.cols80:
+                    monitor.keyboard_feed('/chat\r')
+                    wait_for_screen(monitor, r'chat mode', 15,
+                                    artifacts, f'{tag}-qs-chat')
+                    scr = open_f1_menu(f'{tag}-qs-menu')
+                    for want in ('start an adventure',
+                                 'talk to the ai assistant'):
+                        if want not in scr.lower():
+                            raise AssertionError(
+                                f'{want!r} missing from the chat-mode menu')
+                    print('  PASS: quick-start entries on the F1 menu')
+                    # 'i', not 't': 't' is Save checkpoint in the
+                    # adventure/roleplay menu, so the key is kept unique
+                    # across modes.
+                    monitor.keyboard_feed('i')
+                    wait_for_screen(monitor, r'other end of your modem link',
+                                    30, artifacts, f'{tag}-assist')
+                    # The card's first_mes is still streaming here, and a
+                    # Return that lands mid-stream is swallowed as 'Busy'
+                    wait_ready(monitor, 20, artifacts, f'{tag}-assist-ready')
+                    monitor.keyboard_feed('/mode\r')
+                    final = wait_for_screen(
+                        monitor, r'mode: roleplay: assistant', 15,
+                        artifacts, f'{tag}-assist-mode')
+                    print('  PASS: one keystroke -> bundled assistant card')
         else:
             # Scripted debug session runs in warp faster than we can poll,
             # so assert on the durable end state: the client parks on
