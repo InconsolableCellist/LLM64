@@ -111,6 +111,73 @@ Budget: `max_tokens` raised to ~3000 for this one call, `enable_thinking`
 on, `_heartbeat` running so the client watchdog stays fed. The C64 shows
 "Preparing the world... (20-30s)".
 
+## 4b. Where the character lives (measured)
+
+The rolled character is "always in the context window" - but that costs
+essentially nothing if it is placed correctly, and the placement rule is
+the whole answer.
+
+llama.cpp prefix-caches the prompt. Measured against the live server
+2026-07-21, same system prompt, different user message each call:
+
+| call | prompt tokens | cached | wall |
+|------|--------------:|-------:|-----:|
+| 1 (cold) | 1747 | 0 | 2.07s |
+| 2 | 1747 | **1736** | **0.16s** |
+| 3 | 1747 | **1736** | **0.16s** |
+
+So the split is:
+
+- **Immutable sheet** - race, class, ability scores, skills, traits,
+  spells known, background, appearance - goes in the STABLE head of the
+  system prompt (inside `mode.system_prompt()`), together with the
+  campaign bible. Re-sent every turn, cached every turn, ~free.
+- **Mutable state** - hp, mana, gold, xp, location, inventory,
+  companions, conditions - stays in `adv_state`, which is APPENDED after
+  the stable text (protocol.py:1422-1435) and re-injected each turn.
+  This is the part that must stay small.
+
+**The rule that makes it work: anything that changes must come AFTER
+everything that does not.** A mutable field in the middle of the system
+prompt invalidates the cache from that point on. The current code
+already appends `adv_state` last, and the music-stale nudge after that -
+correct today, but worth stating so it stays correct.
+
+Corollary: the campaign bible from §4 is free per-turn for the same
+reason, which is what makes a long prep pass affordable.
+
+## 4c. Character creation, classic style
+
+Stage 3 is not "pick one of three" but a real creation flow, D&D /
+Daggerfall shaped. The split follows the same principle as the dice
+macros: **the proxy owns the mechanics, the model owns the flavour.**
+Asking a model to roll gets you an invented and suspiciously flattering
+number, and asking it to apply racial modifiers gets you arithmetic it
+will quietly fudge.
+
+| step | proxy (deterministic) | model (flavour) |
+|------|----------------------|-----------------|
+| roll | 4d6-drop-lowest x6 via `dice.py` | comments on the spread |
+| race | applies modifiers from the rules table | describes the people |
+| class | offers those the scores qualify for | describes the calling |
+| points | validates the allocation | - |
+| skills | enforces picks-allowed | suggests thematic sets |
+| spells/traits | filters by class | names and describes them |
+| identity | - | proposes names, appearance |
+
+The rules table (races, classes, skills, spell lists, modifiers) lives
+in editable JSON rather than code, so a setting can ship its own -
+fantasy, sci-fi, whatever the world stage produced. That also keeps the
+model from having to remember the rules: it is handed the legal options
+each step.
+
+Rolls are shown, not hidden - the existing `[roll:NdX]` echo path is
+right there, and seeing 4d6-drop-lowest land is half the pleasure.
+
+Open: point-buy as an alternative to rolling, for players who hate
+losing a character to bad dice before they have one. Cheap to add, and
+Daggerfall-ish.
+
 ## 5. Templates
 
 The moment an adventure begins, the bundle is saved:
@@ -128,10 +195,10 @@ character, and a good prep pass is never paid for twice.
 Templates are proxy-side for the same reason favourites are: the C64
 cannot hold them, and they should outlive a disk swap.
 
-Open question for the user: should loading a template re-roll the
-character (stage 3 only), or replay it exactly as saved? Replay-exact is
-simpler; re-roll is more useful. Suggest a fifth option on load rather
-than guessing.
+Loading a template offers BOTH (user's call, 2026-07-21): replay the
+saved character exactly, or keep the world and re-roll a new character
+through §4c. Re-roll is the more useful of the two and the reason the
+sheet is stored separately from the world and bible in the template.
 
 ## 6. What this does NOT need
 
