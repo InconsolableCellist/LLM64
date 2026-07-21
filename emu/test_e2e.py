@@ -976,49 +976,61 @@ def main():
                                     artifacts, f'{tag}-adv-menu')
                     wait_ready(monitor, 30, artifacts, f'{tag}-adv-w0')
                     monitor.keyboard_feed('3\r')
-                    wait_for_screen(monitor, r'step 1 of 4', 20,
+                    wait_for_screen(monitor, r'step 1 of 9', 20,
                                     artifacts, f'{tag}-adv-s1')
-                    for n, answer in ((2, 'a drowned temple city'),
-                                      (3, 'grim and wet'),
-                                      (4, 'a salvage diver')):
-                        wait_ready(monitor, 30, artifacts, f'{tag}-adv-w{n}')
+                    # Choices are made BY NAME, not by number: the class
+                    # list is filtered by rolled dice, so numbering is
+                    # not deterministic. Wanderer has no requirements and
+                    # no spells, which also exercises the skip.
+                    script = [
+                        ('a drowned temple city', 'step 2 of 9'),
+                        ('grim and wet',          'step 3 of 9'),
+                        ('k',                     'step 4 of 9'),
+                        ('Dwarf',                 'step 5 of 9'),
+                        ('Wanderer',              'step 6 of 9'),
+                        ('1 2',                   'step 8 of 9'),
+                        ('Bruni Ashvein',         'step 9 of 9'),
+                    ]
+                    for answer, expect in script:
+                        wait_ready(monitor, 30, artifacts,
+                                   f'{tag}-adv-{expect[5]}')
                         monitor.keyboard_feed(answer + '\r')
-                        wait_for_screen(monitor, f'step {n} of 4', 20,
-                                        artifacts, f'{tag}-adv-s{n}')
-                    wait_ready(monitor, 30, artifacts, f'{tag}-adv-w5')
-                    monitor.keyboard_feed('waking in the nave\r')
-                    scr = wait_for_screen(monitor, r'your adventure:', 20,
+                        wait_for_screen(monitor, expect, 20, artifacts,
+                                        f'{tag}-adv-{expect[5]}b')
+                    print('  PASS: character stages, and a non-caster '
+                          'skips the spell step')
+                    wait_ready(monitor, 30, artifacts, f'{tag}-adv-w9')
+                    monitor.keyboard_feed('the flooded nave\r')
+                    scr = wait_for_screen(monitor, r'your adventure:', 25,
                                           artifacts, f'{tag}-adv-review')
-                    if 'drowned temple city' not in scr.lower():
+                    for want in ('drowned temple city', 'Dwarf', 'Wanderer'):
+                        if want.lower() not in scr.lower():
+                            raise AssertionError(
+                                f'review lost {want!r}:\n{scr}')
+                    if 'spells' in scr.lower():
                         raise AssertionError(
-                            f'review lost an answer:\n{scr}')
+                            f'spell line shown for a non-caster:\n{scr}')
                     print('  PASS: adventure setup reaches the review')
-                    # Each screen is a canned reply, so wait for ready
-                    # before every keystroke: a Return that lands while
-                    # text is still streaming is swallowed as 'Busy'.
                     wait_ready(monitor, 30, artifacts, f'{tag}-adv-r1')
-                    # Edit line 2 and confirm it returns to the review
-                    # rather than walking forward through stages 3 and 4.
+                    # Edit the Tone line and confirm it returns to the
+                    # review rather than walking forward again.
                     monitor.keyboard_feed('2\r')
                     wait_for_screen(monitor, r'change: tone', 20,
                                     artifacts, f'{tag}-adv-edit')
                     monitor.keyboard_feed('hopeful\r')
-                    # Wait for the EDITED value, not for 'your adventure:'
-                    # - the first review is still on screen, so that would
-                    # match instantly and the next key would land mid-stream
-                    # and be swallowed as 'Busy'.
-                    scr = wait_for_screen(monitor, r'Tone\s+hopeful', 20,
-                                          artifacts, f'{tag}-adv-back')
+                    # Wait for the EDITED value: the first review is still
+                    # on screen, so 'your adventure:' would match at once
+                    # and the next key would land mid-stream.
+                    wait_for_screen(monitor, r'Tone\s+hopeful', 20,
+                                    artifacts, f'{tag}-adv-back')
                     print('  PASS: an edit returns to the review')
                     wait_ready(monitor, 30, artifacts, f'{tag}-adv-r2')
                     monitor.keyboard_feed('y\r')
-                    # Assert on the adventure's OWN output rather than a
-                    # /mode round trip: an extra turn here just races the
-                    # kickoff stream. The review screen is what is on the
-                    # display right now, so this is a fresh signal.
-                    wait_for_screen(monitor, r'dark room', 60,
+                    # The prep pass runs first ("Preparing the world"),
+                    # then the adventure itself.
+                    wait_for_screen(monitor, r'dark room', 90,
                                     artifacts, f'{tag}-adv-begun')
-                    print('  PASS: review confirmed starts the adventure')
+                    print('  PASS: review confirmed preps and starts')
                     wait_ready(monitor, 60, artifacts, f'{tag}-adv-idle')
                     monitor.keyboard_feed('/chat\r')
                     wait_for_screen(monitor, r'chat mode', 20,

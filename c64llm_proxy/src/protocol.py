@@ -1784,10 +1784,50 @@ class ProtocolHandler:
         payload[0] = count
         await self._send_bulk(MessageType.MENU_LIST, bytes(payload))
 
-    async def _start_adventure(self, theme: str):
+    # One thinking-enabled call, once per adventure. Needs a real budget:
+    # thinking emits reasoning BEFORE content, so a small max_tokens is
+    # spent entirely on reasoning and the answer never lands (measured,
+    # docs/09-adventure-setup.md section 1).
+    PREP_MAX_TOKENS = 3000
+
+    PREP_SYSTEM = (
+        "You are a game master preparing a short text adventure before "
+        "the first scene. Think it through, then answer with the prep "
+        "notes only - no preamble, no headings longer than a few words. "
+        "Be concrete and brief: a paragraph of setting, 3-5 named "
+        "locations with how they connect, 2-3 people worth meeting, one "
+        "secret the player could uncover, and the situation the player "
+        "opens in. This is YOUR notes, never shown to the player.")
+
+    async def _prep_world(self, bundle: dict, character: str) -> str:
+        """The 'DM prepares a campaign' pass. Returns the bible, or ''
+        if anything goes wrong - a failed prep must degrade to an
+        ordinary adventure, never block one."""
+        asked = "\n".join(f"{k}: {v}" for k, v in bundle.items()
+                           if k not in ('scores', 'skills', 'spells'))
+        ask = "Prepare an adventure.\n" + (asked or "No preferences given.")
+        if character:
+            ask += "\n\nThe player character: " + character
+        text = ''
+        try:
+            async for kind, chunk in self.api_client.stream_chat(
+                    [{'role': 'user', 'content': ask}],
+                    system_prompt=self.PREP_SYSTEM,
+                    sampling={'max_tokens': self.PREP_MAX_TOKENS},
+                    think=True):
+                if kind != 'reasoning':
+                    text += chunk
+        except Exception as e:
+            self.logger.warning("World prep failed (%s); starting without "
+                                "it", type(e).__name__)
+            return ''
+        return text.strip()
+
+    async def _start_adventure(self, theme: str, background: str = ''):
         """Shared by /adventure <theme> and the setup flow, so both take
         exactly the same path into play."""
         mode = AdventureMode(self.config, theme=theme)
+        mode.background = background
         self._attach_snippets(mode)
         self._switch_mode(mode)
         await self.send_status("Generating your adventure...")
@@ -1802,18 +1842,28 @@ class ProtocolHandler:
         reply, act = setup.feed(text)
         if act in (ACT_QUICK, ACT_THEME, ACT_BEGIN):
             self._adv_setup = None
-            if act == ACT_QUICK:
-                theme = ''
-            elif act == ACT_THEME:
-                theme = setup.theme
-            else:
-                # Answers become the theme. '?' answers were dropped by
-                # bundle(), so an unanswered stage is left to the model
-                # rather than becoming a literal question mark.
-                labels = {k: lbl for k, lbl, _q, _n in STAGES}
-                theme = ". ".join(f"{labels[k]}: {v}"
-                                  for k, v in setup.bundle().items())
-            await self._start_adventure(theme)
+            if act in (ACT_QUICK, ACT_THEME):
+                theme = '' if act == ACT_QUICK else setup.theme
+                await self._start_adventure(theme)
+                return
+            # ACT_BEGIN: prepare the world before the first scene.
+            bundle = setup.bundle()
+            labels = {st['key']: st['label'] for st in STAGES}
+            theme = ". ".join(
+                f"{labels[k]}: {v}" for k, v in bundle.items()
+                if k in ('world', 'tone', 'opening'))
+            character = setup.character_block()
+            await self.send_status("Preparing the world... (20-30s)")
+            hb = asyncio.create_task(
+                self._heartbeat("Preparing the world..."))
+            try:
+                bible = await self._prep_world(bundle, character)
+            finally:
+                hb.cancel()
+            background = "\n\n".join(
+                x for x in (("Your prep notes for this adventure:\n"
+                             + bible) if bible else '', character) if x)
+            await self._start_adventure(theme, background=background)
             return
         if reply:
             await self._send_canned(reply)

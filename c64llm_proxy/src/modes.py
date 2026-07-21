@@ -123,11 +123,19 @@ class AdventureMode(Mode):
     def __init__(self, config, theme: str = ''):
         super().__init__(config)
         self.theme = theme.strip()
+        # Campaign bible + character sheet from the setup flow. Both are
+        # STABLE for the life of the adventure, which is why they sit
+        # here rather than in adv_state: the prompt prefix is cached, so
+        # they cost effectively nothing per turn, while anything that
+        # changes must be appended after (docs/09-adventure-setup.md 4b).
+        self.background = ''
 
     def system_prompt(self) -> str:
         prompt = ADVENTURE_PROMPT
         if self.theme:
             prompt += f" Setting/theme requested by the player: {self.theme}."
+        if self.background:
+            prompt += "\n\n" + self.background
         return prompt + self.music_snippet
 
     def sampling(self) -> Dict:

@@ -104,7 +104,8 @@ class APIClient:
     async def stream_chat(self, messages: List[Dict],
                           system_prompt: str = None,
                           sampling: Dict = None,
-                          model: str = None) -> AsyncIterator[str]:
+                          model: str = None,
+                          think: bool = None) -> AsyncIterator[str]:
         """Stream chat completion from API.
 
         system_prompt overrides the configured one (None = use config's).
@@ -135,10 +136,17 @@ class APIClient:
         }
         if sampling:
             payload.update(sampling)
-        if self.config.disable_thinking:
-            # llama.cpp honors this for thinking-capable chat templates
-            payload.setdefault('chat_template_kwargs', {})[
-                'enable_thinking'] = False
+        # Per-request thinking, defaulting to the config. Thinking is
+        # off for ordinary turns because 20-25s a reply would ruin play,
+        # NOT because it fails - and anything switching it on must also
+        # raise max_tokens past ~2000, or the budget is spent on
+        # reasoning and the answer never arrives with finish_reason
+        # 'length'. Measured; see docs/09-adventure-setup.md section 1.
+        want_think = (not self.config.disable_thinking) if think is None \
+            else bool(think)
+        # llama.cpp honors this for thinking-capable chat templates
+        payload.setdefault('chat_template_kwargs', {})[
+            'enable_thinking'] = want_think
 
         url = f"{self.base_url}/chat/completions"
 
