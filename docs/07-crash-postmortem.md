@@ -34,6 +34,7 @@ that neither BASIC nor the KERNAL uses, plus a canary over the bottom
 | `$02AD` | 685 | modules | overlay modules loaded since boot |
 | `$02AE` | 686 | last mod | PETSCII digit of the last module (`49`–`52` = `.1`–`.4`) |
 | `$02AF`+ | 687+ | trail | 8-deep breadcrumb ring |
+| `$02B7/8` | 695/6 | sp low | deepest C stack seen (lo, hi) |
 
 Breadcrumb codes (`include/diag.h`). Keystrokes deliberately get **no**
 breadcrumb — one per keypress would flush an 8-deep ring within a word,
@@ -66,13 +67,20 @@ One line, in immediate mode — no program to type, and a typo just gives
 `SYNTAX ERROR`:
 
 ```basic
-FORA=679TO694:PRINTPEEK(A);:NEXT
+FORA=679TO696:PRINTPEEK(A);:NEXT
 ```
 
-That prints all 16 bytes in table order: magic, idx, crumbs, music, key,
-hw_sp, modules, last-module, then the 8-slot ring. The ring is circular,
-so read it starting at `idx` and wrapping: entry `(idx + n) mod 8` for
-n = 0..7 gives oldest to newest.
+That prints the whole block in table order: magic, idx, crumbs, music,
+key, hw_sp, modules, last-module, the 8-slot ring, then the C-stack
+low-water as two bytes (low, high). The ring is circular, so read it
+starting at `idx` and wrapping: entry `(idx + n) mod 8` for n = 0..7
+gives oldest to newest.
+
+C-stack use is `$B000 - (lo + 256*hi)`. Expect a small number: the
+client is built with cc65's `-Cl`, which makes locals static, so the C
+stack carries little more than parameters — a full e2e run peaks at
+**23 bytes of the 1536 reserved**. Anything approaching four figures
+would be genuinely alarming and worth chasing.
 
 **Check the magic first.** If the first number is not 198 the block is
 stale or was cleared, and every other number is meaningless.

@@ -29,6 +29,11 @@
 #define D_MODN    (*(volatile uint8_t*)(DIAG_BASE + 6))
 #define D_MODLAST (*(volatile uint8_t*)(DIAG_BASE + 7))
 #define D_TRAIL   ((volatile uint8_t*)(DIAG_BASE + 8))
+/* Deepest C stack seen, sampled in the IRQ. The canary at $AA00 cannot
+   be read back after a crash - it sits under BASIC ROM - so the value
+   is kept here in page 2, which PEEK can always see. */
+#define D_SPLO    (*(volatile uint8_t*)(DIAG_BASE + 16))
+#define D_SPHI    (*(volatile uint8_t*)(DIAG_BASE + 17))
 
 /* Breadcrumb codes. Only rare, dangerous events get one - keystrokes
    deliberately do not, or the ring would hold nothing but typing. Each

@@ -35,6 +35,7 @@
         .import _kb_scan
         .import _music_play
         .importzp ptr1, ptr2, tmp1, tmp2
+        .importzp sp                    ; cc65 C-stack ptr (DIAG low-water)
 
         .include "diag.inc"
 
@@ -272,6 +273,21 @@ acia_irq_entry:
         bcs :+
         stx D_HWLOW
 :
+        ; cc65 C-stack low-water. sp is 16-bit in zero page and grows
+        ; DOWN from __HIMEM__, so a smaller value means deeper: compare
+        ; the high byte, and only consult the low byte on a tie.
+        lda sp+1
+        cmp D_SPHI
+        bcc @newsp
+        bne @nosp
+        lda sp
+        cmp D_SPLO
+        bcs @nosp
+@newsp: lda sp
+        sta D_SPLO
+        lda sp+1
+        sta D_SPHI
+@nosp:
 .endif
         lda ACIA_STATUS         ; bit7 = this ACIA caused the interrupt
         bpl @not_acia

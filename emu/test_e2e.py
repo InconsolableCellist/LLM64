@@ -924,7 +924,7 @@ def main():
         # The run above is the crash scenario in miniature: a streamed
         # SID playing while F1 loads overlay modules off disk.
         if args.diag:
-            d = monitor.read_memory(DIAG_BASE, DIAG_BASE + 15)
+            d = monitor.read_memory(DIAG_BASE, DIAG_BASE + 17)
             idx = d[1]
             trail = [d[8 + ((idx + i) % 8)] for i in range(8)]
             print("\n--- crash post-mortem block ---")
@@ -942,6 +942,20 @@ def main():
             if args.cols80 and d[6] == 0:
                 raise AssertionError('no overlay module loads recorded')
             print('  PASS: post-mortem block populated')
+
+            # C-stack low-water, sampled in the IRQ and kept in page 2 so
+            # it survives a crash AND can be PEEKed (the canary below
+            # cannot: it lives under BASIC ROM). Cross-check the two -
+            # they measure the same thing by different means.
+            sp_low = d[16] | (d[17] << 8)
+            if sp_low == 0xFFFF:
+                raise AssertionError('C-stack low-water never sampled')
+            used = STACK_TOP - sp_low
+            print(f'  PASS: C-stack low-water ${sp_low:04X} '
+                  f'({used} of {STACK_TOP - CAN_START} bytes used)')
+            if not 0 < used <= STACK_TOP - CAN_START:
+                raise AssertionError(
+                    f'implausible C-stack use: {used} bytes')
 
             # C-stack canary: the lowest byte still holding the pattern
             # is the deepest the stack ever got. Reaching CAN_START means

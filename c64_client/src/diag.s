@@ -57,6 +57,8 @@ _diag_init:
         sta D_MAGIC
         lda #$FF                ; low-water marks start high
         sta D_HWLOW
+        sta D_SPLO
+        sta D_SPHI
 
 .ifdef SOFT80
         ; Canary over the bottom 1K of the C stack. The stack grows DOWN

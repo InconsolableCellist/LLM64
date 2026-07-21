@@ -19,8 +19,16 @@ D_HWLOW         = DBLK+5        ; lowest hardware SP seen in the IRQ
 D_MODN          = DBLK+6        ; overlay modules loaded since boot
 D_MODLAST       = DBLK+7        ; suffix of the last module loaded
 D_TRAIL         = DBLK+8        ; 8-deep breadcrumb ring
+; Deepest cc65 C stack ever seen, sampled in the IRQ. This exists
+; because the canary it duplicates CANNOT be read after a crash: the
+; stack lives under BASIC ROM, so PEEK at the READY prompt returns ROM
+; bytes, not the RAM the client used. Kept here in page 2, which is
+; always RAM and therefore always PEEK-able. Appended after the ring so
+; the original 16-byte readout keeps working unchanged.
+D_SPLO          = DBLK+16
+D_SPHI          = DBLK+17
 
-DIAG_LEN        = 16
+DIAG_LEN        = 18
 DIAG_MAGIC      = $C6
 DIAG_TRAIL_MASK = 7
 
