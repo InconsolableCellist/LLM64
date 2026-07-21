@@ -82,11 +82,52 @@ screen. Any stage accepts free text instead of a number - the numbered
 options are a convenience, never a cage. `/back` re-runs the previous
 stage; `/chat` cancels the whole thing.
 
-Then:
+Then the review screen (§3b), not a bare yes/no.
+
+## 3b. Review and edit — the end of every path
+
+Creation does not finish in a straight line. Every decision, from both
+the world stages and the character sub-steps, lands on one review
+screen with a stable number, and picking a number re-runs just that
+decision and comes **straight back here** rather than walking forward
+through everything after it.
 
 ```
-Ready to begin?  y = start   e N = change step N   /chat = cancel
+Your adventure:
+
+  1  World      The Sunken Sanctum, a drowned temple city
+  2  Tone       grim, dangerous, dry humour
+  3  Race       Dwarf        (+2 CON, +1 STR)
+  4  Class      Cleric
+  5  Scores     STR 14  DEX 9  CON 16  INT 11  WIS 15  CHA 8
+  6  Skills     Medicine, Religion, Athletics
+  7  Spells     Cure Wounds, Guidance, Bless
+  8  Name       Bruni Ashvein, a squat woman in salt-stained mail
+  9  Opening    waking in the flooded nave, alone
+
+  y  begin        N  change that        /chat  cancel
 ```
+
+Nine lines plus a prompt fits a 40-column screen with room to spare, and
+the same screen serves creation, editing and the final confirmation.
+
+**Edits cascade, and pretending otherwise would corrupt the sheet.**
+Changing race changes ability totals; changing class changes which
+skills and spells are legal. So each decision declares what depends on
+it, and after an edit the proxy re-validates dependents:
+
+- still legal -> left alone, review redraws
+- now illegal -> flagged on the review line (`! now illegal`) and
+  `y` is refused until it is fixed
+
+That is deliberately not "silently re-ask everything downstream": losing
+a carefully chosen spell list because you renamed your character would
+be worse than the edit itself. Only genuinely broken choices are
+disturbed, and the player is told which.
+
+Templates loaded from §5 land on this same screen, which is what makes
+"keep the world, re-roll the character" a normal edit rather than a
+special case.
 
 **The interview runs in a scratch buffer, NOT in the conversation.**
 `_switch_mode()` opens a fresh conversation, so the adventure must not
@@ -212,8 +253,9 @@ sheet is stored separately from the world and bible in the template.
 
 1. Chooser + pending-choice state + `/adventure <theme>` unchanged.
    Unit-testable: feed choices, assert the state machine.
-2. Stages, `/back`, cancel. Still no model needed for the state machine
-   itself - the mock supplies stage content.
+2. Stages, review screen, edit-and-return, dependency invalidation,
+   cancel. The state machine needs no model at all - the mock supplies
+   stage content - so the edit/cascade rules are pure unit tests.
 3. Prep pass with thinking. Assert `max_tokens` is raised and that a
    `reasoning`-only response is not mistaken for an empty reply.
 4. Templates: save, list, load. Round-trip test.
