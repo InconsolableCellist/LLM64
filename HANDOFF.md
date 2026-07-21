@@ -217,9 +217,58 @@ can only restart from bar one. Costs 30 bytes; headroom 307 → 277.
   but note sidreloc verifies over a *bounded* simulation, so late-song
   behaviour is not covered.
 
-**Still open:** `bank01` (soft80.s:61, at $9ACB) is a **single
+**LEADING HYPOTHESIS after the first live capture (2026-07-20).** The
+crash was caught with DIAG on: trail ended `... SIDRECV SIDRECV
+MUSICBEG`, no `MODLOAD`, hardware stack 37/256. So it fires while a
+freshly transferred tune plays — *not* during a disk load, which rules
+the music-hold fix out as the cause.
+
+The chain, in one line: **two readers race for `ACIA_DATA`, and the XOR
+checksum cannot see the damage.**
+
+- The user's C64U raises the ACIA on **NMI** (confirmed; it is a config
+  choice on the unit). `_serial_available`'s stranded-byte pickup guards
+  itself with `php`/`sei` — which does **not** mask NMI. If the NMI lands
+  between its `lda ACIA_DATA` and its `jsr ring_write`, two adjacent
+  bytes enter the ring **reversed**.
+- `proto_calc_crc` (protocol.c) is an **XOR checksum**, so it is blind to
+  ordering. A transposed pair validates as a good frame.
+- Observed directly: the F1 menu once rendered "Back to hcat mode" and
+  self-healed. Clean adjacent swap, both bytes intact — a transport fault
+  drops or garbles, it does not transpose.
+- In chat text that is cosmetic. In a SID payload it is corrupt 6502 code
+  landing at $B000, which the client then executes 60×/second.
+- **Regression fit**: the user reports it was rock solid before the module
+  work. `git log -S'_serial_rx_pause'` returns exactly one commit —
+  `9d9983d`, the module system. Before it, stranding a byte needed a full
+  ring (rare). After it, every F1/F5 masks RX for a whole disk load, so
+  stranding — and the racy pickup — became routine.
+
+**Evidence so far (one run, encouraging, not proof):** switched to IRQ
+mode, where `sei` genuinely masks. 3 SID transfers + 1 image over ~11
+minutes, no crash. In NMI mode it died on the 3rd SID transfer ~9 minutes
+in. Same shape of workload, survived.
+
+**The fix, when confirmed:** `ACIA_DATA` needs a single owner — the
+mainline pickup must either go away or hold the RX interrupt off across
+its read-and-store. LANDMINE: `785131e` gated ACIA command-register
+writes to real mask transitions because the modem re-evaluates DTR/RTS on
+every write; any fix must not reintroduce gratuitous command writes.
+Then replace XOR with an order-sensitive checksum (Fletcher-16 is cheap
+on 6502) so corruption can never again pass as valid. **Wire-format
+change — client and proxy must deploy in lockstep.**
+
+**Also still open:** `bank01` (soft80.s:61, at $9ACB) is a **single
 non-reentrant `$01` save slot**. Re-entering `_soft80_scroll_chat` would
 restore a stale bank byte. Not audited.
+
+**Do not try to read the C-stack canary from BASIC.** `$AA00` is under
+BASIC ROM, so `PEEK` returns ROM, not the RAM the client used — and that
+ROM contains exactly 24 `$A5` bytes in the canary range, so a scan
+"reports" 1000 of 1024 disturbed on a perfectly healthy machine. Only the
+$02A7 block is PEEK-readable (page 2 is always RAM). See
+docs/07-crash-postmortem.md; the proper fix is to have the client sample
+cc65's `sp` in the IRQ and store the minimum in the block.
 
 **If it recurs**, the machine now keeps evidence. `DIAG=1` builds a
 16-byte post-mortem block at `$02A7` (page-2 RAM: outside the linked

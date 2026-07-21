@@ -62,24 +62,40 @@ in the repaint. Both are bracketed for exactly that reason.
 **Do not power-cycle, and do not `RUN` anything first.** Type this at
 the `READY.` prompt the crash left behind:
 
+One line, in immediate mode — no program to type, and a typo just gives
+`SYNTAX ERROR`:
+
 ```basic
-10 IF PEEK(679)<>198 THEN PRINT "NO DIAG BLOCK":END
-20 PRINT "CRUMBS";PEEK(681);"MUSIC";PEEK(682)
-30 PRINT "LASTKEY";PEEK(683);"HWSP";PEEK(684)
-40 PRINT "MODULES";PEEK(685);"LASTMOD";PEEK(686)
-50 I=PEEK(680)
-60 PRINT "TRAIL (OLDEST FIRST):"
-70 FOR J=0 TO 7:PRINT PEEK(687+((I+J)AND 7));:NEXT J
-80 PRINT
-90 FOR A=43520 TO 44543
-100 IF PEEK(A)<>165 THEN 130
-110 NEXT A
-120 PRINT "C STACK NEVER BELOW $AE00 - OK":END
-130 PRINT "C STACK HIGH WATER";A;"USED";45056-A
+FORA=679TO694:PRINTPEEK(A);:NEXT
 ```
 
-Line 10 guards the whole thing: if the magic is not 198 the block is
+That prints all 16 bytes in table order: magic, idx, crumbs, music, key,
+hw_sp, modules, last-module, then the 8-slot ring. The ring is circular,
+so read it starting at `idx` and wrapping: entry `(idx + n) mod 8` for
+n = 0..7 gives oldest to newest.
+
+**Check the magic first.** If the first number is not 198 the block is
 stale or was cleared, and every other number is meaningless.
+
+## The C-stack canary CANNOT be read from BASIC
+
+Do not try. `$AA00-$ADFF` lies under **BASIC ROM** (`$A000-$BFFF`). The
+client runs with `$01 = $36`, BASIC banked out, so its stack there is
+RAM — but at the READY prompt `$01 = $37`, and `PEEK` returns ROM bytes
+instead. A scan looks plausible and is pure fiction: BASIC ROM happens
+to contain exactly 24 bytes equal to `$A5` in that range, so a canary
+scan reports "1000 of 1024 disturbed" on a machine whose stack never
+went near it. That misreading cost real time on 2026-07-20.
+
+Reading it needs the ROM banked out, which BASIC cannot do while
+running from that same ROM. Two workable routes:
+
+- **The e2e harness**, which reads RAM directly through the VICE
+  monitor. `make test-emu-diag` reports the high-water mark honestly.
+- **Have the client measure it**, which is the right long-term fix:
+  sample cc65's stack pointer (zero page `$02/$03`) in the IRQ, keep a
+  running minimum, and store it *in the `$02A7` block* where `PEEK`
+  genuinely works. Not yet implemented.
 
 ### The one caveat
 
@@ -100,6 +116,27 @@ high-water mark.
 
 Baseline from that run: 13 module loads, streamed SID active, and the
 **C-stack canary completely intact** — peak use stayed under 512 of the
-1536 available bytes, and the hardware stack used 45 of 256. Stack
-exhaustion is therefore an unlikely explanation for the crash, which is
-what motivated fixing the disk-LOAD-versus-music timing instead.
+1536 available bytes, and the hardware stack used 45 of 256.
+
+## What the first real capture showed (2026-07-20)
+
+Block read at the READY prompt after a live crash:
+
+```
+magic 198   crumbs 41   music 0   key 13 (Return)
+hw_sp $DA (37 of 256 bytes used)   modules 9   last '4'
+trail: SIDRECV MUSICBEG IMGSHOW IMGCLOSE IMGDONE SIDRECV SIDRECV MUSICBEG
+```
+
+The trail ends on `MUSICBEG`: the crash happened while a freshly
+transferred tune was playing, moments after its init returned — the
+proxy logged the ACK that `main.c` sends *after* `music_ext_begin()`.
+The doubled `SIDRECV` matches the proxy's own "SID_BEGIN not ACKed —
+resending" from the same second, so two independent sources agree on
+the sequence.
+
+No `MODLOAD` anywhere in the trail, so no disk load was in flight: the
+music-hold fix in `mod_open` was real hardening but was not this bug.
+The hardware stack was nowhere near trouble. See HANDOFF.md for the
+working hypothesis — an ACIA read racing the NMI, invisible to the XOR
+checksum.
