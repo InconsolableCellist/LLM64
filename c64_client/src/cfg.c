@@ -29,10 +29,19 @@ char g_host[CFG_HOST_MAX] = SERVER_IP;
 char g_port[CFG_PORT_MAX] = SERVER_PORT;
 char g_dial[CFG_HOST_MAX + CFG_PORT_MAX + 6];
 
+uint8_t boot_device = 8;
+
+void boot_device_init(void) {
+    /* $BA = the KERNAL's current device, set by the LOAD that started
+       us. Snapshot before any other I/O touches it. */
+    uint8_t d = *(volatile uint8_t*)0xBA;
+    boot_device = (d >= 8 && d <= 30) ? d : 8;
+}
+
 static NetConfig blob;
 
 uint8_t config_load(void) {
-    if (cbm_load("c64llm.cfg", 8, &blob) != sizeof(blob)) return 0;
+    if (cbm_load("c64llm.cfg", boot_device, &blob) != sizeof(blob)) return 0;
     if (blob.magic != CFG_MAGIC || blob.version != CFG_VERSION) return 0;
     blob.host[CFG_HOST_MAX - 1] = 0;
     blob.port[CFG_PORT_MAX - 1] = 0;
@@ -50,7 +59,8 @@ uint8_t config_save(void) {
     strcpy(blob.port, g_port);
     /* "@0:" scratches any existing file first (plain save would fail
        with FILE EXISTS the second time) */
-    return cbm_save("@0:c64llm.cfg", 8, &blob, sizeof(blob)) == 0;
+    return cbm_save("@0:c64llm.cfg", boot_device, &blob,
+                    sizeof(blob)) == 0;
 }
 
 void build_dial_string(void) {

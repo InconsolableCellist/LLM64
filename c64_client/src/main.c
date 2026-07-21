@@ -25,9 +25,11 @@
 #include "modapi.h"
 
 #ifdef SOFT80
-/* Overlay module entries (module #1 config, #2 conversation manager) */
+/* Overlay module entries (#1 config, #2 conversation manager,
+   #3 disk copy) */
 void mod_config_run(void);
 void mod_convmgr_run(void);
+void mod_diskcopy_run(void);
 #endif
 
 /* music.s */
@@ -379,7 +381,7 @@ static void menu_open(void) {
         ui_draw_row(11, "  S  music: streamed (s stops)", COLOR_CYAN, 0);
     }
 #ifdef SOFT80
-    ui_draw_row(12, "  E  server config", COLOR_CYAN, 0);
+    ui_draw_row(12, "  E  server config   D  copy client disk", COLOR_CYAN, 0);
 #endif
     ui_draw_row(13, "  F1 or stop: close", COLOR_GRAY2, 0);
 }
@@ -977,7 +979,22 @@ static void handle_key(uint8_t k) {
                     build_dial_string();  /* used on next boot/redial */
                 } else {
                     serial_rx_resume();
-                    ui_status("Module load failed - drive 8?");
+                    ui_status("Module load failed - boot drive?");
+                }
+                chat_redraw();
+                break;
+            case 'd':
+                /* Disk copy: RX stays paused for the WHOLE run - the
+                   copy is one long IEC conversation and serial NMIs
+                   would corrupt it (proxy is idle; nothing arrives) */
+                serial_rx_pause();
+                if (module_load("c64llm.3")) {
+                    mod_diskcopy_run();
+                    serial_rx_resume();
+                    ui_status("Ready.");
+                } else {
+                    serial_rx_resume();
+                    ui_status("Module load failed - boot drive?");
                 }
                 chat_redraw();
                 break;
@@ -1051,6 +1068,7 @@ static void handle_key(uint8_t k) {
 /* --------------------------------------------------------------------- */
 
 int main(void) {
+    boot_device_init();  /* first: $BA still holds the LOADing drive */
     proto_init(&proto, payload_buffer, MAX_PAYLOAD);
     ui_init();
     editor_init();

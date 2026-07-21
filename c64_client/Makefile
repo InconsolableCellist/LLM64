@@ -103,6 +103,7 @@ $(TARGETDIR)/%.o: src/%.s
 # Overlay modules + boot disk (MODE80 builds emit $(PRG).1, .2, ...)
 MOD1 = $(PRG).1
 MOD2 = $(PRG).2
+MOD3 = $(PRG).3
 D64 = $(TARGETDIR)/c64llm.d64
 
 # Bootable distribution disk: client PRG first (LOAD"*",8,1 / the
@@ -116,13 +117,14 @@ $(D64): $(PRG)
 	@c1541 -format "c64llm,01" d64 $(D64) \
 	       -write $(PRG) "c64llm" \
 	       -write $(MOD1) "c64llm.1" \
-	       -write $(MOD2) "c64llm.2" >/dev/null
+	       -write $(MOD2) "c64llm.2" \
+	       -write $(MOD3) "c64llm.3" >/dev/null
 	@echo "Disk image: $(D64)"
 
 # Clean
 clean:
 	@echo "Cleaning..."
-	rm -f $(TARGETDIR)/*.o $(TARGETDIR)/*.map $(PRG) $(MOD1) $(MOD2) $(D64)
+	rm -f $(TARGETDIR)/*.o $(TARGETDIR)/*.map $(PRG) $(MOD1) $(MOD2) $(MOD3) $(D64)
 	@echo "Clean complete"
 
 # Run in VICE emulator (if available)
@@ -141,7 +143,7 @@ upload: $(PRG)
 	@echo "Uploading $(PRG) to C64 at $(C64_IP)..."
 	@curl -T $(PRG) ftp://$(C64_IP)$(C64_PATH)/$(TARGET).prg --user anonymous: || \
 		(echo "Upload failed! Make sure C64 FTP server is running at $(C64_IP)" && exit 1)
-	@for m in $(MOD1) $(MOD2); do \
+	@for m in $(MOD1) $(MOD2) $(MOD3); do \
 		[ -f $$m ] || continue; \
 		ext=$${m##*.}; \
 		curl -T $$m ftp://$(C64_IP)$(C64_PATH)/C64LLM.$$ext --user anonymous: && \

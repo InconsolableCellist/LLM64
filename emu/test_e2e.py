@@ -255,14 +255,16 @@ def main():
         # module test exercises the real disk-load path. Built fresh in
         # artifacts per run - the editor's save writes into it.
         d64_path = None
+        copy_target = None
         mod1 = Path(args.prg + '.1')
-        mod2 = Path(args.prg + '.2')
         if mod1.exists() and shutil.which('c1541'):
             d64_path = artifacts / 'modules.d64'
             cmd = ['c1541', '-format', 'c64llm,01', 'd64', str(d64_path),
                    '-write', str(mod1), 'c64llm.1']
-            if mod2.exists():
-                cmd += ['-write', str(mod2), 'c64llm.2']
+            for ext in ('2', '3'):
+                mod = Path(f'{args.prg}.{ext}')
+                if mod.exists():
+                    cmd += ['-write', str(mod), f'c64llm.{ext}']
             if args.mode == 'hayes':
                 # hayes boots from the DISK config (the real-hardware
                 # path): blob = PRG header, magic, version, host[32],
@@ -274,6 +276,13 @@ def main():
                 cmd += ['-write', str(cfg), 'c64llm.cfg']
             subprocess.run(cmd, check=True, capture_output=True)
             print(f"module disk: {d64_path.name}")
+            if args.mode == 'direct':
+                # blank disk on unit 9: the disk-copy module's target
+                copy_target = artifacts / 'copy_target.d64'
+                subprocess.run(
+                    ['c1541', '-format', 'target,02', 'd64',
+                     str(copy_target)],
+                    check=True, capture_output=True)
 
         # 4. VICE. No warp in hayes mode: the client's AT-response timeouts
         # are cycle-based, but tcpser answers in wall-clock time, so a warped
@@ -281,6 +290,9 @@ def main():
         mon_port = find_free_port()
         speed = [] if (args.mode == 'hayes' or args.no_warp) else ['-warp']
         disk8 = ['-8', str(d64_path)] if d64_path else []
+        if copy_target:
+            # VICE only auto-enables drive 8; unit 9 needs its type set
+            disk8 += ['-drive9type', '1541', '-9', str(copy_target)]
         stack.start('vice', [
             'x64sc', '-default', *speed, '-sounddev', 'dummy',
             '+confirmonexit',
@@ -734,6 +746,22 @@ def main():
                     monitor.keyboard_feed_petscii(b'\x87')  # F5 closes
                     wait_ready(monitor, 15, artifacts, f'{tag}-mgr-close')
 
+                # Disk copy module: the client replicates its own
+                # distribution files onto the blank disk on unit 9;
+                # the target's contents are verified after VICE exits
+                if copy_target and args.cols80:
+                    monitor.keyboard_feed_petscii(b'\x85')  # F1
+                    time.sleep(1)
+                    monitor.keyboard_feed('d')
+                    wait_for_screen(monitor, r'copy client disk', 20,
+                                    artifacts, f'{tag}-copy-open')
+                    monitor.keyboard_feed('9')
+                    wait_for_screen(monitor, r'copy complete', 120,
+                                    artifacts, f'{tag}-copy-done')
+                    print('  PASS: disk copy module ran')
+                    monitor.keyboard_feed(' ')
+                    wait_ready(monitor, 15, artifacts, f'{tag}-copy-close')
+
                 # Roleplay restore: /chat leaves the card, reloading the
                 # conversation (newest saved - the empty chat one is
                 # in-memory only) must bring the character back via the
@@ -840,6 +868,20 @@ def main():
                     f'cfg on disk wrong: magic={blob[:2].hex()} '
                     f'host={host!r} port={port!r}')
             print('  PASS: c64llm.cfg on the d64 holds the edited config')
+
+        # The disk-copy module's target must hold the module files
+        # (the main PRG isn't on the test's modules.d64, so it is
+        # legitimately skipped)
+        if copy_target and args.tui and args.cols80:
+            out = subprocess.run(
+                ['c1541', str(copy_target), '-list'],
+                capture_output=True, text=True).stdout.lower()
+            for want in ('c64llm.1', 'c64llm.2', 'c64llm.3',
+                         'c64llm.cfg'):
+                if want not in out:
+                    raise AssertionError(
+                        f'{want} missing from copy target:\n{out}')
+            print('  PASS: distribution replicated onto the target disk')
 
         # The adventure's [[STATE]] block must have landed in the
         # conversation's meta (normalized JSON with the mock's stats)

@@ -18,6 +18,13 @@
    defaults; config_load() overwrites them from disk. */
 extern char g_host[CFG_HOST_MAX];
 extern char g_port[CFG_PORT_MAX];
+
+/* The drive we booted from ($BA snapshot taken at startup, clamped
+   to 8 if implausible): modules and config load from here, so the
+   client works from any device number - FPGA drive on 9, real
+   floppy on 8, whatever. */
+extern uint8_t boot_device;
+void boot_device_init(void);
 /* "ATDT<host>:<port>" - rebuilt by build_dial_string() */
 extern char g_dial[CFG_HOST_MAX + CFG_PORT_MAX + 6];
 
