@@ -55,11 +55,19 @@ static uint8_t stream_partial_end;  /* drawn length of the partial line */
 
 static uint8_t rowbuf[TEXT_COLS];
 
-/* Role colors */
-static const uint8_t role_colors[3] = {
+/* Role colors. Role 3 = attention line (pic-ready notice): rainbow
+   in soft-80 (0xFF = per-cell color-cycle sentinel, see
+   chat_row_blit), plain yellow in 40 columns. */
+#ifdef SOFT80
+#define COLOR_ATTENTION 0xFF
+#else
+#define COLOR_ATTENTION COLOR_YELLOW
+#endif
+static const uint8_t role_colors[4] = {
     COLOR_CYAN,        /* user */
     COLOR_LIGHTGREEN,  /* assistant */
-    COLOR_GRAY2        /* system */
+    COLOR_GRAY2,       /* system */
+    COLOR_ATTENTION    /* attention */
 };
 
 /* --- cell encoding -------------------------------------------------- */
@@ -91,6 +99,20 @@ uint8_t ui_frozen;
 void ui_blit_row(uint8_t row, const uint8_t* cells, uint8_t color) {
     if (ui_frozen) return;
 #ifdef SOFT80
+    if (color == 0xFF) {
+        /* Attention line: glyphs in one pass, then the color matrix
+           rewritten as a classic rainbow ramp (one hue per 8x8 cell,
+           i.e. per 2 chars - the soft-80 color granularity) */
+        static const uint8_t ramp[8] = {
+            COLOR_RED, COLOR_ORANGE, COLOR_YELLOW, COLOR_GREEN,
+            COLOR_CYAN, COLOR_LIGHTBLUE, COLOR_PURPLE, COLOR_LIGHTRED
+        };
+        uint8_t* mat = (uint8_t*)(0xCC00 + (uint16_t)row * 40);
+        uint8_t i;
+        soft80_row(row, cells, COLOR_WHITE);
+        for (i = 0; i < 40; ++i) mat[i] = ramp[i & 7] << 4;
+        return;
+    }
     soft80_row(row, cells, color);
 #else
     memcpy(SCREEN + (uint16_t)row * 40, cells, 40);
@@ -150,7 +172,7 @@ static void flush_word(void) {
 void chat_start(uint8_t role) {
     flush_word();
     if (cur_len) commit_line();
-    cur_color = role_colors[role > 2 ? 2 : role];
+    cur_color = role_colors[role > 3 ? 2 : role];
     view_scroll = 0;
 }
 
@@ -459,7 +481,13 @@ void ui_status(const char* msg) {
 
 static void draw_frame(void) {
     uint8_t i;
+#ifdef SOFT80
+    ui_draw_row(0, " C64 LLM " GIT_HASH "  F1=menu  F5=convs  Return=send",
+                COLOR_WHITE, 1);
+#else
+    /* 40 columns: F5 hint doesn't fit; the F1 menu lists it */
     ui_draw_row(0, " C64 LLM " GIT_HASH "  F1=menu  Return=send", COLOR_WHITE, 1);
+#endif
     for (i = 0; i < TEXT_COLS; ++i) {
 #ifdef SOFT80
         rowbuf[i] = 0x2D;  /* '-' */

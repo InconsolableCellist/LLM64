@@ -426,7 +426,10 @@ def main():
                     # Persistent '!P' indicator appears with the suggestion
                     wait_for_screen(monitor, r'!p', 30,
                                     artifacts, f'{tag}-img-hint')
-                    print('  PASS: pic-pending indicator shown')
+                    # ...plus the rainbow attention line in the chat
+                    wait_for_screen(monitor, r'scene is ready', 15,
+                                    artifacts, f'{tag}-img-announce')
+                    print('  PASS: pic-pending indicator + announcement')
                     monitor.keyboard_feed('/pic\r')
                     def img_shown():
                         return monitor.read_memory(

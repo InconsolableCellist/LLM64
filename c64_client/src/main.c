@@ -659,9 +659,21 @@ static void handle_message(uint8_t msg_type) {
         case MSG_CONVERSATION_DATA:
             conv_data_frame();
             break;
-        case MSG_HINT:
-            ui_set_hints(proto_get_payload(&proto)[0]);
+        case MSG_HINT: {
+            uint8_t f = proto_get_payload(&proto)[0];
+            /* A scene became ready (bit0 rising): announce it with a
+               rainbow attention line, not just the quiet status
+               indicator. Only while idle - never mid-stream. */
+            if ((f & 1) && !(ui_hints & 1) && state == ST_IDLE
+                    && modal == MODAL_NONE) {
+                chat_start(3);
+                chat_append_petscii("* a scene is ready - /pic paints it *");
+                chat_finish();
+                chat_redraw();
+            }
+            ui_set_hints(f);
             break;
+        }
 #ifdef SOFT80
         case MSG_SID_BEGIN: {
             /* load(2) init(2) play(2) song(1) size(2) vol(1) resume(1)
