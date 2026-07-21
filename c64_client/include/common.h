@@ -108,6 +108,8 @@ typedef enum {
 #define MSG_DELETE_CONVERSATION 0x39  /* '9' - id(4); ACK/NAK */
 #define MSG_STAR_CONVERSATION   0x3A  /* ':' - id(4) toggle star; ACK/NAK */
 #define MSG_GET_MENU            0x3B  /* ';' - request the server-fed menu */
+#define MSG_GET_NOWPLAYING      0x3C  /* '<' - ask what is playing */
+#define MSG_FAV_TUNE            0x3D  /* '=' - toggle favorite on it */
 #define MSG_ACK                 0x40  /* '@' - was 0x10 */
 #define MSG_NAK                 0x41  /* 'A' - was 0x11 */
 #define MSG_CHAT_CHUNK          0x50  /* 'P' - was 0x20 */
@@ -127,6 +129,9 @@ typedef enum {
 #define MSG_MENU_LIST           0x5E  /* '^' - menu entries: [n][more]
                                          then [key][label\0][cmd\0] each;
                                          cmd "!x" = local action x */
+#define MSG_NOWPLAYING          0x5F  /* '_' - jukebox state: [flags]
+                                         [elapsed:2][secs:2] then
+                                         title\0 author\0 mood\0 */
 
 /* Pseudo message type returned by proto_process_byte on checksum failure
    (not a wire value - chosen outside the protocol's type range) */

@@ -27,13 +27,14 @@
 
 #ifdef SOFT80
 /* Overlay module entries: 1 config, 2 conversation manager,
-   3 disk copy, 4 server-fed menu. (No '#N' at a comment line start
+   3 disk copy, 4 server-fed menu, 5 jukebox. (No "#N" at a comment start
    here: cc65 2.17 parses it as a directive when SOFT80 is undefined
    and this block is skipped - broke the 40col build once.) */
 void mod_config_run(void);
 void mod_convmgr_run(void);
 void mod_diskcopy_run(void);
 void mod_menu_run(void);
+void mod_sound_run(void);
 #endif
 
 /* music.s */
@@ -246,16 +247,23 @@ static uint8_t load_open;    /* a split message is mid-assembly */
    keeps pumping serial */
 uint8_t (*mod_msg_hook)(uint8_t msg_type);
 void (*mod_key_hook)(uint8_t key);
+void (*mod_tick_hook)(void);
 
 void mod_modal_begin(uint8_t (*msg)(uint8_t), void (*key)(uint8_t)) {
     mod_msg_hook = msg;
     mod_key_hook = key;
+    mod_tick_hook = 0;   /* opt in afterwards; most modules never tick */
     modal = MODAL_MODULE;
+}
+
+void mod_modal_tick(void (*tick)(void)) {
+    mod_tick_hook = tick;
 }
 
 void mod_modal_end(void) {
     mod_msg_hook = 0;
     mod_key_hook = 0;
+    mod_tick_hook = 0;   /* before the slot can be reloaded */
     modal = MODAL_NONE;
     chat_redraw();
 }
@@ -544,6 +552,11 @@ static uint8_t mod_open(const char* name, void (*run)(void)) {
 /* Open the conversation manager module (F5 / menu C) */
 static void convmgr_open(void) {
     mod_open("c64llm.2", mod_convmgr_run);
+}
+
+/* Open the jukebox / sound window (menu J) */
+static void sound_open(void) {
+    mod_open("c64llm.5", mod_sound_run);
 }
 
 /* Open the server-fed menu module (F1). Falls back to the resident
@@ -1033,6 +1046,7 @@ static void menu_local(uint8_t a) {
         case 'c': if (state == ST_IDLE) convmgr_open(); break;
         case 'e': config_open(); break;
         case 'd': diskcopy_open(); break;
+        case 'j': sound_open(); break;
 #endif
         default: break;
     }
@@ -1076,7 +1090,7 @@ static void handle_key(uint8_t k) {
         switch (k) {
             case 'n': case 'x': case 's':
 #ifdef SOFT80
-            case 'c': case 'e': case 'd':
+            case 'c': case 'e': case 'd': case 'j':
 #endif
                 menu_local(k);
                 break;
@@ -1253,6 +1267,11 @@ int main(void) {
             chat_finish();
             ui_status("Timed out. Ready.");
         }
+#ifdef SOFT80
+        /* Modules that have to keep moving without a key or a frame to
+           drive them (the jukebox's clock and signal meter) */
+        if (mod_tick_hook) mod_tick_hook();
+#endif
         if (kbhit()) {
             handle_key(cgetc());
         }

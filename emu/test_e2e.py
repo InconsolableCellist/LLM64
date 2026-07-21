@@ -279,7 +279,7 @@ def main():
             d64_path = artifacts / 'modules.d64'
             cmd = ['c1541', '-format', 'c64llm,01', 'd64', str(d64_path),
                    '-write', str(mod1), 'c64llm.1']
-            for ext in ('2', '3', '4'):
+            for ext in ('2', '3', '4', '5'):
                 mod = Path(f'{args.prg}.{ext}')
                 if mod.exists():
                     cmd += ['-write', str(mod), f'c64llm.{ext}']
@@ -874,6 +874,38 @@ def main():
                     monitor.keyboard_feed('/chat\r')
                     wait_for_screen(monitor, r'chat mode', 15,
                                     artifacts, f'{tag}-qs-chat')
+
+                    # Jukebox (overlay #5). Needs something actually
+                    # playing to be worth asserting: the panel's whole
+                    # point is showing title/author/duration the client
+                    # cannot know by itself.
+                    monitor.keyboard_feed('/music urgent\r')
+                    wait_for_screen(monitor, r'playing: pac-man', 30,
+                                    artifacts, f'{tag}-jb-music')
+                    deadline = time.time() + 30
+                    while monitor.read_memory(
+                            labels['_music_state'],
+                            labels['_music_state'])[0] != 0xFF:
+                        if time.time() > deadline:
+                            raise AssertionError('jukebox tune never started')
+                        time.sleep(1)
+                    scr = open_f1_menu(f'{tag}-jb-menu')
+                    if 'jukebox' not in scr.lower():
+                        raise AssertionError('jukebox entry missing from menu')
+                    monitor.keyboard_feed('j')
+                    scr = wait_for_screen(monitor, r'c64 llm jukebox', 25,
+                                          artifacts, f'{tag}-jb-panel')
+                    # Title and author come from the server, and the
+                    # mm:ss/mm:ss pair proves the duration merge reached
+                    # the client (a tune with no 'secs' shows no total).
+                    for want in ('pac-man', r'\d\d:\d\d/\d\d:\d\d'):
+                        if not re.search(want, scr, re.IGNORECASE):
+                            raise AssertionError(
+                                f'jukebox panel missing /{want}/:\n{scr}')
+                    print('  PASS: jukebox panel shows title + progress')
+                    monitor.keyboard_feed_petscii(b'\x85')   # F1 closes
+                    wait_ready(monitor, 15, artifacts, f'{tag}-jb-closed')
+
                     scr = open_f1_menu(f'{tag}-qs-menu')
                     for want in ('start an adventure',
                                  'talk to the ai assistant'):
@@ -1008,6 +1040,7 @@ def main():
                 ['c1541', str(copy_target), '-list'],
                 capture_output=True, text=True).stdout.lower()
             for want in ('c64llm.1', 'c64llm.2', 'c64llm.3', 'c64llm.4',
+                         'c64llm.5',
                          'c64llm.cfg'):
                 if want not in out:
                     raise AssertionError(

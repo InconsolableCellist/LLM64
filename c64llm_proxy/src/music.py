@@ -54,10 +54,42 @@ class MusicLibrary:
             self.moods = db["moods"]
         except (OSError, KeyError, json.JSONDecodeError):
             pass  # library optional: proxy runs fine without music
+        self.favorites = self._load_favorites()
 
     @property
     def available(self) -> bool:
         return bool(self.tunes)
+
+    # --- favorites (jukebox 'f' key) ---------------------------------
+    # Kept beside the database as a plain id list. Server-side on
+    # purpose: the C64 has no room to remember 10k tunes, and a
+    # favorite should survive reboots and disk swaps.
+
+    def _fav_path(self) -> Path:
+        return self.db_path.parent / "favorites.json"
+
+    def _load_favorites(self) -> set:
+        try:
+            return set(json.loads(self._fav_path().read_text()))
+        except (OSError, ValueError):
+            return set()
+
+    def is_favorite(self, tune_id) -> bool:
+        return tune_id in self.favorites
+
+    def toggle_favorite(self, tune_id) -> bool:
+        """Flip and persist. Returns the new state."""
+        if tune_id in self.favorites:
+            self.favorites.discard(tune_id)
+            now = False
+        else:
+            self.favorites.add(tune_id)
+            now = True
+        try:
+            self._fav_path().write_text(json.dumps(sorted(self.favorites)))
+        except OSError:
+            pass  # a lost favorite must never break playback
+        return now
 
     def prompt_snippet(self) -> str:
         """Instruction block appended to the adventure system prompt."""

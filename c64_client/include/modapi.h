@@ -20,8 +20,15 @@
 
 extern uint8_t (*mod_msg_hook)(uint8_t msg_type);
 extern void (*mod_key_hook)(uint8_t key);
+/* Optional: called from the resident main loop while the modal is open,
+   for anything that has to keep moving with no key or frame to drive it
+   (the jukebox's progress bar and signal meter). Set it AFTER
+   mod_modal_begin, which clears it; mod_modal_end clears it too, so a
+   module can never be ticked once its code may have been overwritten. */
+extern void (*mod_tick_hook)(void);
 
 void mod_modal_begin(uint8_t (*msg)(uint8_t), void (*key)(uint8_t));
+void mod_modal_tick(void (*tick)(void));
 void mod_modal_end(void);
 
 /* Shared conversation-list state, filled by the resident parser
@@ -56,7 +63,9 @@ typedef struct {
     char cmd[11];    /* PETSCII; "!x" = local action x */
 } MenuEntry;
 #define menu_entries ((MenuEntry*)(void*)convs)
-#define MAX_MENU 12
+/* 13 fits: MenuEntry is the same 41 bytes as ConvEntry and convs[] holds
+   17, while the panel's last row still lands inside the chat area. */
+#define MAX_MENU 13
 
 /* Set by the menu module before mod_modal_end(); the RESIDENT loop
    dispatches after the key hook returns. A local action may load

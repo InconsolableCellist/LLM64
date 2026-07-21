@@ -35,7 +35,8 @@
    "play": 45137,
    "songs": 1,
    "start_song": 1,
-   "size": 512
+   "size": 512,
+   "secs": 195
   },
   {
    "id": "Pac-Man",
@@ -54,7 +55,8 @@
    "play": 45178,
    "songs": 1,
    "start_song": 1,
-   "size": 189
+   "size": 189,
+   "secs": 122
   }
  ]
 }

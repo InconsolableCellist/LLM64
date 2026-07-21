@@ -30,6 +30,8 @@ class MessageType(IntEnum):
     DELETE_CONVERSATION = 0x39  # '9' - id(4); ACK/NAK
     STAR_CONVERSATION = 0x3A  # ':' - id(4); toggles starred, ACK/NAK
     GET_MENU = 0x3B  # ';' - request the server-fed menu
+    GET_NOWPLAYING = 0x3C  # '<' - jukebox asks what is playing
+    FAV_TUNE = 0x3D  # '=' - toggle favorite on the current tune
     ACK = 0x40  # '@' - was 0x10
     NAK = 0x41  # 'A' - was 0x11
 
@@ -48,6 +50,8 @@ class MessageType(IntEnum):
     IMG_DATA = 0x5B  # '[' - image bytes (8000 bitmap + 1000 matrix)
     IMG_END = 0x5C  # '\' - image complete
     HINT = 0x5D  # ']' - persistent status flags (bit0: pic suggestion)
+    NOWPLAYING = 0x5F  # '_' - [flags][elapsed:2][secs:2] then
+    #                     title\0 author\0 mood\0 (jukebox module)
     MENU_LIST = 0x5E  # '^' - menu entries: [n][more] then
     #                   [key][label\0][cmd\0] each; cmd "!x" = client-local
 
@@ -233,6 +237,10 @@ class ProtocolHandler:
                 await self.handle_star_conversation()
             elif msg_type == MessageType.GET_MENU:
                 await self.handle_get_menu()
+            elif msg_type == MessageType.GET_NOWPLAYING:
+                await self.handle_get_nowplaying()
+            elif msg_type == MessageType.FAV_TUNE:
+                await self.handle_fav_tune()
             elif msg_type == MessageType.ACK:
                 self.logger.debug("ACK received")
                 if self._begin_ack is not None \
@@ -1625,6 +1633,8 @@ class ProtocolHandler:
                 ('r', 'Roleplay characters', '/chars'),
                 ('m', 'Models', '/models'),
             ]
+        if self.music.available:
+            entries.append(('j', 'Jukebox / now playing', '!j'))
         entries += [
             ('s', 'Music: next / stop', '!s'),
             ('x', 'Cancel reply', '!x'),
@@ -1632,7 +1642,7 @@ class ProtocolHandler:
             ('d', 'Copy client disk', '!d'),
             ('h', 'Help', '/help'),
         ]
-        return entries[:12]  # the client panel caps at MAX_MENU
+        return entries[:13]  # the client panel caps at MAX_MENU
 
     async def handle_get_menu(self):
         """Send the server-fed menu: [count][more] then
@@ -1653,6 +1663,60 @@ class ProtocolHandler:
             count += 1
         payload[0] = count
         await self._send_bulk(MessageType.MENU_LIST, bytes(payload))
+
+    def _current_tune(self):
+        """(tune, mood) for whatever is playing, or (None, '')."""
+        meta = self.conv_manager.get_meta('music') or {}
+        tune = self.music.find(meta.get('tune')) if meta.get('tune') else None
+        return tune, meta.get('mood', '')
+
+    async def handle_get_nowplaying(self):
+        """Jukebox module (#5) asking what is playing.
+
+        The client cannot work any of this out for itself: a SID file
+        carries no title, no author and no duration, and the tune it is
+        playing arrived as a bare memory image. So the server answers
+        with everything the panel needs, including elapsed time already
+        worked out - the module only has to count seconds forward from
+        here off its own 60Hz tick.
+        """
+        tune, mood = self._current_tune()
+        elapsed = 0
+        flags = 0
+        secs = 0
+        if tune and self.music.tune_started is not None:
+            flags |= 1
+            elapsed = int(time.monotonic() - self.music.tune_started)
+            secs = int(tune.get('secs') or 0)
+            if secs:
+                # A tune that has looped shows position within the loop
+                # rather than a bar pinned at the end
+                elapsed %= secs
+            if self.music.is_favorite(tune['id']):
+                flags |= 2
+
+        def field(text, limit):
+            return text[:limit].encode('ascii', errors='replace') + b'\x00'
+
+        payload = (bytes([flags]) + struct.pack('<HH', min(elapsed, 0xFFFF),
+                                                min(secs, 0xFFFF))
+                   + field(tune['title'] if tune else '', 36)
+                   + field(tune['author'] if tune else '', 24)
+                   + field(mood, 12))
+        await self._send_bulk(MessageType.NOWPLAYING, payload)
+
+    async def handle_fav_tune(self):
+        """Toggle favorite on the current tune. The module has already
+        flipped its own star optimistically; ACK confirms, NAK means
+        there was nothing playing to favorite."""
+        tune, _ = self._current_tune()
+        if not tune:
+            await self.send_nak()
+            return
+        now = self.music.toggle_favorite(tune['id'])
+        self.logger.info("%s favorite: %s",
+                         "Added" if now else "Removed", tune['id'])
+        await self.send_ack()
 
     async def handle_delete_conversation(self):
         """Delete a conversation (id in payload). The manager module
