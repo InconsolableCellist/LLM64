@@ -26,6 +26,7 @@ ACT_QUICK = 'quick'        # option 1: start immediately, no theme
 ACT_THEME = 'theme'        # option 2: one-line idea, in .theme
 ACT_BEGIN = 'begin'        # review confirmed; bundle in .answers
 ACT_SUGGEST = 'suggest'    # caller may offer model suggestions for .stage
+ACT_LOAD = 'load'          # play a saved world: .template_slug
 
 SURPRISE = '?'
 
@@ -75,6 +76,12 @@ class AdventureSetup:
         self.theme = ''
         self.editing = False
         self.invalid = set()
+        # Stages already answered by a loaded template. They still appear
+        # on the review (and can still be edited) but are not asked again
+        # on the way through - a re-roll should walk the character, not
+        # the world you just chose to keep.
+        self.prefilled = set()
+        self.template_slug = ''
 
     # --- stage helpers ------------------------------------------------
 
@@ -197,6 +204,10 @@ class AdventureSetup:
             return self._choose(text)
         if self.state == 'theme':
             return self.set_theme(text)
+        if self.state == 'template':
+            return self._pick_template(text)
+        if self.state == 'template_mode':
+            return self._template_mode(text)
         if self.state == 'stage':
             return self._answer(text)
         return self._review(text)
@@ -214,12 +225,45 @@ class AdventureSetup:
             self._enter()
             return self.stage_screen(), ACT_SUGGEST
         if pick == '4' and self.templates:
-            names = "\n".join(f"  {i}  {t}"
-                              for i, t in enumerate(self.templates, 1))
+            names = "\n".join(f"  {i}  {n}"
+                              for i, (n, _slug) in enumerate(self.templates, 1))
             self.state = 'template'
             return f"Saved worlds:\n\n{names}\n\nPick a number:", ACT_NONE
         return ("Pick a number from the list, or /chat to cancel.\n\n"
                 + self.opening_screen()), ACT_NONE
+
+    def _pick_template(self, text):
+        t = text.strip()
+        if t.isdigit() and 1 <= int(t) <= len(self.templates):
+            name, slug = self.templates[int(t) - 1]
+            self.template_slug = slug
+            self.state = 'template_mode'
+            return (f"{name}\n\n"
+                    "  1  Play it as it was\n"
+                    "  2  Keep the world, roll a new character\n\n"
+                    "Pick a number:"), ACT_NONE
+        return "Pick one by number.", ACT_NONE
+
+    def _template_mode(self, text):
+        if text.strip().startswith('1'):
+            return None, ACT_LOAD          # caller replays it whole
+        if text.strip().startswith('2'):
+            return None, ACT_LOAD          # caller pre-fills, then re-rolls
+        return "Pick 1 or 2.", ACT_NONE
+
+    def start_reroll(self, saved: dict):
+        """Keep the world, build a new character. The world stages are
+        pre-filled and skipped on the way through, but still listed on
+        the review so they remain editable."""
+        bundle = (saved or {}).get('bundle') or {}
+        for key in ('world', 'tone', 'opening'):
+            if key in bundle:
+                self.answers[key] = bundle[key]
+                self.prefilled.add(key)
+        self.state = 'stage'
+        self.stage = STAGE_KEYS.index('scores')
+        self._enter()
+        return self.stage_screen(), ACT_SUGGEST
 
     def _enter(self):
         """Anything a stage needs done before it is shown. Only the roll
@@ -276,9 +320,10 @@ class AdventureSetup:
 
     def _advance(self):
         self.stage += 1
-        while (self.stage < len(STAGES)
-               and not self._applies(STAGES[self.stage])):
-            self.stage += 1          # e.g. spells for a non-caster
+        while self.stage < len(STAGES) and (
+                not self._applies(STAGES[self.stage])
+                or STAGES[self.stage]['key'] in self.prefilled):
+            self.stage += 1     # spells for a non-caster, or a kept world
         if self.stage < len(STAGES):
             self._enter()
             return self.stage_screen(), ACT_SUGGEST

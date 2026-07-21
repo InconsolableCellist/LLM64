@@ -172,8 +172,69 @@ for bit in ('Dwarf', 'Cleric', 'Bruni Ashvein', 'CON'):
     if bit not in block:
         failures.append(f"character block missing {bit}: {block!r}")
 
+# --- saved worlds -----------------------------------------------------
+import tempfile
+from src.advtemplates import TemplateStore
+from src.advsetup import ACT_LOAD
+
+with tempfile.TemporaryDirectory() as tmp:
+    store = TemplateStore(tmp)
+    check("no worlds yet", store.list(), [])
+    slug = store.save({'world': 'The Sunken Sanctum', 'tone': 'grim'},
+                      'Oakhaven is a drowned city.', 'A Dwarf Cleric.')
+    check("saving returns a slug", bool(slug), True)
+    listed = store.list()
+    check("the world is listed by name",
+          [n for n, _ in listed], ['The Sunken Sanctum'])
+    got = store.load(listed[0][1])
+    check("and round-trips", (got['bundle']['tone'], got['bible'][:8]),
+          ('grim', 'Oakhaven'))
+    check("an unknown slug is None, not a crash",
+          store.load('nope'), None)
+
+    # Named from the bible when the player left the world to the story
+    s2 = TemplateStore(tmp)
+    s2.save({}, 'Oakhaven is a skeletal cathedral-city. More text.', '')
+    names = [n for n, _ in s2.list()]
+    if 'Oakhaven is a skeletal cathedral-city' not in names:
+        failures.append(f"bible-derived name missing: {names}")
+
+    # A corrupt file must not break the menu
+    (Path(tmp) / 'adventures' / 'broken.json').write_text('{not json')
+    check("corrupt files are skipped", len(TemplateStore(tmp).list()), 2)
+
+# Option 4 only appears with saved worlds, and picking one offers both
+s = AdventureSetup(templates=[('The Sunken Sanctum', 'sunken-1')],
+                   rng=random.Random(5))
+if '4  Load a saved world' not in s.opening_screen():
+    failures.append("option 4 missing when a world exists")
+reply, _ = s.feed('4')
+if 'Sunken Sanctum' not in reply:
+    failures.append("world list does not name the world")
+reply, _ = s.feed('1')
+for want in ('Play it as it was', 'roll a new character'):
+    if want not in reply:
+        failures.append(f"load menu missing {want!r}")
+check("replay is a load", s.feed('1')[1], ACT_LOAD)
+check("...and remembers which world", s.template_slug, 'sunken-1')
+
+# Re-roll keeps the world and walks only the character
+s = AdventureSetup(templates=[('The Sunken Sanctum', 'sunken-1')],
+                   rng=random.Random(5))
+s.feed('4'); s.feed('1'); s.feed('2')
+saved = {'bundle': {'world': 'The Sunken Sanctum', 'tone': 'grim',
+                    'opening': 'the flooded nave'}}
+s.start_reroll(saved)
+check("re-roll starts at the dice", STAGES[s.stage]['key'], 'scores')
+check("...with the world kept", s.answers['world'], 'The Sunken Sanctum')
+s.feed('k'); s.feed('Dwarf'); s.feed('Wanderer'); s.feed('1 2'); s.feed('Bruni')
+check("...and does not re-ask the kept world", s.state, 'review')
+check("the kept world is still on the review",
+      'Sunken Sanctum' in s.review_screen(), True)
+
 if failures:
     print(f"FAIL ({len(failures)})\n")
     print("\n\n".join(failures))
     sys.exit(1)
 print("all adventure-setup tests pass")
+

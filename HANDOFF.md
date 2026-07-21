@@ -529,18 +529,36 @@ drive, so it needs a real time source (the CIA timer read directly,
 since its IRQ is what is being starved). Cheaper half-measure: a short
 volume fade out/in around the hold so the gap is less abrupt.
 
-### 3c6. Adventure setup: chooser, staged creation, templates
-DESIGNED - see `docs/09-adventure-setup.md`. `/adventure` becomes a
-front door: surprise me / one-line idea / build a world and character /
-load a saved world. Staged interview in a SCRATCH buffer (never the
-conversation - `_switch_mode` opens a new one, so a half-built adventure
-must not exist), then a thinking-enabled prep pass produces the campaign
-bible and the first `[[STATE]]`, then play. The bundle is saved as a
-reusable template in `data/adventures/`.
+### 3c6. Adventure setup — DONE (chooser, creation, prep, templates)
+`docs/09-adventure-setup.md`, built and deployed. `/adventure` opens a
+chooser; option 3 walks nine stages (world, tone, scores, race, class,
+skills, spells, name, opening) to a review screen where a number edits
+one line and returns straight back. Confirming runs a thinking-enabled
+prep pass and saves the result as a reusable world.
 
-Costs ZERO client bytes - canned text and numbered replies only, so no
-lockstep deploy. Largest proxy-side feature so far; stages 1-2 of the
-build order are independently shippable.
+Facts worth keeping:
+- **Zero client bytes.** Canned text and numbered replies only, so the
+  whole feature deploys proxy-side with no reboot.
+- **The proxy owns the mechanics.** 4d6-drop-lowest is rolled here
+  (verified mean 12.24 over 24k rolls), racial modifiers applied here,
+  and only classes the scores qualify for are offered. `Wanderer` has no
+  requirements so bad dice never leave a player with nothing to be.
+  Rules are editable JSON in `src/` — the deploy rsyncs `src/` only.
+- **Character sub-steps are FLATTENED** into the one stage list, so the
+  review, the edit-and-return loop and the dependency cascade work on
+  them with no second mechanism.
+- **Prep pass**: one `think=True` call, `max_tokens` 3000, ~23s. Its
+  output plus the character sheet become the mode's `background`, which
+  sits in the STABLE head of the system prompt ahead of the per-turn
+  `adv_state` append — so the prefix cache makes it ~free per turn. A
+  failed prep degrades to an ordinary adventure.
+- **Templates** in `data/adventures/`. Option 4 lists them; a saved
+  world can be replayed whole or kept while re-rolling a new character,
+  which reuses the saved bible rather than paying for prep twice.
+- **`api_client.stream_chat(think=)`** is the per-request override;
+  `disable_thinking` previously overwrote anything passed in.
+- **TRAP**: the client silently drops empty messages (`main.c:985`), so
+  a prompt must never say "press Return" — name a typeable key.
 
 ### 3d. Music browser (overlay #6, bigger - after the above)
 Browse by mood, favourites first, page through ~10k tunes. This is what

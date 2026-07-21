@@ -15,7 +15,8 @@ from .claude_session import ClaudeSession
 from .music import MusicLibrary, MusicDirectiveFilter
 from .dice import expand as expand_dice
 from .advsetup import (AdventureSetup, STAGES, ACT_QUICK,
-                       ACT_THEME, ACT_BEGIN)
+                       ACT_THEME, ACT_BEGIN, ACT_LOAD)
+from .advtemplates import TemplateStore
 from .markup import colorize_for_wire, split_safe
 from .markup import prompt_snippet as color_prompt_snippet
 from .images import ImageService
@@ -133,6 +134,7 @@ class ProtocolHandler:
         self._manual_notice_sent = False
         self._wire_hold = ''
         self._adv_setup = None
+        self._templates = TemplateStore(self.config.data_dir)
         self._img_sent = False
         self._sid_retry = None
         self._claude = None          # ClaudeSession when in code mode
@@ -491,7 +493,8 @@ class ProtocolHandler:
                 # keeps it, and it is option 2 without the asking.
                 await self._start_adventure(arg)
             else:
-                self._adv_setup = AdventureSetup()
+                self._adv_setup = AdventureSetup(
+                    templates=self._templates.list())
                 await self._send_canned(self._adv_setup.opening_screen())
 
         elif cmd == 'chars':
@@ -1823,6 +1826,21 @@ class ProtocolHandler:
             return ''
         return text.strip()
 
+    @staticmethod
+    def _theme_from(bundle: dict) -> str:
+        labels = {st['key']: st['label'] for st in STAGES}
+        return ". ".join(f"{labels[k]}: {v}" for k, v in bundle.items()
+                         if k in ('world', 'tone', 'opening'))
+
+    @staticmethod
+    def _background(bible: str, character: str) -> str:
+        """Prep notes and character sheet, both STABLE for the life of
+        the adventure - so they ride the cached head of the system
+        prompt rather than the per-turn append."""
+        return "\n\n".join(x for x in (
+            ("Your prep notes for this adventure:\n" + bible)
+            if bible else '', character) if x)
+
     async def _start_adventure(self, theme: str, background: str = ''):
         """Shared by /adventure <theme> and the setup flow, so both take
         exactly the same path into play."""
@@ -1840,6 +1858,24 @@ class ProtocolHandler:
         asks for."""
         setup = self._adv_setup
         reply, act = setup.feed(text)
+        if act == ACT_LOAD:
+            saved = self._templates.load(setup.template_slug)
+            if not saved:
+                self._adv_setup = None
+                await self._send_canned("That world could not be read.")
+                return
+            if text.strip().startswith('2'):
+                # Keep the world, roll a new character: the prep notes
+                # are reused, so the expensive pass is not paid again.
+                reply, _ = setup.start_reroll(saved)
+                await self._send_canned(reply)
+                return
+            self._adv_setup = None
+            await self._start_adventure(
+                self._theme_from(saved.get('bundle') or {}),
+                background=self._background(saved.get('bible') or '',
+                                           saved.get('character') or ''))
+            return
         if act in (ACT_QUICK, ACT_THEME, ACT_BEGIN):
             self._adv_setup = None
             if act in (ACT_QUICK, ACT_THEME):
@@ -1848,22 +1884,28 @@ class ProtocolHandler:
                 return
             # ACT_BEGIN: prepare the world before the first scene.
             bundle = setup.bundle()
-            labels = {st['key']: st['label'] for st in STAGES}
-            theme = ". ".join(
-                f"{labels[k]}: {v}" for k, v in bundle.items()
-                if k in ('world', 'tone', 'opening'))
+            theme = self._theme_from(bundle)
             character = setup.character_block()
-            await self.send_status("Preparing the world... (20-30s)")
-            hb = asyncio.create_task(
-                self._heartbeat("Preparing the world..."))
-            try:
-                bible = await self._prep_world(bundle, character)
-            finally:
-                hb.cancel()
-            background = "\n\n".join(
-                x for x in (("Your prep notes for this adventure:\n"
-                             + bible) if bible else '', character) if x)
-            await self._start_adventure(theme, background=background)
+            # A re-roll reuses the saved prep notes rather than paying
+            # for a second thinking pass over the same world.
+            saved = (self._templates.load(setup.template_slug)
+                     if setup.template_slug else None)
+            if saved and saved.get('bible'):
+                bible = saved['bible']
+            else:
+                await self.send_status("Preparing the world... (20-30s)")
+                hb = asyncio.create_task(
+                    self._heartbeat("Preparing the world..."))
+                try:
+                    bible = await self._prep_world(bundle, character)
+                finally:
+                    hb.cancel()
+                # Keep what was built. A failed save must never stop an
+                # adventure starting.
+                self._templates.save(bundle, bible, character,
+                                     model=self.model_override or '')
+            await self._start_adventure(
+                theme, background=self._background(bible, character))
             return
         if reply:
             await self._send_canned(reply)
