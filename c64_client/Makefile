@@ -53,6 +53,15 @@ ASFLAGS += -D SOFT80
 LDFLAGS += -C c64-soft80.cfg
 endif
 
+# DIAG=1 compiles in the crash post-mortem block (src/diag.s): a
+# breadcrumb ring and a C-stack canary at $02A7, both readable with PEEK
+# after the machine drops to BASIC. Costs ~240 bytes of the ~307-byte
+# module-slot headroom, so it is opt-in rather than always-on.
+ifdef DIAG
+CFLAGS += -DDIAG
+ASFLAGS += -D DIAG
+endif
+
 # Source files
 C_SOURCES = $(wildcard src/*.c)
 ASM_SOURCES = $(wildcard src/*.s)

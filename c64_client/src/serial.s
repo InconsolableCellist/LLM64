@@ -36,6 +36,8 @@
         .import _music_play
         .importzp ptr1, ptr2, tmp1, tmp2
 
+        .include "diag.inc"
+
 CIA1_ICR = $DC0D
 
 ; ACIA registers
@@ -259,6 +261,18 @@ drain_sub:
 @rts:   rts
 
 acia_irq_entry:
+.ifdef DIAG
+        ; Hardware-stack low-water mark. The music branch below drops I
+        ; mid-handler so a tune's play routine can be preempted, which
+        ; means IRQ frames can sit on top of each other; this records how
+        ; close page 1 ever came to wrapping. Cheapest possible probe,
+        ; and X is dead here (the KERNAL stub already saved it).
+        tsx
+        cpx D_HWLOW
+        bcs :+
+        stx D_HWLOW
+:
+.endif
         lda ACIA_STATUS         ; bit7 = this ACIA caused the interrupt
         bpl @not_acia
         jsr drain_sub

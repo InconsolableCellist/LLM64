@@ -21,6 +21,9 @@
         .export _music_ext_vol
         .export _music_ext_begin
         .export _music_ext_stop
+        .export _music_hold_begin
+        .export _music_hold_end
+        .export _music_hold
 
 SID       = $D400
 SID_V1    = SID
@@ -32,6 +35,7 @@ EXT_STATE = $FF          ; _music_state value: streamed SID at $B000 active
 
         .bss
 _music_state: .res 1     ; 0 = off, 1..NUM_TUNES = pattern tune, $FF = ext SID
+_music_hold:  .res 1     ; nonzero: skip the tick without forgetting the tune
 _music_ext_init:      .res 2   ; relocated PSID init address
 _music_ext_play_addr: .res 2   ; relocated PSID play address
 _music_ext_song:      .res 1   ; 0-based subtune for the init call
@@ -162,6 +166,31 @@ call_init:
 call_play:
         jmp (_music_ext_play_addr)
 
+;---------------------------------------
+; void music_hold_begin(void) / void music_hold_end(void)
+;
+; Mute the 60Hz tick WITHOUT forgetting which tune is playing, so a
+; KERNAL disk LOAD gets the machine to itself and the song then carries
+; on from where it was instead of restarting. music_ext_stop() would
+; also make the load safe, but it costs the user their soundtrack every
+; time they press F1 - the tune can only be restarted from bar one.
+;
+; The volume goes to zero for the duration: a single held note ringing
+; through a two-second load is worse than a gap. The next unmuted tick
+; reinstates it via the _music_ext_vol override.
+;---------------------------------------
+_music_hold_begin:
+        lda #1
+        sta _music_hold
+        lda #0
+        sta SID_VOL
+        rts
+
+_music_hold_end:
+        lda #0
+        sta _music_hold
+        rts
+
 ; void music_ext_stop(void)
 _music_ext_stop:
         lda #0
@@ -256,9 +285,11 @@ music_silence:
 ; void music_play(void) - one 60Hz tick (IRQ context; A/X/Y free)
 ;---------------------------------------
 _music_play:
+        lda _music_hold
+        bne @ret
         lda _music_state
         bne :+
-        rts
+@ret:   rts
 :       cmp #EXT_STATE
         bne @pattern
         jsr call_play           ; streamed SID's own play routine

@@ -23,6 +23,7 @@
 #include "cfg.h"
 #include "loader.h"
 #include "modapi.h"
+#include "diag.h"
 
 #ifdef SOFT80
 /* Overlay module entries: 1 config, 2 conversation manager,
@@ -44,6 +45,8 @@ extern uint8_t music_ext_song;
 extern uint8_t music_ext_vol;
 void music_ext_begin(void);
 void music_ext_stop(void);
+void music_hold_begin(void);
+void music_hold_end(void);
 
 #ifdef SOFT80
 /* Streamed-SID window (see c64-soft80.cfg) */
@@ -151,11 +154,17 @@ static void img_restore_vic(void) {
    (Music no longer pauses for transfers: the ACIA-blinding theory was
    disproven once the modem's DTR/RTS glitching was fixed.) */
 static void img_close(void) {
+    /* Bracketed: this is the deepest call chain the key handler can
+       start (full 80-col repaint + editor), and it runs while the music
+       IRQ is nesting on top of it. A trail ending on DC_IMGCLOSE with
+       no DC_IMGDONE says the machine died inside the repaint. */
+    diag_crumb(DC_IMGCLOSE);
     img_restore_vic();
     ui_frozen = 0;
     ui_redraw_all();
     editor_redraw();
     ui_status("Ready.");  /* the image's colors linger there otherwise */
+    diag_crumb(DC_IMGDONE);
 }
 #endif
 
@@ -506,14 +515,29 @@ static void conv_load_selected(void) {
 #ifdef SOFT80
 /* Load an overlay module and run it. RX is masked around the disk
    LOAD (JiffyDOS IEC timing vs serial NMIs) and resumed BEFORE the
-   module runs - hook-modal modules request + render immediately. */
+   module runs - hook-modal modules request + render immediately.
+
+   The tune is held for the same window. Masking RX keeps the ACIA
+   quiet, but the 60Hz CIA tick kept calling a streamed SID's play
+   routine straight through the LOAD - up to 1600 cycles of stolen time
+   per frame against cycle-counted IEC. Both other timing-critical
+   transfers in this client already silence music first (see
+   load_conversation_by_id above and mod_diskcopy.c); this path was the
+   one that did not, and it is reachable from a bare F1/F5 keypress
+   while a tune plays. Held rather than stopped so the song survives. */
 static uint8_t mod_open(const char* name, void (*run)(void)) {
     uint8_t ok;
+    diag_note_mod(name[7]);   /* "c64llm.N" -> N */
+    diag_crumb(DC_MODLOAD);
+    music_hold_begin();
     serial_rx_pause();
     ok = module_load(name);
     serial_rx_resume();
+    music_hold_end();
+    diag_crumb(DC_MODLOADED);
     if (ok) run();
     else ui_status("Module load failed - boot disk?");
+    diag_crumb(DC_MODDONE);
     return ok;
 }
 
@@ -724,6 +748,7 @@ static void handle_message(uint8_t msg_type) {
             xfer_count = 0;
             xfer_mark();
             music_ext_stop();       /* silence during the transfer */
+            diag_crumb(DC_SIDRECV);
             music_ext_init = p[2] | ((uint16_t)p[3] << 8);
             music_ext_play_addr = p[4] | ((uint16_t)p[5] << 8);
             music_ext_song = p[6];
@@ -773,6 +798,7 @@ static void handle_message(uint8_t msg_type) {
         }
         case MSG_SID_END:
             if (sid_active && sid_got == sid_expect) {
+                diag_crumb(DC_MUSICBEG);
                 music_ext_begin();
                 proto_send_ack();
                 ui_status(sid_name);
@@ -867,6 +893,7 @@ static void handle_message(uint8_t msg_type) {
         case MSG_IMG_END:
             if (img_active && img_got == img_expect) {
                 img_shown = 1;   /* key handler dismisses + redraws */
+                diag_crumb(DC_IMGSHOW);
                 proto_send_ack();
             } else {
                 img_close();
@@ -1014,6 +1041,12 @@ static void menu_local(uint8_t a) {
 /* --- key handling ----------------------------------------------------- */
 
 static void handle_key(uint8_t k) {
+    /* The key is recorded but NOT pushed as a breadcrumb: the crash we
+       are chasing happens while typing, and one crumb per keystroke
+       would flush the 8-deep ring within a word - erasing the module
+       load or image dismiss that actually explains it. Rare events get
+       crumbs; the last key gets its own byte. */
+    diag_note_key(k);
 #ifdef SOFT80
     if (img_shown) {   /* any key dismisses the fullscreen image */
         img_shown = 0;
@@ -1131,6 +1164,8 @@ static void handle_key(uint8_t k) {
 
 int main(void) {
     boot_device_init();  /* first: $BA still holds the LOADing drive */
+    diag_init();         /* lay the canary before anything runs deep */
+    diag_crumb(DC_BOOT);
     proto_init(&proto, payload_buffer, MAX_PAYLOAD);
     ui_init();
     editor_init();

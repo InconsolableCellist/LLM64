@@ -32,6 +32,21 @@ PROXY_DIR = REPO / 'c64llm_proxy'
 PROXY_PORT = 6400  # default; override with --proxy-port
 TCPSER_PORT = 25232
 
+# Crash post-mortem block, only present in DIAG=1 client builds.
+# Mirrors c64_client/include/diag.inc and diag.h - all three move together.
+DIAG_BASE = 0x02A7
+DIAG_MAGIC = 0xC6
+CANARY = 0xA5
+STACK_TOP = 0xB000                  # __HIMEM__ in c64-soft80.cfg
+CAN_START = STACK_TOP - 0x0600      # $AA00, stack bottom (__STACKSIZE__)
+CAN_END = CAN_START + 0x0400        # canary covers the deepest 1K
+CRUMB_NAMES = {
+    0: '-', 1: 'BOOT',
+    32: 'IMGSHOW', 33: 'IMGCLOSE', 34: 'IMGDONE',
+    48: 'MODLOAD', 49: 'MODLOADED', 50: 'MODDONE',
+    64: 'MUSICBEG', 80: 'SIDRECV',
+}
+
 
 def find_free_port():
     with socket.socket() as s:
@@ -180,6 +195,9 @@ def main():
     parser.add_argument('--tui', action='store_true',
                         help='Drive the interactive TUI via keyboard injection '
                              'instead of asserting the scripted debug session')
+    parser.add_argument('--diag', action='store_true',
+                        help='Client built with DIAG=1: dump and assert the '
+                             'crash post-mortem block + C-stack canary')
     args = parser.parse_args()
 
     artifacts = REPO / 'emu' / 'artifacts'
@@ -866,6 +884,54 @@ def main():
 
         (artifacts / f'{args.mode}-final.txt').write_text(final)
         print(f"\n--- final screen ---\n{final}\n--------------------")
+
+        # Crash post-mortem block (client built with DIAG=1). Reads the
+        # same $02A7 bytes the user PEEKs after a drop to BASIC, so the
+        # instrumentation is proven here rather than on real hardware.
+        # The run above is the crash scenario in miniature: a streamed
+        # SID playing while F1 loads overlay modules off disk.
+        if args.diag:
+            d = monitor.read_memory(DIAG_BASE, DIAG_BASE + 15)
+            idx = d[1]
+            trail = [d[8 + ((idx + i) % 8)] for i in range(8)]
+            print("\n--- crash post-mortem block ---")
+            print(f"  magic={d[0]:#04x} crumbs={d[2]} music={d[3]} "
+                  f"key={d[4]} hw_sp_low=${d[5]:02x} "
+                  f"modules_loaded={d[6]} last_module={d[7]}")
+            print("  trail (oldest->newest): "
+                  + " ".join(CRUMB_NAMES.get(c, str(c)) for c in trail))
+            if d[0] != DIAG_MAGIC:
+                raise AssertionError(
+                    f'diag magic {d[0]:#04x} != {DIAG_MAGIC:#04x} - '
+                    'client not built with DIAG=1?')
+            if d[2] == 0:
+                raise AssertionError('no breadcrumbs recorded')
+            if args.cols80 and d[6] == 0:
+                raise AssertionError('no overlay module loads recorded')
+            print('  PASS: post-mortem block populated')
+
+            # C-stack canary: the lowest byte still holding the pattern
+            # is the deepest the stack ever got. Reaching CAN_START means
+            # it ran into the overlay slot below - the leading theory for
+            # the crash-to-BASIC bug.
+            can = monitor.read_memory(CAN_START, CAN_END - 1)
+            low = next((i for i, v in enumerate(can) if v != CANARY),
+                       len(can))
+            if low == 0:
+                raise AssertionError(
+                    f'C stack reached ${CAN_START:04X} - overflowed into '
+                    'the overlay module slot')
+            depth = STACK_TOP - CAN_START            # 1536: full stack
+            if low == len(can):
+                print(f'  PASS: C-stack canary fully intact - peak use '
+                      f'stayed under {STACK_TOP - CAN_END} of {depth} '
+                      f'bytes (never reached ${CAN_END:04X})')
+            else:
+                hw = CAN_START + low
+                print(f'  PASS: C-stack high-water ${hw:04X} '
+                      f'({STACK_TOP - hw} of {depth} bytes used, '
+                      f'{low} bytes of canary to spare)')
+
 
         monitor.quit()
         time.sleep(2)  # let -exitscreenshot write

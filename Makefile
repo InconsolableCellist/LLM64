@@ -96,6 +96,16 @@ client-tui-direct-80:
 test-emu-tui-80: client-tui-direct-80
 	$(PYTHON) emu/test_e2e.py --mode direct --tui --cols80 --proxy-port $(TESTPORT)
 
+# Same run against a DIAG=1 client, then read the crash post-mortem
+# block back out: proves the instrumentation records what the user will
+# PEEK after a drop to BASIC, and reports the C-stack high-water mark
+# under a realistic workload (streamed SID + overlay module loads).
+test-emu-diag:
+	$(MAKE) -C c64_client clean
+	$(MAKE) -C c64_client CONNECT=direct MODE80=1 DIAG=1
+	$(PYTHON) emu/test_e2e.py --mode direct --tui --cols80 --diag \
+		--proxy-port $(TESTPORT)
+
 deploy-c64u-80:
 	$(MAKE) -C c64_client clean
 	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
