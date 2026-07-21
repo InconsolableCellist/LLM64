@@ -81,7 +81,7 @@ VICE-based e2e test suite.
    growth all eat the module-slot headroom 1:1. After ANY resident change:
    `make -C c64_client clean && make -C c64_client MODE80=1` must link
    (default CONNECT=hayes), then check headroom (BSS end vs $9C00 in
-   `build/c64llm.map`). Currently ~492 bytes free (a `DIAG=1` build
+   `build/c64llm.map`). Currently ~391 bytes free (a `DIAG=1` build
    spends ~200 more; that is expected and opt-in).
 10. **In c64_client/Makefile**, conditional `+=` blocks must come after
     base assignments, and new rules go AFTER `all:` (first rule = default
@@ -325,28 +325,36 @@ user cards shadowing bundled ones by name. Menu key is **`i`**, not `t` —
 key that means different things per mode would eventually cost someone a
 conversation (this one starts a new one).
 
-### 2. Sound window module (overlay #5) — IN PROGRESS
-Song name, progress bar, volume (vol_byte), prev/next, favorite
-(proxy-side), oscilloscope via $D41B/$D41C reads. Use the hook-modal
-pattern + OVL5BSS.
+### 2. Sound window module (overlay #5) — DONE (8d7bb16, deployed)
+F1 → J opens the jukebox: title, author, progress bar against the tune's
+real length, volume, and a signal meter off the SID's voice-3
+oscillator. Keys n (another tune in the same mood), f (favorite), +/-
+(volume), F1/STOP (close).
 
-**Durations DONE (e8fbe84, deployed).** `tools/sid_songlengths.py`
-parses HVSC `DOCUMENTS/Songlengths.md5` (keyed off the path comment, not
-the MD5 — that hash is of the original .sid, which our relocated copies
-no longer match); `sid_makedb.py --songlengths` stamps `secs` on each
-tune, picking the subtune `start_song` actually selects. moods.json on
-mlboy now carries `secs` for all 10,032 tunes, median 103s. Regenerating
-was verified byte-comparable to the deployed library apart from the new
-field, so tune selection is unchanged.
+Wire: **GET_NOWPLAYING 0x3C / NOWPLAYING 0x5F / FAV_TUNE 0x3D**, all
+ADDITIVE — no existing frame layout moved, so the proxy can ship ahead
+of the client. Growing SID_BEGIN would have forced lockstep and put the
+streaming path at risk for a cosmetic feature; don't.
 
-Remaining: put the duration on the wire (SID_BEGIN grows a field —
-**wire change, lockstep deploy**), then the module itself. Headroom is
-492 bytes now and OVL5BSS costs zero resident, so the modules-1-3
-OVL-BSS retrofit is no longer a prerequisite.
+Durations come from HVSC (`tools/sid_songlengths.py` →
+`sid_makedb.py --songlengths` → `secs` in moods.json, 100% coverage).
+Favorites live server-side in `data/sids/favorites.json`.
 
-Natural follow-on once the duration is known client-side: MusicLibrary's
-`stale()` still hardcodes 300s for the tune-staleness nudge; it could
-count actual loops instead.
+**New: the tick hook.** `mod_modal_tick(fn)` registers a callback the
+resident loop calls while a modal is open, for anything that must keep
+moving without a key or a frame (the clock, the meter). `mod_modal_begin`
+clears it and `mod_modal_end` clears it again, so a module can never be
+ticked after its slot may have been overwritten.
+
+**Trap worth remembering:** `mod_sound.o` costs zero resident bytes as
+the OVL5BSS pattern promises — but one `uint32_t` divide in the
+progress-bar maths cost **233**, by dragging cc65's long runtime into
+the resident image. In module code, 16-bit arithmetic is not a
+micro-optimisation.
+
+MAX_MENU went 12 → 13 (adventure mode was already at 12). MenuEntry is
+the same 41 bytes as ConvEntry and convs[] holds 17, so the storage was
+always there.
 
 ### 3. Baud doubling (38400)
 SwiftLink's doubled crystal makes its "19200" divisor yield 38400; the
