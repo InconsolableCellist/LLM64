@@ -129,6 +129,9 @@ typedef enum {
 #define MSG_MENU_LIST           0x5E  /* '^' - menu entries: [n][more]
                                          then [key][label\0][cmd\0] each;
                                          cmd "!x" = local action x */
+#define MSG_NOTICE              0x60  /* '`' - out-of-band system line
+                                         (dice results); rendered as its
+                                         own chat block, not the reply */
 #define MSG_NOWPLAYING          0x5F  /* '_' - jukebox state: [flags]
                                          [elapsed:2][secs:2] then
                                          title\0 author\0 mood\0 */

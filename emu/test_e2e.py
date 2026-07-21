@@ -910,15 +910,19 @@ def main():
                     if 'jukebox' not in scr.lower():
                         raise AssertionError('jukebox entry missing from menu')
                     monitor.keyboard_feed('j')
-                    scr = wait_for_screen(monitor, r'c64 llm jukebox', 25,
-                                          artifacts, f'{tag}-jb-panel')
-                    # Title and author come from the server, and the
-                    # mm:ss/mm:ss pair proves the duration merge reached
-                    # the client (a tune with no 'secs' shows no total).
-                    for want in ('pac-man', r'\d\d:\d\d/\d\d:\d\d'):
-                        if not re.search(want, scr, re.IGNORECASE):
-                            raise AssertionError(
-                                f'jukebox panel missing /{want}/:\n{scr}')
+                    wait_for_screen(monitor, r'c64 llm jukebox', 25,
+                                    artifacts, f'{tag}-jb-panel')
+                    # Poll for the CONTENT, not the frame: the panel is
+                    # drawn immediately and only fills in when NOWPLAYING
+                    # arrives, so asserting on the first screen that
+                    # showed the title was a race that happened to win.
+                    # The mm:ss/mm:ss pair also proves the duration merge
+                    # reached the client - no 'secs' means no total.
+                    scr = wait_for_screen(monitor, r'\d\d:\d\d/\d\d:\d\d',
+                                          25, artifacts, f'{tag}-jb-filled')
+                    if not re.search('pac-man', scr, re.IGNORECASE):
+                        raise AssertionError(
+                            f'jukebox panel missing the title:\n{scr}')
                     # /music was manual, so the panel says who is
                     # choosing - and the LLM must stop overriding it.
                     if 'manual' not in scr.lower():
@@ -927,6 +931,19 @@ def main():
                     print('  PASS: jukebox shows manual music mode')
                     monitor.keyboard_feed_petscii(b'\x85')   # F1 closes
                     wait_ready(monitor, 15, artifacts, f'{tag}-jb-closed')
+
+                    # Dice macros: rolled by the proxy before the model
+                    # sees the message, echoed back as its own line so
+                    # the player sees the number they got.
+                    monitor.keyboard_feed('I swing [roll:1d20] wildly\r')
+                    wait_for_screen(monitor, r'you rolled 1d20: \d+',
+                                    40, artifacts, f'{tag}-dice')
+                    # The raw macro IS on screen - the client echoes what
+                    # was typed. What matters is that the MODEL got the
+                    # expansion, which is asserted against the stored
+                    # conversation after the run.
+                    print('  PASS: [roll:1d20] rolls and reports back')
+                    wait_ready(monitor, 40, artifacts, f'{tag}-dice-done')
 
                     scr = open_f1_menu(f'{tag}-qs-menu')
                     for want in ('start an adventure',
@@ -1086,6 +1103,29 @@ def main():
             if not found:
                 raise AssertionError('adv_state missing from meta')
             print('  PASS: adventure state persisted to meta')
+
+            # Dice: the model must have been handed the ROLLED result,
+            # never the macro. The client's own echo still shows what was
+            # typed, so the stored conversation is the only place this
+            # contract is visible.
+            rolled = False
+            for fp in (artifacts / 'data' / 'conversations').glob('*.json'):
+                try:
+                    msgs = _json.load(open(fp))['chat']['messages']
+                except Exception:
+                    continue
+                for m in msgs:
+                    if m.get('role') != 'user':
+                        continue
+                    if '[roll:' in m['content']:
+                        raise AssertionError(
+                            f"unexpanded macro reached the model: "
+                            f"{m['content']!r}")
+                    if re.search(r'you rolled 1d20: \d+', m['content']):
+                        rolled = True
+            if not rolled:
+                raise AssertionError('no expanded roll in any user message')
+            print('  PASS: model received the rolled result, not the macro')
 
         print(f"\nE2E {args.mode} mode: PASS")
         status = 0

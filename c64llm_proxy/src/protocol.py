@@ -13,6 +13,7 @@ from .modes import (Mode, AdventureMode, RoleplayMode, ClaudeMode,
                     CharacterCard, find_cards)
 from .claude_session import ClaudeSession
 from .music import MusicLibrary, MusicDirectiveFilter
+from .dice import expand as expand_dice
 from .images import ImageService
 
 
@@ -50,6 +51,7 @@ class MessageType(IntEnum):
     IMG_DATA = 0x5B  # '[' - image bytes (8000 bitmap + 1000 matrix)
     IMG_END = 0x5C  # '\' - image complete
     HINT = 0x5D  # ']' - persistent status flags (bit0: pic suggestion)
+    NOTICE = 0x60  # '`' - out-of-band system line (dice results)
     NOWPLAYING = 0x5F  # '_' - [flags][elapsed:2][secs:2] then
     #                     title\0 author\0 mood\0 (jukebox module)
     MENU_LIST = 0x5E  # '^' - menu entries: [n][more] then
@@ -385,6 +387,22 @@ class ProtocolHandler:
                     self._claude_turn(text))
             return
 
+        # Dice macros are rolled HERE, before the model ever sees the
+        # message: [roll:1d20] becomes [you rolled 1d20: 14] in the text
+        # that gets stored, sent and replied to. Asking a model to roll
+        # gets you an invented - and suspiciously generous - number.
+        text, rolls = expand_dice(text)
+        for r in rolls:
+            # The C64 echoed the raw macro locally when it was typed, so
+            # the result has to come back or the player never sees what
+            # they got. Not the status bar: _stream_response overwrites
+            # it with "Contacting API..." a moment later. This lands in
+            # the scrollback, where it stays.
+            await self._send_bulk(
+                MessageType.NOTICE,
+                ('* ' + r + ' *').encode('ascii', errors='replace')
+                + b'\x00')
+
         # Add user message to conversation
         self.conv_manager.add_message('user', text)
 
@@ -428,6 +446,7 @@ class ProtocolHandler:
                 "/models - list models, /model <name> - switch\n"
                 "/music <mood> - play a tune (/music for moods)\n"
                 "/auto - let the story choose the music again\n"
+                "[roll:1d20] in a message - roll dice for real\n"
                 "/pic [desc|n] - illustrate scene / re-show pic n\n"
                 "/pics - list this conversation's pictures\n"
                 "/save [name] - checkpoint this conversation\n"

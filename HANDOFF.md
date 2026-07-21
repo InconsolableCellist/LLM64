@@ -405,13 +405,33 @@ test used to do `/music` then rely on the LLM overriding it, which is
 exactly what this prevents. It now asserts the decline, then `/auto`,
 then the override.
 
-### 3c. Player macros: [roll:1d20] (USER REQUEST)
-Expand dice in the user's own text before it reaches the LLM: `NdX`,
-substituted as something like `[you rolled 1d20: 14]` so the player AND
-the model both see the result. Runs in the opposite direction to the
-[[MUSIC:]]/[[IMAGE:]] filter but wants the same machinery. NOTE: that
-filter now also accepts SINGLE brackets for MUSIC/IMAGE, so pick the
-macro syntax with the collision in mind.
+### 3c. Player macros: [roll:1d20] — DONE
+`[roll:NdX]` in a typed message is rolled BY THE PROXY before the model
+ever sees it: `[roll:1d20]` becomes `[you rolled 1d20: 14]` in the text
+that is stored, sent and replied to. Asking a model to roll gets you an
+invented - and suspiciously generous - number. Optional modifiers
+(`[roll:2d6+3]`), `[roll:d20]` shorthand, multiple per message; asks
+outside 1-20 dice / 2-1000 sides are left VERBATIM rather than clamped,
+so a refusal is visible instead of silently rolling something else.
+
+No collision with the directive filter despite its single-bracket
+acceptance: that matches three fixed keywords, this matches `roll`, and
+they travel in opposite directions. tests/test_dice.py asserts both
+directions cannot see each other, with a seeded RNG so totals are exact
+(a shape-only test would miss a modifier applied twice).
+
+**New wire message: NOTICE 0x60** - an out-of-band system line rendered
+as its own chat block. Needed because the status bar is overwritten by
+"Contacting API..." a moment later, and the reply that follows must
+still open cleanly. Client ignores it mid-stream (finishing an open
+assistant block there would strand the remaining chunks). Reusable for
+any "the proxy has something to say that is not the model's reply".
+
+Test note: the raw macro IS on screen - the client echoes what was
+typed - so the contract is asserted against the STORED conversation
+instead. Also fixed a latent race in the jukebox test that this exposed:
+it asserted on the first screen showing the panel title, which is drawn
+before NOWPLAYING arrives. It now polls for the content.
 
 ### 3c2. Picture count in the chrome (USER REQUEST, small)
 Show how many illustrations this conversation has, up top or in the

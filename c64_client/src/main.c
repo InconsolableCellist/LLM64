@@ -649,6 +649,20 @@ static void handle_message(uint8_t msg_type) {
             chat_redraw_stream();
             break;
         }
+        case MSG_NOTICE:
+            /* Something the PROXY has to say that is not the model's
+               reply - a dice result, for now. Opens and closes its own
+               block so the reply that follows still starts cleanly.
+               Ignored mid-stream: finishing an open assistant block
+               here would leave the remaining chunks appending into a
+               closed one. Nothing sends it mid-stream today. */
+            if (state != ST_STREAMING) {
+                chat_start(2);
+                chat_append_ascii((char*)proto_get_payload(&proto));
+                chat_finish();
+                chat_redraw();
+            }
+            break;
         case MSG_CHAT_DONE:
             if (state != ST_IDLE) {
                 chat_finish();
