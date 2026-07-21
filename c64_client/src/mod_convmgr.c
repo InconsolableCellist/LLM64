@@ -25,6 +25,29 @@
 void mod_convmgr_run(void);
 
 #pragma code-name (push, "OVERLAY2")
+#pragma rodata-name (push, "OVERLAY2")
+/* Module statics live in slot RAM past the loaded code: zero resident
+   bytes and zero file bytes, but NOT zero-initialized - mod_convmgr_run
+   stores every one before it is read. */
+#pragma bss-name (push, "OVL2BSS")
+
+/* cc65 emits ANONYMOUS string literals into "RODATA" whatever the
+   pragma says; named const arrays honor it. Every user-visible string
+   here is named for that reason alone - as literals they sat resident
+   and cost scrollback. */
+static const char S_HEAD[]   = " Conversations (return=load, d=del,"
+                               " s=star, f5=close)";
+static const char S_LOADING[] = "  loading...";
+static const char S_NONE[]   = "  (none found)";
+static const char S_PAGE[]   = " page ??   crsr left/right = page";
+static const char S_DELETED[] = "Deleted.";
+static const char S_STARRED[] = "Star toggled.";
+static const char S_REFUSED[] = "Server refused - try again.";
+static const char S_DELETING[] = "Deleting...";
+static const char S_DELCANC[] = "Delete cancelled.";
+static const char S_DELCONF[] = "Delete selected conversation? y = yes";
+static const char S_STARING[] = "Toggling star...";
+static const char S_READY[]  = "Ready.";
 
 #define MK_STOP    3
 #define ROW_FIRST  2   /* first list row (header is row 1) */
@@ -49,18 +72,17 @@ static void mgr_draw(void) {
     uint8_t i;
     char foot[36];
     chat_area_clear_screen();
-    ui_draw_row(1, " Conversations (return=load, d=del, s=star,"
-                   " f5=close)", COLOR_WHITE, 0);
+    ui_draw_row(1, S_HEAD, COLOR_WHITE, 0);
     if (conv_loading) {
-        ui_draw_row(3, "  loading...", COLOR_GRAY2, 0);
+        ui_draw_row(3, S_LOADING, COLOR_GRAY2, 0);
         return;
     }
     if (!conv_count) {
-        ui_draw_row(3, "  (none found)", COLOR_GRAY2, 0);
+        ui_draw_row(3, S_NONE, COLOR_GRAY2, 0);
     }
     for (i = 0; i < conv_count; ++i) mgr_row(i);
     if (page || conv_more_pages) {
-        strcpy(foot, " page ??   crsr left/right = page");
+        strcpy(foot, S_PAGE);
         foot[6] = '0' + (page + 1) / 10;
         foot[7] = '0' + (page + 1) % 10;
         if (foot[6] == '0') foot[6] = ' ';
@@ -90,13 +112,13 @@ static uint8_t mgr_msg(uint8_t t) {
     }
     if (pend && (t == MSG_ACK || t == MSG_NAK)) {
         if (t == MSG_ACK) {
-            ui_status(pend == OP_DELETE ? "Deleted." : "Star toggled.");
+            ui_status(pend == OP_DELETE ? S_DELETED : S_STARRED);
             pend = OP_NONE;
             mgr_request();
             mgr_draw();
         } else {
             pend = OP_NONE;
-            ui_status("Server refused - try again.");
+            ui_status(S_REFUSED);
         }
         return 1;
     }
@@ -111,9 +133,9 @@ static void mgr_key(uint8_t k) {
             pend = OP_DELETE;
             proto_send_message(MSG_DELETE_CONVERSATION,
                                (uint8_t*)&convs[conv_sel].id, 4);
-            ui_status("Deleting...");
+            ui_status(S_DELETING);
         } else {
-            ui_status("Delete cancelled.");
+            ui_status(S_DELCANC);
         }
         return;
     }
@@ -156,7 +178,7 @@ static void mgr_key(uint8_t k) {
         case 'd':
             if (conv_count && !pend) {
                 del_arm = 1;
-                ui_status("Delete selected conversation? y = yes");
+                ui_status(S_DELCONF);
             }
             break;
         case 's':
@@ -164,13 +186,13 @@ static void mgr_key(uint8_t k) {
                 pend = OP_STAR;
                 proto_send_message(MSG_STAR_CONVERSATION,
                                    (uint8_t*)&convs[conv_sel].id, 4);
-                ui_status("Toggling star...");
+                ui_status(S_STARING);
             }
             break;
         case KEY_F5:
         case MK_STOP:
             mod_modal_end();
-            ui_status("Ready.");
+            ui_status(S_READY);
             break;
     }
 }
@@ -184,6 +206,8 @@ void mod_convmgr_run(void) {
     mgr_draw();
 }
 
+#pragma bss-name (pop)
+#pragma rodata-name (pop)
 #pragma code-name (pop)
 
 #endif /* SOFT80 */

@@ -81,7 +81,7 @@ VICE-based e2e test suite.
    growth all eat the module-slot headroom 1:1. After ANY resident change:
    `make -C c64_client clean && make -C c64_client MODE80=1` must link
    (default CONNECT=hayes), then check headroom (BSS end vs $9C00 in
-   `build/c64llm.map`). Currently ~216 bytes free (a `DIAG=1` build
+   `build/c64llm.map`). Currently ~1467 bytes free (a `DIAG=1` build
    spends ~200 more; that is expected and opt-in).
 10. **In c64_client/Makefile**, conditional `+=` blocks must come after
     base assignments, and new rules go AFTER `all:` (first rule = default
@@ -95,12 +95,19 @@ VICE-based e2e test suite.
 - **Anonymous string literals always land in segment "RODATA"** regardless
   of `#pragma rodata-name` (cc65 2.17). In overlay modules, declare
   strings as named `static const char X[]` arrays inside the pragma region.
-- **The OVL4BSS pattern** (see mod_menu.c + c64-soft80.cfg): a
-  `type = bss` segment loaded into the overlay memory area puts module
-  statics AND `-Cl` static locals into slot RAM past the loaded code —
-  zero resident bytes, zero file bytes. CAVEAT: not zero-initialized;
-  store before read. Modules 1–3 predate this pattern and still leak
-  ~150 resident BSS bytes — retrofitting them is a known reclaim.
+- **The OVLnBSS pattern** (c64-soft80.cfg): a `type = bss` segment
+  loaded into the overlay memory area puts module statics AND `-Cl`
+  static locals into slot RAM past the loaded code — zero resident
+  bytes, zero file bytes. CAVEAT: not zero-initialized; store before
+  read. ALL FIVE modules now use it, along with
+  `#pragma rodata-name (push, "OVERLAYn")`.
+  The retrofit of modules 1–3 reclaimed **1255 bytes**, not the ~150 the
+  old estimate here claimed — that only counted BSS, and the RODATA was
+  four times bigger. Anonymous string literals are the whole game:
+  cc65 puts them in resident "RODATA" whatever the pragma says, so every
+  user-visible string in a module must be a NAMED `static const char[]`.
+  That includes literals inside initializers — the disk copier's
+  filename table moved only after each name became its own array.
 - **Never start a comment continuation line with `#N`** — inside a
   *skipped* `#ifdef` block, cc65 2.17 parses it as a preprocessor
   directive (this silently broke the 40col build once).

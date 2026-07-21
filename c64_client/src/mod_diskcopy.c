@@ -29,6 +29,32 @@ void music_ext_stop(void);
 void mod_diskcopy_run(void);
 
 #pragma code-name (push, "OVERLAY3")
+#pragma rodata-name (push, "OVERLAY3")
+/* Slot RAM past the loaded code: zero resident, zero file bytes, NOT
+   zero-initialized - mod_diskcopy_run stores before reading. */
+#pragma bss-name (push, "OVL3BSS")
+
+/* Named, not anonymous: cc65 emits anonymous literals into "RODATA"
+   whatever the pragma says. This module had the largest string block of
+   the three and was the most expensive to leave resident. */
+static const char S_TWO[] = "  ";
+static const char S_PR[] = ",p,r";
+static const char S_NOTFOUND[] = " - not found, skipped";
+static const char S_AT0[] = "@0:";
+static const char S_PW[] = ",p,w";
+static const char S_TGTERR[] = " - target drive error";
+static const char S_WRFAIL[] = " - write failed";
+static const char S_OK[] = " - ok";
+static const char S_TITLE[] = "  Copy Client Disk";
+static const char S_SRC[] = "  Source: drive ??  (this boot disk)";
+static const char S_ASK[] = "  Target drive (8 or 9)?  stop cancels";
+static const char S_PICK[] = "Pick the target drive.";
+static const char S_CANC[] = "Copy cancelled.";
+static const char S_SAMEDRV[] = "That IS the source drive - pick the other.";
+static const char S_COPYING[] = "Copying... (drive lights will blink)";
+static const char S_ERRS[] = "Copy finished with errors - check target disk.";
+static const char S_DONE[] = "Copy complete - ? file(s) written.";
+static const char S_ANYKEY[] = "  any key returns to chat";
 
 #define COPYBUF     ((uint8_t*)0xB000)
 #define COPYBUF_SZ  4096U
@@ -37,9 +63,18 @@ void mod_diskcopy_run(void);
 #define DK_STOP     3
 
 #define DK_NFILES 7
+/* The names are named arrays for the same reason as the messages above:
+   as anonymous literals in an initializer they land in resident RODATA,
+   and only the pointer table would have moved into the overlay. */
+static const char F0[] = "c64llm";
+static const char F1[] = "c64llm.1";
+static const char F2[] = "c64llm.2";
+static const char F3[] = "c64llm.3";
+static const char F4[] = "c64llm.4";
+static const char F5[] = "c64llm.5";
+static const char FC[] = "c64llm.cfg";
 static const char* const dk_files[DK_NFILES] = {
-    "c64llm", "c64llm.1", "c64llm.2", "c64llm.3", "c64llm.4",
-    "c64llm.5", "c64llm.cfg"
+    F0, F1, F2, F3, F4, F5, FC
 };
 
 /* 0 = copied, 1 = failed, 2 = not on source (skipped) */
@@ -49,7 +84,7 @@ static uint8_t copy_one(const char* name, uint8_t dst, uint8_t row) {
     int n;
     uint8_t blocks = 0;
 
-    strcpy(line, "  ");
+    strcpy(line, S_TWO);
     strcat(line, name);
     ui_draw_row(row, line, COLOR_CYAN, 0);
 
@@ -57,22 +92,22 @@ static uint8_t copy_one(const char* name, uint8_t dst, uint8_t row) {
        the first read - so read the first chunk BEFORE opening the
        target (also detects an unreadable source cleanly) */
     strcpy(nbuf, name);
-    strcat(nbuf, ",p,r");
+    strcat(nbuf, S_PR);
     if (cbm_open(LFN_SRC, boot_device, 2, nbuf) != 0) n = -1;
     else n = cbm_read(LFN_SRC, COPYBUF, COPYBUF_SZ);
     if (n <= 0) {
         cbm_close(LFN_SRC);
-        strcat(line, " - not found, skipped");
+        strcat(line, S_NOTFOUND);
         ui_draw_row(row, line, COLOR_GRAY2, 0);
         return 2;
     }
-    strcpy(nbuf, "@0:");
+    strcpy(nbuf, S_AT0);
     strcat(nbuf, name);
-    strcat(nbuf, ",p,w");
+    strcat(nbuf, S_PW);
     if (cbm_open(LFN_DST, dst, 3, nbuf) != 0) {
         cbm_close(LFN_DST);
         cbm_close(LFN_SRC);
-        strcat(line, " - target drive error");
+        strcat(line, S_TGTERR);
         ui_draw_row(row, line, COLOR_RED, 0);
         return 1;
     }
@@ -80,7 +115,7 @@ static uint8_t copy_one(const char* name, uint8_t dst, uint8_t row) {
         if (cbm_write(LFN_DST, COPYBUF, (unsigned)n) != n) {
             cbm_close(LFN_DST);
             cbm_close(LFN_SRC);
-            strcat(line, " - write failed");
+            strcat(line, S_WRFAIL);
             ui_draw_row(row, line, COLOR_RED, 0);
             return 1;
         }
@@ -93,7 +128,7 @@ static uint8_t copy_one(const char* name, uint8_t dst, uint8_t row) {
     }
     cbm_close(LFN_DST);
     cbm_close(LFN_SRC);
-    strcat(line, " - ok");
+    strcat(line, S_OK);
     ui_draw_row(row, line, COLOR_LIGHTGREEN, 0);
     return 0;
 }
@@ -103,25 +138,25 @@ void mod_diskcopy_run(void) {
     char line[44];
 
     chat_area_clear_screen();
-    ui_draw_row(2, "  Copy Client Disk", COLOR_WHITE, 0);
-    strcpy(line, "  Source: drive ??  (this boot disk)");
+    ui_draw_row(2, S_TITLE, COLOR_WHITE, 0);
+    strcpy(line, S_SRC);
     line[16] = '0' + boot_device / 10;
     line[17] = '0' + boot_device % 10;
     if (line[16] == '0') line[16] = ' ';
     ui_draw_row(4, line, COLOR_CYAN, 0);
-    ui_draw_row(6, "  Target drive (8 or 9)?  stop cancels", COLOR_CYAN, 0);
-    ui_status("Pick the target drive.");
+    ui_draw_row(6, S_ASK, COLOR_CYAN, 0);
+    ui_status(S_PICK);
 
     for (;;) {
         k = cgetc();
         if (k == DK_STOP) {
-            ui_status("Copy cancelled.");
+            ui_status(S_CANC);
             return;
         }
         if (k == '8' || k == '9') {
             dst = k - '0';
             if (dst == boot_device) {
-                ui_status("That IS the source drive - pick the other.");
+                ui_status(S_SAMEDRV);
                 continue;
             }
             break;
@@ -130,7 +165,7 @@ void mod_diskcopy_run(void) {
 
     /* $B000 becomes the copy buffer: silence any streamed tune */
     music_ext_stop();
-    ui_status("Copying... (drive lights will blink)");
+    ui_status(S_COPYING);
 
     for (i = 0; i < DK_NFILES; ++i) {
         k = copy_one(dk_files[i], dst, 8 + i);
@@ -139,17 +174,19 @@ void mod_diskcopy_run(void) {
     }
 
     if (failed) {
-        strcpy(line, "Copy finished with errors - check target disk.");
+        strcpy(line, S_ERRS);
     } else {
-        strcpy(line, "Copy complete - ? file(s) written.");
+        strcpy(line, S_DONE);
         line[16] = '0' + copied;
     }
-    ui_draw_row(14, "  any key returns to chat", COLOR_GRAY2, 0);
+    ui_draw_row(14, S_ANYKEY, COLOR_GRAY2, 0);
     ui_status(line);
     while (!kbhit());
     cgetc();
 }
 
+#pragma bss-name (pop)
+#pragma rodata-name (pop)
 #pragma code-name (pop)
 
 #endif /* SOFT80 */

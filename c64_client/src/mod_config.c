@@ -23,6 +23,24 @@
 void mod_config_run(void);
 
 #pragma code-name (push, "OVERLAY1")
+#pragma rodata-name (push, "OVERLAY1")
+/* Slot RAM past the loaded code: zero resident bytes, zero file bytes,
+   and NOT zero-initialized - mod_config_run stores before reading. */
+#pragma bss-name (push, "OVL1BSS")
+
+/* Named, not anonymous: cc65 emits anonymous literals into "RODATA"
+   whatever the pragma says, and they were sitting resident. */
+static const char S_PORT[] = "  Port: ";
+static const char S_HOST[] = "  Host: ";
+static const char S_TITLE[] = "  Server Config";
+static const char S_H1[] = "  return: next field / save";
+static const char S_H2[] = "  stop:   keep current, no save";
+static const char S_H3[] = "  (c64llm.cfg on drive 8)";
+static const char S_EDIT[] = "Edit the proxy address.";
+static const char S_UNCHANGED[] = "Config unchanged.";
+static const char S_EMPTY[] = "Empty field - config unchanged.";
+static const char S_SAVED[] = "Config saved.";
+static const char S_SAVEFAIL[] = "Save failed - drive 8 present?";
 
 #define FLD_HOST 0
 #define FLD_PORT 1
@@ -36,7 +54,7 @@ static void field_draw(uint8_t idx) {
     char line[CFG_HOST_MAX + 10];
     uint8_t n = 0;
     uint8_t i;
-    const char* lab = idx ? "  Port: " : "  Host: ";
+    const char* lab = idx ? S_PORT : S_HOST;
 
     for (i = 0; lab[i]; ++i) line[n++] = lab[i];
     for (i = 0; i < flen[idx]; ++i) line[n++] = fld[idx][i];
@@ -53,10 +71,10 @@ void mod_config_run(void) {
     uint8_t k;
 
     chat_area_clear_screen();
-    ui_draw_row(2,  "  Server Config", COLOR_WHITE, 0);
-    ui_draw_row(8,  "  return: next field / save", COLOR_GRAY2, 0);
-    ui_draw_row(9,  "  stop:   keep current, no save", COLOR_GRAY2, 0);
-    ui_draw_row(11, "  (c64llm.cfg on drive 8)", COLOR_GRAY2, 0);
+    ui_draw_row(2,  S_TITLE, COLOR_WHITE, 0);
+    ui_draw_row(8,  S_H1, COLOR_GRAY2, 0);
+    ui_draw_row(9,  S_H2, COLOR_GRAY2, 0);
+    ui_draw_row(11, S_H3, COLOR_GRAY2, 0);
 
     strcpy(fld[FLD_HOST], g_host);
     strcpy(fld[FLD_PORT], g_port);
@@ -65,12 +83,12 @@ void mod_config_run(void) {
     fsel = FLD_HOST;
     field_draw(FLD_HOST);
     field_draw(FLD_PORT);
-    ui_status("Edit the proxy address.");
+    ui_status(S_EDIT);
 
     for (;;) {
         k = cgetc();
         if (k == MODKEY_STOP) {
-            ui_status("Config unchanged.");
+            ui_status(S_UNCHANGED);
             return;
         }
         if (k == KEY_RETURN) {
@@ -103,16 +121,18 @@ void mod_config_run(void) {
     fld[FLD_HOST][flen[FLD_HOST]] = 0;
     fld[FLD_PORT][flen[FLD_PORT]] = 0;
     if (!flen[FLD_HOST] || !flen[FLD_PORT]) {
-        ui_status("Empty field - config unchanged.");
+        ui_status(S_EMPTY);
         return;
     }
     strcpy(g_host, fld[FLD_HOST]);
     strcpy(g_port, fld[FLD_PORT]);
     ui_status(config_save()
-              ? "Config saved."
-              : "Save failed - drive 8 present?");
+              ? S_SAVED
+              : S_SAVEFAIL);
 }
 
+#pragma bss-name (pop)
+#pragma rodata-name (pop)
 #pragma code-name (pop)
 
 #endif /* SOFT80 */

@@ -124,6 +124,7 @@ uint8_t editor_key(uint8_t key) {
 
     switch (key) {
         case KEY_DEL:
+        case KEY_INST:   /* SHIFT+DEL, and the only DEL under shift lock */
             if (cur > 0) {
                 memmove(buf + cur - 1, buf + cur, len - cur);
                 --cur;

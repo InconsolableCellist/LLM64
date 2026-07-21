@@ -537,11 +537,17 @@ static uint8_t mod_open(const char* name, void (*run)(void)) {
     uint8_t ok;
     diag_note_mod(name[7]);   /* "c64llm.N" -> N */
     diag_crumb(DC_MODLOAD);
-    music_hold_begin();
+    /* The tune plays THROUGH the load, deliberately. Holding it was
+       added as IEC-timing hardening, but the crash it was meant to
+       guard turned out to be something else entirely - the post-mortem
+       trail showed no MODLOAD anywhere near it - and a second of silence
+       every time F1 is pressed is a real cost for a theoretical risk.
+       music_hold_begin/end still exist in music.s: if module loads start
+       coming back corrupt (garbage in the slot, a jump into nothing),
+       bracket the LOAD with them again and the question is answered. */
     serial_rx_pause();
     ok = module_load(name);
     serial_rx_resume();
-    music_hold_end();
     diag_crumb(DC_MODLOADED);
     if (ok) run();
     else ui_status("Module load failed - boot disk?");

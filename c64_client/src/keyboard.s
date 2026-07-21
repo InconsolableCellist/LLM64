@@ -276,6 +276,8 @@ is_repeatable:
         lda rpt_char
         cmp #$14                ; DEL
         beq @yes
+        cmp #$94                ; SHIFT+DEL (INST) - also a backspace
+        beq @yes
         cmp #$20                ; space
         beq @yes
         cmp #$11                ; cursor down

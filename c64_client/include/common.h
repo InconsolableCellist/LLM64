@@ -153,6 +153,12 @@ typedef enum {
 /* Control keys */
 #define KEY_RETURN      13
 #define KEY_DEL         20
+/* SHIFT+DEL is INSERT ($94) on a C64, not delete. This editor has no
+   insert mode - it always inserts at the cursor - so the key is free,
+   and treating it as another backspace matters: with SHIFT LOCK down
+   the plain DEL is unreachable, so shifted was the ONLY delete
+   available and it did nothing. */
+#define KEY_INST        148
 #define KEY_HOME        19
 #define KEY_CLR         147
 #define CTRL_A          1
