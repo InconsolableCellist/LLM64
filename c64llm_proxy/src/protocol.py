@@ -29,6 +29,7 @@ class MessageType(IntEnum):
     SET_MODEL = 0x38  # '8'
     DELETE_CONVERSATION = 0x39  # '9' - id(4); ACK/NAK
     STAR_CONVERSATION = 0x3A  # ':' - id(4); toggles starred, ACK/NAK
+    GET_MENU = 0x3B  # ';' - request the server-fed menu
     ACK = 0x40  # '@' - was 0x10
     NAK = 0x41  # 'A' - was 0x11
 
@@ -47,6 +48,8 @@ class MessageType(IntEnum):
     IMG_DATA = 0x5B  # '[' - image bytes (8000 bitmap + 1000 matrix)
     IMG_END = 0x5C  # '\' - image complete
     HINT = 0x5D  # ']' - persistent status flags (bit0: pic suggestion)
+    MENU_LIST = 0x5E  # '^' - menu entries: [n][more] then
+    #                   [key][label\0][cmd\0] each; cmd "!x" = client-local
 
 
 # Common Unicode punctuation -> ASCII approximations, applied before the
@@ -228,6 +231,8 @@ class ProtocolHandler:
                 await self.handle_delete_conversation()
             elif msg_type == MessageType.STAR_CONVERSATION:
                 await self.handle_star_conversation()
+            elif msg_type == MessageType.GET_MENU:
+                await self.handle_get_menu()
             elif msg_type == MessageType.ACK:
                 self.logger.debug("ACK received")
                 if self._begin_ack is not None \
@@ -1559,6 +1564,62 @@ class ProtocolHandler:
             payload[0] = count
 
             await self._send_bulk(MessageType.CONVERSATION_LIST, bytes(payload))
+
+    def _menu_entries(self):
+        """The F1 menu, mode-aware. (key, label, command) triples;
+        commands starting with '!' run CLIENT-side (config editor,
+        disk copy, ...) - the server still owns their labels, so the
+        menu has exactly one source of truth. New slash commands
+        added here appear on the C64 with zero client bytes."""
+        mode = self.mode.name
+        entries = [
+            ('n', 'New conversation', '!n'),
+            ('c', 'Conversations...', '!c'),
+        ]
+        if mode == 'claude':
+            entries.append(('q', 'Leave code mode', '/chat'))
+        elif mode in ('adventure', 'roleplay'):
+            entries += [
+                ('p', 'Picture of this scene', '/pic'),
+                ('v', 'Past pictures', '/pics'),
+                ('t', 'Save checkpoint', '/save'),
+                ('q', 'Back to chat mode', '/chat'),
+                ('m', 'Models', '/models'),
+            ]
+        else:
+            entries += [
+                ('a', 'Adventure mode', '/adventure'),
+                ('r', 'Roleplay characters', '/chars'),
+                ('m', 'Models', '/models'),
+            ]
+        entries += [
+            ('s', 'Music: next / stop', '!s'),
+            ('x', 'Cancel reply', '!x'),
+            ('e', 'Server config', '!e'),
+            ('d', 'Copy client disk', '!d'),
+            ('h', 'Help', '/help'),
+        ]
+        return entries[:12]  # the client panel caps at MAX_MENU
+
+    async def handle_get_menu(self):
+        """Send the server-fed menu: [count][more] then
+        [key][label\\0][cmd\\0] per entry, single frame."""
+        payload = bytearray([0, 0])
+        count = 0
+        for key, label, cmd in self._menu_entries():
+            rec = bytearray()
+            rec.append(ord(key))
+            rec.extend(label[:26].encode('ascii', errors='replace'))
+            rec.append(0)
+            rec.extend(cmd[:10].encode('ascii', errors='replace'))
+            rec.append(0)
+            if len(payload) + len(rec) > 500:  # client MAX_PAYLOAD 512
+                self.logger.warning("Menu truncated at %d entries", count)
+                break
+            payload.extend(rec)
+            count += 1
+        payload[0] = count
+        await self._send_bulk(MessageType.MENU_LIST, bytes(payload))
 
     async def handle_delete_conversation(self):
         """Delete a conversation (id in payload). The manager module

@@ -43,4 +43,26 @@ void conv_list_frame(void);
    the watchdog); the stream is handled by the resident dispatcher */
 void load_conversation_by_id(uint32_t id);
 
+/* --- server-fed menu (module #4) ------------------------------------ */
+
+/* Menu entries reuse the convs[] storage byte-for-byte: the menu and
+   the conversation manager are alternatives in the same overlay slot,
+   so their list state can never coexist. key/label are raw ASCII off
+   the wire (ASCII is the soft-80 cell encoding); cmd is converted to
+   PETSCII on receipt so it can be sent like typed text. */
+typedef struct {
+    uint8_t key;     /* ASCII hotkey */
+    char label[29];
+    char cmd[11];    /* PETSCII; "!x" = local action x */
+} MenuEntry;
+#define menu_entries ((MenuEntry*)(void*)convs)
+#define MAX_MENU 12
+
+/* Set by the menu module before mod_modal_end(); the RESIDENT loop
+   dispatches after the key hook returns. A local action may load
+   another module into the slot - the menu's own code must already be
+   off the call stack by then. */
+extern uint8_t menu_action;      /* local action letter, 0 = none */
+extern const char* menu_pcmd;    /* proxy command to send, 0 = none */
+
 #endif /* MODAPI_H */

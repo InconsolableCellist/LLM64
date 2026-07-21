@@ -57,12 +57,16 @@ whole stack is verified end-to-end by automated tests running in VICE.
   paging, `/find` search, `/findall` cross-conversation search,
   `/save`//`/restore` checkpoints
 - **Disk-loaded overlay modules**: sub-applications live on the boot
-  disk (device 8) as cc65 overlay files and load on demand into a
-  fixed RAM slot below the C stack — modal UIs without growing the
-  resident client. First module: a config editor that un-bakes the
-  proxy address into `c64llm.cfg` on disk (runs at boot when no config
-  exists, or from the F1 menu). JiffyDOS (or any fastloader) strongly
-  recommended — stock KERNAL loads work but crawl
+  disk as cc65 overlay files and load on demand into a fixed RAM slot
+  below the C stack — modal UIs without growing the resident client.
+  Modules so far: a config editor that un-bakes the proxy address into
+  `c64llm.cfg` on disk (runs at boot when no config exists), the
+  conversation manager, a disk copier that replicates the distribution
+  onto another drive, and the F1 menu itself — a floating retro dialog
+  whose entries are **server-fed** (label + command pairs from the
+  proxy, mode-aware), so the menu and `/help` share one source of
+  truth and new commands need no client rebuild. JiffyDOS (or any
+  fastloader) strongly recommended — stock KERNAL loads work but crawl
 - **Automated end-to-end tests in VICE**: `make test-all` boots mock
   LLM → proxy → emulated C64 and asserts on actual screen contents and
   memory (70+ asserts, including image bitmap bytes and SID play
@@ -94,13 +98,13 @@ make deploy-c64u-disk-80   # build, make the d64, mount + run on the U64
 
 Everything ships as one disk image: `make -C c64_client disk` produces
 `build/c64llm.d64` holding the client (`LOAD"*",8,1` boots it) and the
-overlay module. Mount it on the Ultimate's 1541 (JiffyDOS fastload
+overlay modules. Mount it on the Ultimate's 1541 (JiffyDOS fastload
 applies) — or write it to a real floppy. On first boot the config
 editor asks for the proxy address and saves `c64llm.cfg` back onto the
 disk itself; from then on the disk carries its own settings (edit any
 time via F1 → E). The baked `SERVER_IP` is only the pre-filled default.
 
-Note: the overlay module is linked against its exact PRG — the two
+Note: the overlay modules are linked against their exact PRG — they
 always travel together on the disk, never mix builds.
 
 Checklist: [docs/05-ultimate-setup.md](docs/05-ultimate-setup.md)
@@ -114,7 +118,7 @@ re-evaluated on ACIA command writes and the wrong settings drop data.
 | Key | Action |
 |-----|--------|
 | Return | Send message |
-| F1 | Menu (models, modes, music toggle, server config) |
+| F1 | Menu — server-fed panel, hotkeys or cursor+Return |
 | F2 / F3 | New conversation / cancel reply |
 | F4 / F6 | Page chat up / down |
 | F5 | Conversation manager (load, star, delete, pages) |

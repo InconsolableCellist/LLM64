@@ -261,7 +261,7 @@ def main():
             d64_path = artifacts / 'modules.d64'
             cmd = ['c1541', '-format', 'c64llm,01', 'd64', str(d64_path),
                    '-write', str(mod1), 'c64llm.1']
-            for ext in ('2', '3'):
+            for ext in ('2', '3', '4'):
                 mod = Path(f'{args.prg}.{ext}')
                 if mod.exists():
                     cmd += ['-write', str(mod), f'c64llm.{ext}']
@@ -637,38 +637,58 @@ def main():
                 wait_ready(monitor, args.timeout, artifacts,
                            f'{tag}-longinput-done')
 
-                # Music toggle. In cols80 a streamed SID is still playing
-                # from the music tests: S first stops it, then cycles the
+                # cols80: F1 now loads the server-fed menu module (#4)
+                # from disk and its entries arrive from the proxy -
+                # wait for a common-tail entry before feeding a hotkey
+                # (keys are silently ignored until the list lands), and
+                # assert the panel chrome once per open
+                def open_f1_menu(shot):
+                    monitor.keyboard_feed_petscii(b'\x85')
+                    scr = wait_for_screen(monitor, r'copy client disk', 20,
+                                          artifacts, shot)
+                    if 'c64 llm menu' not in scr.lower():
+                        raise AssertionError('menu panel title missing')
+                    return scr
+
+                # Music toggle via the F1 menu ('s' = local action).
+                # In cols80 a streamed SID is still playing from the
+                # music tests: S first stops it, then cycles the
                 # pattern tunes off->tune1->tune2->off as always
-                monitor.keyboard_feed_petscii(b'\x85')
                 if args.cols80:
-                    wait_for_screen(monitor, r'S  music: streamed', 15,
-                                    artifacts, f'{tag}-menu-music')
+                    open_f1_menu(f'{tag}-menu-music')
                     monitor.keyboard_feed('s')
                     wait_for_screen(monitor, r'music off', 15,
                                     artifacts, f'{tag}-music-ext-stop')
-                    monitor.keyboard_feed_petscii(b'\x85')
-                    wait_for_screen(monitor, r'S  music \(off\)', 15,
-                                    artifacts, f'{tag}-menu-music-off')
+                    open_f1_menu(f'{tag}-menu-music-off')
                 else:
+                    monitor.keyboard_feed_petscii(b'\x85')
                     wait_for_screen(monitor, r'S  music \(off\)', 15,
                                     artifacts, f'{tag}-menu-music')
                 monitor.keyboard_feed('s')
                 wait_for_screen(monitor, r'music: dungeon depths', 15,
                                 artifacts, f'{tag}-music-on')
-                monitor.keyboard_feed_petscii(b'\x85')
+                if args.cols80:
+                    open_f1_menu(f'{tag}-menu-music-2')
+                else:
+                    monitor.keyboard_feed_petscii(b'\x85')
                 monitor.keyboard_feed('s')
                 wait_for_screen(monitor, r'music: northward road', 15,
                                 artifacts, f'{tag}-music-2')
-                monitor.keyboard_feed_petscii(b'\x85')
+                if args.cols80:
+                    open_f1_menu(f'{tag}-menu-music-3')
+                else:
+                    monitor.keyboard_feed_petscii(b'\x85')
                 monitor.keyboard_feed('s')
                 wait_for_screen(monitor, r'music off', 15,
                                 artifacts, f'{tag}-music-off')
 
                 # F1 menu -> M lists models (numbered); /model 2 picks
-                monitor.keyboard_feed_petscii(b'\x85')  # F1
-                wait_for_screen(monitor, r'models \(/model', 15,
-                                artifacts, f'{tag}-menu')
+                if args.cols80:
+                    open_f1_menu(f'{tag}-menu')
+                else:
+                    monitor.keyboard_feed_petscii(b'\x85')  # F1
+                    wait_for_screen(monitor, r'models \(/model', 15,
+                                    artifacts, f'{tag}-menu')
                 monitor.keyboard_feed('m')
                 wait_for_screen(monitor, r'2\. mock-large', 30,
                                 artifacts, f'{tag}-models')
@@ -701,8 +721,7 @@ def main():
                                     artifacts, f'{tag}-mod-saved')
                     print('  PASS: config editor saved to drive 8')
                     # Reopen: module reloads, fields show the live values
-                    monitor.keyboard_feed_petscii(b'\x85')
-                    time.sleep(1)
+                    open_f1_menu(f'{tag}-mod-remenu')
                     monitor.keyboard_feed('e')
                     wait_for_screen(monitor, r'port: 6502', 20,
                                     artifacts, f'{tag}-mod-reopen')
@@ -750,10 +769,9 @@ def main():
                 # distribution files onto the blank disk on unit 9;
                 # the target's contents are verified after VICE exits
                 if copy_target and args.cols80:
-                    monitor.keyboard_feed_petscii(b'\x85')  # F1
-                    time.sleep(1)
+                    open_f1_menu(f'{tag}-copy-menu')
                     monitor.keyboard_feed('d')
-                    wait_for_screen(monitor, r'copy client disk', 20,
+                    wait_for_screen(monitor, r'target drive \(8 or 9\)', 20,
                                     artifacts, f'{tag}-copy-open')
                     monitor.keyboard_feed('9')
                     wait_for_screen(monitor, r'copy complete', 120,
@@ -876,7 +894,7 @@ def main():
             out = subprocess.run(
                 ['c1541', str(copy_target), '-list'],
                 capture_output=True, text=True).stdout.lower()
-            for want in ('c64llm.1', 'c64llm.2', 'c64llm.3',
+            for want in ('c64llm.1', 'c64llm.2', 'c64llm.3', 'c64llm.4',
                          'c64llm.cfg'):
                 if want not in out:
                     raise AssertionError(

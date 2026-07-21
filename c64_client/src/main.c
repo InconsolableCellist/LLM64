@@ -25,11 +25,14 @@
 #include "modapi.h"
 
 #ifdef SOFT80
-/* Overlay module entries (#1 config, #2 conversation manager,
-   #3 disk copy) */
+/* Overlay module entries: 1 config, 2 conversation manager,
+   3 disk copy, 4 server-fed menu. (No '#N' at a comment line start
+   here: cc65 2.17 parses it as a directive when SOFT80 is undefined
+   and this block is skipped - broke the 40col build once.) */
 void mod_config_run(void);
 void mod_convmgr_run(void);
 void mod_diskcopy_run(void);
+void mod_menu_run(void);
 #endif
 
 /* music.s */
@@ -249,6 +252,12 @@ void mod_modal_end(void) {
 }
 #endif
 
+/* Deferred menu activation (modapi.h): the menu module fills these
+   and closes; handle_key dispatches once the hook has returned, so a
+   local action can safely load another module over the menu's slot */
+uint8_t menu_action;
+const char* menu_pcmd;
+
 /* Model browser */
 
 /* ------------------------------------------------------------------ */
@@ -363,6 +372,17 @@ static uint8_t modem_connect(void) {
 static void menu_open(void) {
     modal = MODAL_MENU;
     chat_area_clear_screen();
+#ifdef SOFT80
+    /* Compact fallback only: F1's real UI is the server-fed menu
+       module. Shown when the boot disk is missing or mid-stream
+       (where X = cancel must stay reachable); hotkeys work as ever. */
+    ui_draw_row(2, "  Menu", COLOR_WHITE, 0);
+    ui_draw_row(4, "  n)ew  c)onvs  a)dventure  r)oles  m)odels",
+                COLOR_CYAN, 0);
+    ui_draw_row(5, "  s)ound  x)cancel  e)config  d)iskcopy  h)elp",
+                COLOR_CYAN, 0);
+    ui_draw_row(7, "  f1 or stop: close", COLOR_GRAY2, 0);
+#else
     ui_draw_row(2,  "  Menu", COLOR_WHITE, 0);
     ui_draw_row(4,  "  N  new conversation", COLOR_CYAN, 0);
     ui_draw_row(5,  "  M  models (/model <n> picks)", COLOR_CYAN, 0);
@@ -380,10 +400,8 @@ static void menu_open(void) {
     } else {
         ui_draw_row(11, "  S  music: streamed (s stops)", COLOR_CYAN, 0);
     }
-#ifdef SOFT80
-    ui_draw_row(12, "  E  server config   D  copy client disk", COLOR_CYAN, 0);
-#endif
     ui_draw_row(13, "  F1 or stop: close", COLOR_GRAY2, 0);
+#endif
 }
 
 /* Model browser removed: /models lists (numbered), /model <n> or a
@@ -486,17 +504,28 @@ static void conv_load_selected(void) {
 #endif /* !SOFT80 */
 
 #ifdef SOFT80
-/* Open the conversation manager module (F5 / menu C) */
-static void convmgr_open(void) {
+/* Load an overlay module and run it. RX is masked around the disk
+   LOAD (JiffyDOS IEC timing vs serial NMIs) and resumed BEFORE the
+   module runs - hook-modal modules request + render immediately. */
+static uint8_t mod_open(const char* name, void (*run)(void)) {
     uint8_t ok;
     serial_rx_pause();
-    ok = module_load("c64llm.2");
-    serial_rx_resume();  /* BEFORE the module runs: it requests+renders */
-    if (ok) {
-        mod_convmgr_run();
-    } else {
-        ui_status("Module load failed - drive 8?");
-    }
+    ok = module_load(name);
+    serial_rx_resume();
+    if (ok) run();
+    else ui_status("Module load failed - boot disk?");
+    return ok;
+}
+
+/* Open the conversation manager module (F5 / menu C) */
+static void convmgr_open(void) {
+    mod_open("c64llm.2", mod_convmgr_run);
+}
+
+/* Open the server-fed menu module (F1). Falls back to the resident
+   text menu if the boot disk is missing. */
+static void menu_module_open(void) {
+    if (!mod_open("c64llm.4", mod_menu_run)) menu_open();
 }
 #endif
 
@@ -927,6 +956,61 @@ static void cancel_stream(void) {
     ui_status("Cancelling...");
 }
 
+/* --- local menu actions ----------------------------------------------
+   Shared by the resident F1 menu and the menu module's '!' commands. */
+
+static void music_toggle(void) {
+    music_next();
+    if (music_state == 0) {
+        ui_status("Music off.");
+    } else if (music_state == 1) {
+        ui_status("Music: Dungeon Depths");
+    } else if (music_state == 2) {
+        ui_status("Music: Northward Road");
+    } else {
+        ui_status("Music: streamed tune");
+    }
+}
+
+#ifdef SOFT80
+static void config_open(void) {
+    if (mod_open("c64llm.1", mod_config_run)) {
+        build_dial_string();  /* used on next boot/redial */
+    }
+    chat_redraw();
+}
+
+static void diskcopy_open(void) {
+    /* Disk copy: RX stays paused for the WHOLE run - the copy is one
+       long IEC conversation and serial NMIs would corrupt it (proxy
+       is idle; nothing arrives) */
+    serial_rx_pause();
+    if (module_load("c64llm.3")) {
+        mod_diskcopy_run();
+        serial_rx_resume();
+        ui_status("Ready.");
+    } else {
+        serial_rx_resume();
+        ui_status("Module load failed - boot disk?");
+    }
+    chat_redraw();
+}
+#endif
+
+static void menu_local(uint8_t a) {
+    switch (a) {
+        case 'n': new_conversation(); break;
+        case 'x': cancel_stream(); break;
+        case 's': music_toggle(); break;
+#ifdef SOFT80
+        case 'c': if (state == ST_IDLE) convmgr_open(); break;
+        case 'e': config_open(); break;
+        case 'd': diskcopy_open(); break;
+#endif
+        default: break;
+    }
+}
+
 /* --- key handling ----------------------------------------------------- */
 
 static void handle_key(uint8_t k) {
@@ -938,6 +1022,18 @@ static void handle_key(uint8_t k) {
     }
     if (modal == MODAL_MODULE) {
         if (mod_key_hook) mod_key_hook(k);
+        /* Deferred menu activation, dispatched only now that the
+           module's code is off the call stack (a local action may
+           load a different module into the slot) */
+        if (menu_action) {
+            uint8_t a = menu_action;
+            menu_action = 0;
+            menu_local(a);
+        } else if (menu_pcmd) {
+            const char* c = menu_pcmd;
+            menu_pcmd = 0;
+            send_command(c);
+        }
         return;
     }
 #endif
@@ -945,60 +1041,19 @@ static void handle_key(uint8_t k) {
         modal = MODAL_NONE;
         chat_redraw();
         switch (k) {
-            case 'n': new_conversation(); break;
-            case 'm': send_command("/models"); break;
+            case 'n': case 'x': case 's':
 #ifdef SOFT80
-            case 'c': if (state == ST_IDLE) convmgr_open(); break;
-#else
+            case 'c': case 'e': case 'd':
+#endif
+                menu_local(k);
+                break;
+#ifndef SOFT80
             case 'c': if (state == ST_IDLE) conv_open(); break;
 #endif
+            case 'm': send_command("/models"); break;
             case 'a': send_command("/adventure"); break;
             case 'r': send_command("/chars"); break;
-            case 'x': cancel_stream(); break;
-            case 's':
-                music_next();
-                if (music_state == 0) {
-                    ui_status("Music off.");
-                } else if (music_state == 1) {
-                    ui_status("Music: Dungeon Depths");
-                } else if (music_state == 2) {
-                    ui_status("Music: Northward Road");
-                } else {
-                    ui_status("Music: streamed tune");
-                }
-                break;
             case 'h': send_command("/help"); break;
-#ifdef SOFT80
-            case 'e':
-                /* Overlay module: mask serial RX around the disk LOAD
-                   (JiffyDOS IEC timing), resume immediately after */
-                serial_rx_pause();
-                if (module_load("c64llm.1")) {
-                    serial_rx_resume();
-                    mod_config_run();
-                    build_dial_string();  /* used on next boot/redial */
-                } else {
-                    serial_rx_resume();
-                    ui_status("Module load failed - boot drive?");
-                }
-                chat_redraw();
-                break;
-            case 'd':
-                /* Disk copy: RX stays paused for the WHOLE run - the
-                   copy is one long IEC conversation and serial NMIs
-                   would corrupt it (proxy is idle; nothing arrives) */
-                serial_rx_pause();
-                if (module_load("c64llm.3")) {
-                    mod_diskcopy_run();
-                    serial_rx_resume();
-                    ui_status("Ready.");
-                } else {
-                    serial_rx_resume();
-                    ui_status("Module load failed - boot drive?");
-                }
-                chat_redraw();
-                break;
-#endif
             default: break;  /* F1/STOP/anything else: just close */
         }
         return;
@@ -1030,7 +1085,14 @@ static void handle_key(uint8_t k) {
             send_message();
             break;
         case 133: /* F1 */
+#ifdef SOFT80
+            /* Server-fed menu module; non-idle falls back to the
+               resident menu (it still offers X = cancel mid-stream) */
+            if (state == ST_IDLE) menu_module_open();
+            else menu_open();
+#else
             menu_open();
+#endif
             break;
         case KEY_F2:
             new_conversation();

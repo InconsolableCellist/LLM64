@@ -36,9 +36,10 @@ void mod_diskcopy_run(void);
 #define LFN_DST     5
 #define DK_STOP     3
 
-#define DK_NFILES 5
+#define DK_NFILES 6
 static const char* const dk_files[DK_NFILES] = {
-    "c64llm", "c64llm.1", "c64llm.2", "c64llm.3", "c64llm.cfg"
+    "c64llm", "c64llm.1", "c64llm.2", "c64llm.3", "c64llm.4",
+    "c64llm.cfg"
 };
 
 /* 0 = copied, 1 = failed, 2 = not on source (skipped) */
