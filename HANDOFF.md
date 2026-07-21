@@ -26,7 +26,8 @@ VICE-based e2e test suite.
 - **Proxy runs on mlboy** (`ssh mlboy`, `~/c64llm_proxy`). Managed by cron
   (@reboot + per-minute idempotent `start-proxy.sh` watchdog), NOT systemd.
   Manual restart: `ssh mlboy "pkill -f 'src.main --host'"` then
-  `ssh mlboy "cd c64llm_proxy && ./start-proxy.sh"`.
+  `ssh mlboy "cd c64llm_proxy && ./start-proxy.sh"` — as TWO separate
+  invocations; combining them in one `ssh` exits 1 and never starts it.
   Deploy = `rsync -a --delete c64llm_proxy/src/ mlboy:c64llm_proxy/src/` + restart.
 - **LLM endpoint**: `https://mlboy.tail99c274.ts.net:5000/v1` — TLS only,
   always this hostname even from mlboy itself. Resident model
@@ -60,9 +61,12 @@ VICE-based e2e test suite.
    `_send_bulk_stream`, never bare send loops): the C64U modem silently
    drops burst tails. Every client wait-for-frames state must be covered
    by the response watchdog.
-5. **Every multi-frame client receive path runs with streamed music
-   silenced** (`music_ext_stop`) — SID play routines' SEI windows blind
-   the ACIA. Music may play during *display*, not during *transfer*.
+5. **Every timing-critical transfer runs with the tune quiet** — SID
+   play routines' SEI windows blind the ACIA, and their cycle cost wrecks
+   IEC. Multi-frame *receives* use `music_ext_stop`; the disk LOAD in
+   `mod_open` uses `music_hold_begin/end`, which mutes the tick without
+   forgetting the song so it resumes mid-bar. Music may play during
+   *display*, never during *transfer*.
 6. **`serial_rx_pause()` must pair with `serial_rx_resume()` immediately
    after a KERNAL LOAD returns**, BEFORE module code runs. A reply arriving
    while RX is masked dies silently in the ACIA data register — no counter
@@ -77,7 +81,8 @@ VICE-based e2e test suite.
    growth all eat the module-slot headroom 1:1. After ANY resident change:
    `make -C c64_client clean && make -C c64_client MODE80=1` must link
    (default CONNECT=hayes), then check headroom (BSS end vs $9C00 in
-   `build/c64llm.map`). Currently ~305 bytes free.
+   `build/c64llm.map`). Currently ~277 bytes free (a `DIAG=1` build
+   spends ~170 more; that is expected and opt-in).
 10. **In c64_client/Makefile**, conditional `+=` blocks must come after
     base assignments, and new rules go AFTER `all:` (first rule = default
     target).
@@ -163,60 +168,87 @@ VICE-based e2e test suite.
   labels.txt (e.g. `_img_shown`, `_music_state`), not screen text.
 - VICE e2e flakes are almost always autostart-keystroke leftovers or
   warp-vs-wallclock timing, not protocol bugs.
+- `make test-emu-diag` = the tui-80 run against a `DIAG=1` client, then
+  reads the crash post-mortem block back out (breadcrumb trail + C-stack
+  high-water). Use it after touching serial/music/module-load paths.
 - Known failing combo (pre-existing, not a regression): hayes+tui+cols80
   SID `music_state` assert — tcpser real-time pacing at 9600; real HW is
   proven at 19200. Don't chase it as part of unrelated work.
 
-## OPEN BUG — top priority next session
+## OPEN BUG — crash to BASIC while typing (fix deployed, unconfirmed)
 
-**Crash to BASIC while typing** (reported 2026-07-21, build f694a27):
-adventure mode, a few turns in, streamed music playing, an illustration
-had recently been displayed and dismissed, user was typing in the editor —
-the machine dropped to the BASIC prompt. No unusual key combo.
+**Symptom** (reported 2026-07-21, build f694a27): adventure mode, a few
+turns in, streamed music playing, an illustration recently displayed and
+dismissed, user typing in the editor — machine dropped to the BASIC
+prompt. No unusual key combo.
 
-Leads, in rough priority:
-1. **C stack overflow**: stack is $AA00–$AFFF (1.5K). Editor + kb_scan +
-   serial NMI + CIA music tick + any deep chain could bottom out; overflow
-   walks DOWN into the module slot ($9C00–$A9FF) and, if a module was
-   loaded, through its code. A crash to BASIC = BRK/garbage jump fits.
-   Cheap diagnostic: write a canary (e.g. $A5) at $AA00–$AA0F at boot,
-   check it in the main loop, show a status alert if scribbled.
-2. **Image display/dismiss path**: multicolor display toggles VIC
-   $D016/$D021 and banks; `img_close()` restores. A rare interrupt during
-   the restore window, or a stale `ui_frozen`/redraw interaction with the
-   music NMI, could corrupt state. Re-audit img_close + the NMI handler's
-   assumptions (the banked-ROM + IRQ interaction is a known haunted area —
-   see the scroll-blit history).
-3. **Music play routine reentrancy**: the CLI + `in_music` guard in
-   serial.s's CIA tick is load-bearing; verify it still holds with the
-   current tick ordering and that the played tune wasn't writing outside
-   its relocation range (a rogue tune scribbling RAM would also explain it).
-   Ask the user WHICH tune/mood was playing if they remember.
-Repro attempt: VICE, adventure mode, start music, /pic, dismiss, then type
-continuously (hold keys) for a while; also try with the fixture SIDs.
-A stack canary + the diag counters is probably the fastest path to a signal.
+**Prime suspect, now fixed (3b089f6).** It probably *was* a keypress.
+F1/F2/F3/F5/F7 and the cursor keys are dispatched **unmodified straight
+from the typing path** (`handle_key`), and F1-when-idle and F5 both
+`cbm_load` an overlay module into $9C00 and then `jsr` into it.
+`mod_open()` masked the ACIA for that LOAD but let the 60Hz CIA tick keep
+calling the streamed SID's play routine straight through it — up to 1600
+cycles per frame stolen from cycle-counted IEC. Both *other*
+timing-critical transfers already silenced music first
+(`load_conversation_by_id`, `mod_diskcopy.c`); this path did not, and one
+stray F-key while a tune plays reaches it. Garbage in the slot → `jsr`
+into it → BASIC.
+
+Fixed with `music_hold_begin/end` (music.s): mutes the tick *without*
+clearing `music_state`, so the song resumes mid-bar. `music_ext_stop()`
+would have worked but costs the user their soundtrack on every F1 — a SID
+can only restart from bar one. Costs 30 bytes; headroom 307 → 277.
+
+**Leads now ruled out — do not re-chase:**
+- *C-stack overflow* (the original leading theory). Measured under a full
+  workload via `make test-emu-diag`: canary **completely intact**, peak
+  use under 512 of 1536 bytes, hardware stack 45 of 256.
+- *Raw IRQ/NMI vectors not saving Y*: `drain_sub`/`ring_write` are
+  deliberately index-register-free (`ring_write` uses self-modifying
+  absolute addressing). Correct by design.
+- *Banking*: cc65's crt0 does `lda $01 / and #$f8 / ora #$06 / sta $01`
+  → `$01 = $36`, BASIC out for the whole run, so the $B000 tune executes
+  legitimately. Only soft80's scroll touches `$01`.
+- *Rogue tune*: the tune was identified from conversation
+  `1784602831.json` — mood "mysterious",
+  `MUSICIANS/Z/Zabutom/One_Little_Wish_tune_2`, image shown at msg 1. Its
+  relocated image is $B000–$BC30 (inside the window) and it passed
+  `sid_reloc_batch` exit-0 (no OOB writes, ZP confined to fb-fe). Weak —
+  but note sidreloc verifies over a *bounded* simulation, so late-song
+  behaviour is not covered.
+
+**Still open:** `bank01` (soft80.s:61, at $9ACB) is a **single
+non-reentrant `$01` save slot**. Re-entering `_soft80_scroll_chat` would
+restore a stale bank byte. Not audited.
+
+**If it recurs**, the machine now keeps evidence. `DIAG=1` builds a
+16-byte post-mortem block at `$02A7` (page-2 RAM: outside the linked
+image, so it costs no headroom, and it survives a crash to BASIC).
+Breadcrumb ring + C-stack canary; read it with the BASIC program in
+`docs/07-crash-postmortem.md`. Deploy it with
+`make deploy-c64u-disk-80-diag`. Keystrokes deliberately get no
+breadcrumb — one per keypress flushes an 8-deep ring within a word.
+Caveat documented there: a *hard reset* clears $0200–$03FF via RAMTAS, so
+a magic byte that is not 198 after a crash is itself evidence the machine
+fully reset rather than fell into BASIC.
 
 ## Roadmap (in order)
 
-### 1. Menu quick-start entries (USER REQUEST, small, do first)
-The new-user flow "new conversation → type `/adventure` or
-`/char <name>`" is buried. Add F1 menu entries that do it in one step:
-- "Start an adventure" and "Talk to the AI assistant" entries in
-  `_menu_entries()` (chat mode at minimum; consider replacing the current
-  bare 'a' entry).
-- **The wire cmd field is ≤10 chars** — `/char ai assistant` does NOT fit.
-  Add short proxy commands, e.g. `/newadv` (new conversation + adventure
-  kickoff) and `/assist` (new conversation + roleplay with the shipped
-  assistant card). Implement them proxy-side as: finish/persist current
-  conversation, reset to a fresh one (reuse the NEW_CONVERSATION path
-  internals), then run the existing /adventure or /char logic.
-- Ship an "AI Assistant" card. NOTE: `cards/` is gitignored (user's
-  private cards) — either force-add the one default card or add a
-  `c64llm_proxy/data/default_cards/` directory the card loader also
-  searches. Keep the card simple: helpful retro-flavored assistant.
-- Zero client bytes needed; menu entries appear on the next F1. e2e:
-  extend the tui suite — open menu, hit the new key, assert new-conv +
-  mode switch (mock replies already cover adventure).
+### 1. Menu quick-start entries — DONE (50c888a, proxy deployed)
+`/newadv` turned out to be unnecessary: `_switch_mode()` already opens a
+fresh conversation, so `/adventure` (exactly the 10 chars the wire
+allows) was always one-step — it just read like a toggle. Relabelled
+"Start an adventure". `/assist` added for the assistant, since
+`/char Assistant` does not fit the 10-char field.
+
+The bundled card lives in **`c64llm_proxy/src/default_cards/`**, not the
+`data/default_cards/` originally suggested: `data/` is gitignored
+wholesale, and the deploy rsyncs `src/` only, so anything outside it
+never reaches the server. `_all_cards()` merges bundled + user cards with
+user cards shadowing bundled ones by name. Menu key is **`i`**, not `t` —
+`t` is already "Save checkpoint" in the adventure/roleplay menu, and a
+key that means different things per mode would eventually cost someone a
+conversation (this one starts a new one).
 
 ### 2. Sound window module (overlay #5)
 Song name, progress bar, volume (vol_byte), prev/next, favorite
