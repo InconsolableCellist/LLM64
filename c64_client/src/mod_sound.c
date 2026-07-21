@@ -63,6 +63,8 @@ static const char S_READY[] = "Ready.";
 static const char S_BY[]    = "by ";
 static const char S_FAV[]   = "*favorite*";
 static const char S_SIG[]   = "voice 3";
+static const char S_AUTO[]  = "auto";
+static const char S_MANUAL[]= "manual";
 static const char S_NEXT[]  = "/music ";   /* + mood, built at send time */
 
 /* Panel geometry, mirroring the menu module: all even so the 2-column
@@ -104,7 +106,7 @@ static char jb_mood[13];
 static char jb_cmd[21];       /* "/music <mood>" in PETSCII */
 static uint16_t jb_elapsed;   /* seconds, carried forward locally */
 static uint16_t jb_secs;      /* total, 0 = unknown */
-static uint8_t jb_flags;      /* bit0 playing, bit1 favorite */
+static uint8_t jb_flags;      /* bit0 playing, bit1 fav, bit2 manual */
 static uint8_t jb_loading;
 static uint8_t jb_tick;       /* sys_ticks low byte at the last second */
 static uint8_t jb_peak;       /* decaying signal-meter peak */
@@ -256,6 +258,20 @@ static void jb_draw_sig(void) {
     pn_line(R_SIG, MC_DIM);
 }
 
+/* Footer 2 carries who is choosing the music, right-aligned: the story
+   normally does, but a manual /music takes over until /auto. Worth a
+   permanent corner of the panel rather than a one-off message - it
+   explains why the soundtrack has stopped following the scene. */
+static void jb_draw_foot2(void) {
+    const char* mode = (jb_flags & 4) ? S_MANUAL : S_AUTO;
+    uint8_t n = 0;
+    while (mode[n]) ++n;
+    pn_fill();
+    pn_write(TX, S_FOOT2, 0);
+    pn_write(PN_W - 3 - n, mode, 0);
+    pn_line(R_FOOT2, MC_DIM);
+}
+
 /* Draws EVERY row, in order, on every path - the earlier version left
    PN_TOP+4 undrawn when nothing was playing, and that row showed the
    chat's black background straight through the panel. */
@@ -277,7 +293,7 @@ static void jb_draw(void) {
     jb_draw_sig();
     pn_blank(PN_TOP + 8);
     pn_text(R_FOOT1, S_FOOT1, MC_DIM);
-    pn_text(R_FOOT2, S_FOOT2, MC_DIM);
+    jb_draw_foot2();
     pn_bar_row(R_BOT, 0);
     pn_shadow(R_BOT + 1);
 }

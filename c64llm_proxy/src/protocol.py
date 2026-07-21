@@ -120,6 +120,11 @@ class ProtocolHandler:
 
         self._started = time.monotonic()
         self._tunes_sent = 0
+        # Music the user chose themselves: the LLM stops overriding it
+        # until /auto hands control back. The notice is sent once per
+        # manual stretch, not every time a directive is ignored.
+        self._music_manual = False
+        self._manual_notice_sent = False
         self._img_sent = False
         self._sid_retry = None
         self._claude = None          # ClaudeSession when in code mode
@@ -422,6 +427,7 @@ class ProtocolHandler:
                 "/assist - talk to the AI assistant\n"
                 "/models - list models, /model <name> - switch\n"
                 "/music <mood> - play a tune (/music for moods)\n"
+                "/auto - let the story choose the music again\n"
                 "/pic [desc|n] - illustrate scene / re-show pic n\n"
                 "/pics - list this conversation's pictures\n"
                 "/save [name] - checkpoint this conversation\n"
@@ -576,6 +582,8 @@ class ProtocolHandler:
             else:
                 tune = self.music.pick(arg.lower())
                 if tune:
+                    self._music_manual = True
+                    self._manual_notice_sent = False
                     await self._send_canned(
                         f"Playing: {tune['title']} ({tune['author']})")
                     self._spawn_media(self.send_sid(tune))
@@ -585,6 +593,16 @@ class ProtocolHandler:
                 else:
                     await self._send_canned(
                         f"No tune fits '{arg}'. /music lists moods.")
+
+        elif cmd == 'auto':
+            if self._music_manual:
+                self._music_manual = False
+                self._manual_notice_sent = False
+                await self._send_canned(
+                    "The story picks the music again.")
+            else:
+                await self._send_canned(
+                    "The story is already choosing the music.")
 
         elif cmd == 'models':
             try:
@@ -693,6 +711,9 @@ class ProtocolHandler:
 
     def _switch_mode(self, mode):
         self.mode = mode
+        # A fresh experience gets its soundtrack chosen for it again
+        self._music_manual = False
+        self._manual_notice_sent = False
         # A parked image suggestion belongs to the old conversation
         self.images.pending_prompt = None
         self.conv_manager.new_conversation()
@@ -1446,7 +1467,19 @@ class ProtocolHandler:
             # text is fully delivered (the client is idle again), unless a
             # change happened too recently
             if mfilter and mfilter.moods:
-                if self.music.rate_limited():
+                if self._music_manual:
+                    # Stay in the fiction rather than posting a mode
+                    # banner, and say it once - a reminder every turn
+                    # would be worse than the override it replaced.
+                    self.logger.info(
+                        f"Music directive ignored (manual): {mfilter.moods}")
+                    if not self._manual_notice_sent:
+                        self._manual_notice_sent = True
+                        await self._send_canned(
+                            "(The scene calls for different music, but "
+                            "you have chosen your own. /auto gives the "
+                            "soundtrack back to the story.)")
+                elif self.music.rate_limited():
                     self.logger.info(
                         f"Music directive rate-limited: {mfilter.moods}")
                 else:
@@ -1702,6 +1735,8 @@ class ProtocolHandler:
                 elapsed %= secs
             if self.music.is_favorite(tune['id']):
                 flags |= 2
+        if self._music_manual:
+            flags |= 4      # jukebox shows who is choosing
 
         def field(text, limit):
             return text[:limit].encode('ascii', errors='replace') + b'\x00'
@@ -1888,5 +1923,7 @@ class ProtocolHandler:
         self.logger.info("New conversation request")
         self._cancel_stream()
         self.images.pending_prompt = None
+        self._music_manual = False
+        self._manual_notice_sent = False
         self.conv_manager.new_conversation()
         await self.send_ack()

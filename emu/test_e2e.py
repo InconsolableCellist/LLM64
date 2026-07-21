@@ -414,6 +414,23 @@ def main():
                         raise AssertionError('play vector is not Pac-Man')
                     print('  PASS: /music transfer + play')
 
+                    # /music is a MANUAL choice, so the LLM's directive
+                    # must be declined - once, in the narrator's voice -
+                    # until /auto hands the soundtrack back.
+                    monitor.keyboard_feed('musictest\r')
+                    wait_for_screen(monitor, r'you have chosen your own', 60,
+                                    artifacts, f'{tag}-manual-decline')
+                    wait_ready(monitor, 30, artifacts, f'{tag}-manual-done')
+                    if music_word('_music_ext_play_addr') != 0xB07A:
+                        raise AssertionError(
+                            'declined directive still switched the tune')
+                    print('  PASS: manual music declines LLM directives')
+
+                    monitor.keyboard_feed('/auto\r')
+                    wait_for_screen(monitor, r'story picks the music again',
+                                    20, artifacts, f'{tag}-auto-restore')
+                    wait_ready(monitor, 20, artifacts, f'{tag}-auto-ready')
+
                     # LLM music directive: mock replies with
                     # [[MUSIC: festive]] which must be stripped from the
                     # visible text and switch the tune to Astro Chase
@@ -902,7 +919,12 @@ def main():
                         if not re.search(want, scr, re.IGNORECASE):
                             raise AssertionError(
                                 f'jukebox panel missing /{want}/:\n{scr}')
-                    print('  PASS: jukebox panel shows title + progress')
+                    # /music was manual, so the panel says who is
+                    # choosing - and the LLM must stop overriding it.
+                    if 'manual' not in scr.lower():
+                        raise AssertionError(
+                            f'jukebox should show manual mode:\n{scr}')
+                    print('  PASS: jukebox shows manual music mode')
                     monitor.keyboard_feed_petscii(b'\x85')   # F1 closes
                     wait_ready(monitor, 15, artifacts, f'{tag}-jb-closed')
 

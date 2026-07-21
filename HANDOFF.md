@@ -390,6 +390,100 @@ line, see CHUNK_PACE_* in protocol.py), so doubling the baud does
 nothing for how fast a reply appears - it speeds up pictures, tunes and
 conversation loads.
 
+### 3b. Music: manual vs automatic — DONE (proxy + client)
+`/music <mood>` now marks the soundtrack as the player's. The LLM's
+`[[MUSIC:]]` directives are then declined, and said so ONCE per manual
+stretch in the narrator's voice - "the scene calls for different music,
+but you have chosen your own. /auto gives the soundtrack back to the
+story." A reminder every turn would be worse than the override it
+replaced. `/auto` restores it; a new conversation or mode switch resets
+to automatic. NOWPLAYING flag bit2 carries the mode and the jukebox
+shows `auto`/`manual` in its footer.
+
+Note this deliberately changed an existing e2e expectation: the music
+test used to do `/music` then rely on the LLM overriding it, which is
+exactly what this prevents. It now asserts the decline, then `/auto`,
+then the override.
+
+### 3c. Player macros: [roll:1d20] (USER REQUEST)
+Expand dice in the user's own text before it reaches the LLM: `NdX`,
+substituted as something like `[you rolled 1d20: 14]` so the player AND
+the model both see the result. Runs in the opposite direction to the
+[[MUSIC:]]/[[IMAGE:]] filter but wants the same machinery. NOTE: that
+filter now also accepts SINGLE brackets for MUSIC/IMAGE, so pick the
+macro syntax with the collision in mind.
+
+### 3c2. Picture count in the chrome (USER REQUEST, small)
+Show how many illustrations this conversation has, up top or in the
+status bar - "almost like a high score", and a standing nudge toward
+/pics. Likely cheap: MSG_HINT 0x5D and ui_set_hints()/draw_hints()
+already exist for the '!P' pic-ready indicator in the status row's last
+cells, and the proxy already tracks meta['images']. Mostly a question of
+where it looks good and how few bytes the client side costs.
+
+### 3c3. Adventure ideas (USER, 2026-07-21 - design work, not yet scoped)
+Four related asks, all pointing at "make adventure mode feel prepared
+rather than improvised":
+
+- **DM-style prep at session start.** Before play begins, have the model
+  brainstorm the world, locations, plot, story beats it wants to hit and
+  noteworthy turns - the way a DM preps a campaign - then carry that as
+  context. One-shot freeform play loses focus by comparison. Overlaps
+  heavily with the map (3e): the prep pass is the natural place for the
+  initial map to come from.
+- **Thinking mode.** We currently force it OFF everywhere -
+  `chat_template_kwargs: {enable_thinking: false}` is mandatory for the
+  resident Gemma or replies come back empty (see the config note). The
+  prep pass is exactly the case where you WANT it: slow, once, off the
+  critical path. Wants a per-request switch rather than the global off,
+  exposed as `/thinking` or through `/models`.
+- **Character creation** when an adventure starts, instead of the model
+  assigning an appearance in its first [[STATE]].
+- **Inline colour markup.** Let the model tag nouns -
+  `[color:red]stone altar[/color]` - and render it. The soft-80 renderer
+  already takes a per-row colour and `ui_blit_row` already does per-cell
+  colour for the rainbow pic-ready line, so the drawing side exists. The
+  work is a span-coloured chat line plus stripping the tags in the
+  directive filter. NOTE the filter now accepts single brackets for
+  MUSIC/IMAGE - pick the syntax so it cannot collide.
+
+### 3c4. Rate a tune down (USER REQUEST, small)
+A thumbs-down so an annoying tune never comes back. Mirrors favorites
+almost exactly: the storage is already there in shape
+(`data/sids/favorites.json`, `toggle_favorite`), and `pick()` already
+filters candidates, so a blocklist drops straight into the same place
+the recent-repeat and confidence filters live. Natural jukebox key next
+to `f`.
+
+### 3d. Music browser (overlay #6, bigger - after the above)
+Browse by mood, favourites first, page through ~10k tunes. This is what
+makes the jukebox's `f` key worth pressing: favourites are stored
+server-side (data/sids/favorites.json) with nothing that can show them
+yet. Also the natural place to START music, which the jukebox cannot -
+it only reports. Needs a paged list over the wire like the conversation
+manager, plus a mood picker.
+
+### 3e. Adventure map (EXPERIMENT, needs design first)
+Ask the LLM to lay out locations as it introduces them, keep the graph
+in state, and feed it back so it can route the player to somewhere they
+have already been. The pieces are half there: adventure mode already
+emits [[STATE: {...}]] with a `location`, normalized into meta
+`adv_state` and re-injected into the system prompt every turn - so a
+`map` object would inherit persistence and context-survival for free.
+
+Design questions to settle BEFORE coding:
+- Shape: edge list (`[["woods","gate","n"], ...]`) is compact and easy
+  for a model to append to; a nested dict drifts more.
+- Growth: adv_state is re-injected EVERY turn, so the map costs context
+  on every request forever. Needs a cap and a pruning rule (drop
+  unvisited leaves? keep the N most recent plus anything favourited?).
+- Frame limit: no proxy frame may exceed MAX_PAYLOAD 512.
+- Consistency: models are bad at maintaining a graph silently. Probably
+  needs the prompt to restate the current node's exits each turn.
+- Rendering: a text map on the C64 would be charming and is a natural
+  overlay module, but start by proving the LLM can keep the graph
+  coherent at all - the client side is worthless until then.
+
 ### 4. Screensaver / always-on assistant
 Idle detection client-side; unsolicited server frames already work
 (QUIET-stream + hint machinery). CRT-safe visuals (dim/moving), jukebox
