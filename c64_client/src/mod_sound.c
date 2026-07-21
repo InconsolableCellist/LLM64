@@ -356,7 +356,11 @@ static void jb_ticker(void) {
         jb_tick = (uint8_t)(jb_tick + 60);
         if (music_state == 0xFF) {
             ++jb_elapsed;
-            if (jb_secs && jb_elapsed > jb_secs) jb_elapsed = jb_secs;
+            /* Wrap, don't clamp: the tune loops, so the bar should
+               restart with it. Clamping parked it at 100% while the
+               music played on, and it disagreed with the proxy, which
+               reports position within the loop (elapsed %= secs). */
+            if (jb_secs && jb_elapsed >= jb_secs) jb_elapsed -= jb_secs;
             jb_draw_bar();
         }
     }
@@ -380,15 +384,23 @@ static void jb_key(uint8_t k) {
         ui_status(S_READY);
         return;
     }
+    /* ASCII HEX constants, never character literals: cc65 compiles 'f'
+       to PETSCII $46, while petscii_to_ascii() returns ASCII $66 - so
+       `case 'f'` matched only SHIFT+F, which is how this shipped and
+       exactly what the field report described. text.c carries the same
+       warning above its own range checks. Both cases are accepted here
+       so it does not matter whether shift is held. */
     switch (petscii_to_ascii(k)) {
-        case 'f':
+        case 0x66:      /* f */
+        case 0x46:      /* F */
             if (jb_flags & 1) {
                 jb_flags ^= 2;          /* optimistic: server confirms */
                 proto_send_message(MSG_FAV_TUNE, 0, 0);
                 jb_draw_song();
             }
             return;
-        case 'n':
+        case 0x6E:      /* n */
+        case 0x4E:      /* N */
             /* Ask the proxy for another tune in the same mood. Closing
                first is the module rule: the resident loop dispatches the
                command once this code is off the call stack. */

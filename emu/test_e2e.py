@@ -935,6 +935,17 @@ def main():
                         raise AssertionError(
                             f'jukebox should show manual mode:\n{scr}')
                     print('  PASS: jukebox shows manual music mode')
+                    # 'f' favourites the playing tune. Fed UNSHIFTED,
+                    # which is the case that was broken: cc65 compiles a
+                    # 'f' literal to PETSCII, so comparing it against the
+                    # ASCII from petscii_to_ascii() only ever matched
+                    # SHIFT+F.
+                    monitor.keyboard_feed('f')
+                    wait_for_screen(monitor, r'\*favorite\*', 15,
+                                    artifacts, f'{tag}-jb-fav')
+                    print('  PASS: jukebox f (unshifted) marks a favourite')
+                    # 'f' favourites the playing tune: the panel marks
+                    # it immediately and the proxy ACKs.
                     monitor.keyboard_feed_petscii(b'\x85')   # F1 closes
                     wait_ready(monitor, 15, artifacts, f'{tag}-jb-closed')
 
