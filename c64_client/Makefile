@@ -62,6 +62,17 @@ CFLAGS += -DDIAG
 ASFLAGS += -D DIAG
 endif
 
+# SCROLL_OPT re-enables the soft-80 scroll-blit fast path (display.c call
+# site + the routine itself in soft80.s). Off: the banked-ROM bitmap copy
+# provoked a serial stall under real-time streaming and full redraws fit
+# the pacing anyway, so leaving it unassembled hands its bytes back to the
+# module-slot headroom. Both flags must move together or the C side calls
+# a routine that was never assembled.
+ifdef SCROLL_OPT
+CFLAGS += -DSCROLL_OPT
+ASFLAGS += -D SCROLL_OPT
+endif
+
 # Source files
 C_SOURCES = $(wildcard src/*.c)
 ASM_SOURCES = $(wildcard src/*.s)

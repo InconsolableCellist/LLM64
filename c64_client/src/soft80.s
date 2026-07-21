@@ -15,7 +15,9 @@
         .export _soft80_init
         .export _soft80_row
         .export _soft80_span
+.ifdef SCROLL_OPT
         .export _soft80_scroll_chat
+.endif
         .import _font48, _font48lo
         .import popa, popax
         .importzp ptr1, ptr2, ptr3, ptr4, tmp1, tmp2, tmp3, tmp4
@@ -58,7 +60,9 @@ row:     .res 1
 colrev:  .res 1
 pairs:   .res 1
 revmask: .res 1
-bank01:  .res 1
+.ifdef SCROLL_OPT
+bank01:  .res 1         ; $01 save across the banked-ROM copy
+.endif
 
         .code
 
@@ -371,6 +375,18 @@ font_lo_ptr2:
         rts
 
 ;---------------------------------------
+; Scroll-blit fast path - NOT ASSEMBLED unless SCROLL_OPT is
+; defined, and nothing defines it. display.c gates its only call
+; site the same way: the banked-ROM bitmap copy provoked a serial
+; stall and phantom RX under real-time streaming, so full redraws
+; are used instead. Kept for whenever that is understood, but
+; assembling it spends scarce module-slot headroom on code that
+; cannot run. Everything from here to EOF - mul320, mul40, mul80
+; and copy_fwd included - is reachable only from this routine.
+;---------------------------------------
+.ifdef SCROLL_OPT
+
+;---------------------------------------
 ; void __fastcall__ soft80_scroll_chat(uint8_t n)
 ; Scroll the chat area (text rows 1..19) up by n text rows: bitmap,
 ; matrix and shadow. Much cheaper than re-rendering 19 rows of glyphs.
@@ -506,3 +522,5 @@ copy_fwd:
         iny
         bne @tail
 @done:  rts
+
+.endif ; SCROLL_OPT
