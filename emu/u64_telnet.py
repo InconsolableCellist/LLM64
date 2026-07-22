@@ -102,26 +102,49 @@ def _context_pick(u, entry):
     u.key('enter')
 
 
-def _browser_pick(u, filename):
-    """In an open file browser, move the highlight to `filename` and open
-    its context menu. Raises if the name is not on screen.
+def browser_entries(u):
+    """Filenames listed in the browser pane, in screen order.
 
-    Entering a directory leaves the highlight on the first entry, so the
-    move is (target row - first entry row) presses of Down. Failing loudly
-    beats guessing: running the wrong disk image looks like a code bug."""
-    import time
-    lines = u.text().splitlines()
-    hits = [i for i, l in enumerate(lines) if filename.lower() in l.lower()]
-    if not hits:
-        raise RuntimeError(
-            f'{filename!r} not in the browser listing:\n{u.text()}')
-    row = hits[0]
-    first = row
-    while first > 0 and lines[first - 1].strip():
-        first -= 1
-    for _ in range(row - first):
-        u.key('down')
-        time.sleep(0.1)
+    The pane is a full-screen box drawn with VT100 line-drawing glyphs,
+    which arrive as literal 'x' (vertical) and 'q' (horizontal) because
+    _feed skips the charset-select escapes. So an entry row is one that
+    starts with 'x', and the name is the first column of it - everything
+    up to the run of padding spaces. Taking the first column also makes
+    this work when a context menu is overlaid on the right-hand side.
+
+    Counting rows the way a context menu is counted does NOT work here:
+    every line of the box is non-empty, so "walk up to the first blank"
+    runs to the top of the screen and overshoots the target."""
+    import re
+    names = []
+    for line in u.text().splitlines():
+        # An entry begins immediately after the left border. A space there
+        # means an empty row - do NOT strip first, or an overlaid context
+        # menu on the right becomes the "name" of every blank row.
+        if len(line) > 2 and line[0] == 'x' and line[1] != ' ':
+            name = re.split(r'\s{2,}', line[1:])[0].strip()
+            if name:
+                names.append(name)
+    return names
+
+
+def _browser_pick(u, filename):
+    """Move the browser highlight onto `filename` and open its context
+    menu. Raises if the name is not listed.
+
+    The screen reconstruction cannot see which row is highlighted, so
+    rather than guess we drive it to a known state: press Up once per
+    listed entry, which clamps the highlight to the first row from
+    wherever it started, then press Down by the target's index. Failing
+    loudly beats guessing - running the wrong disk image looks exactly
+    like a code bug."""
+    entries = browser_entries(u)
+    match = [i for i, e in enumerate(entries) if e.lower() == filename.lower()]
+    if not match:
+        raise RuntimeError(f'{filename!r} not in the browser listing '
+                           f'{entries}:\n{u.text()}')
+    u.key('up', len(entries))    # clamp to the first entry
+    u.key('down', match[0])
     u.key('enter')      # context menu on the highlighted file
 
 
@@ -145,6 +168,7 @@ def deploy_and_run(path, host='192.168.1.64'):
                    check=True)
     u = U64Screen(host)
     u.pump(1.0)
+    u.key('esc')       # close a context menu left open by an earlier run
     u.key('left', 6)   # up to the root listing from wherever we are
     u.key('down')      # SD -> Flash
     u.key('right')     # enter Flash
