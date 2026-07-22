@@ -229,55 +229,59 @@ VICE-based e2e test suite.
   SID `music_state` assert — tcpser real-time pacing at 9600; real HW is
   proven at 19200. Don't chase it as part of unrelated work.
 
-## OPEN BUG — a disk deployed with no cfg comes up with a dead F1 menu
+## RETRACTED — the "cfg-free disk kills the F1 menu" bug (2026-07-22)
 
-Found 2026-07-22 while chasing what looked like a client regression and
-was not. Symptom: press F1, the menu module loads from disk and draws
-its panel, "fetching from server..." never resolves. The proxy RECEIVES
-the GET_MENU and sends a well-formed MENU_LIST (verified independently:
-11 entries, CRC good, single 252-byte frame). The client can still SEND
-- it is only receiving that is dead - and the state survives a redial.
+There is no such bug. A cfg-free disk boots, opens the config editor,
+saves, and its F1 menu works. Confirmed by the user after the fact.
 
-**The variable is whether c64llm.cfg was already on the disk**, i.e.
-whether the client ran its first-boot config editor and SAVED the cfg to
-the mounted image. Five deploys, three different client builds:
+What actually happened: a dead F1 menu was chased through five deploys
+and three client builds, and the deploys that failed correlated
+perfectly with the cfg being absent. The correlation was real and the
+conclusion was wrong - the failing disks came from a tree that another
+session was concurrently rebuilding, and the disk, not the cfg, was the
+variable. Five data points, one confounder, and the confounder was not
+in the model.
 
-  d04cafc  no cfg (typed the IP)   F1 dead
-  d04cafc  no cfg, after redial    F1 dead
-  b9a71b0  cfg injected            F1 works
-  2b43435  cfg injected            F1 works
-  d04cafc  cfg injected            F1 works
+Two things to carry from it. First: on a machine where more than one
+session builds, `c64_client/build/` is shared mutable state - a disk is
+only trustworthy if nothing else rebuilt during it, and the title-bar
+hash proves the PRG, not the modules beside it. Second: correlation
+across deploys is weak evidence when each deploy is also a rebuild.
+Bisect by deploying the SAME artifact twice before believing a variable.
 
-So the code was innocent; `make deploy-c64u-disk-80` now runs
-`inject-cfg` so the maintainer's disk never takes that path.
+`inject-cfg` survives because retyping an IP on every deploy is tedious,
+not because a cfg-free disk is dangerous.
 
-**Mechanism NOT understood.** Two candidates, neither confirmed:
-- `config_save()` (cfg.c) calls `cbm_save` with the serial NMI LIVE.
-  Every other disk access brackets itself - `mod_open` does
-  `serial_rx_pause()` / `serial_rx_resume()` around `module_load`
-  precisely because "JiffyDOS bit-bangs cycle-exact IEC transfers and a
-  serial NMI mid-byte would corrupt them". The save has no such guard.
-  Against this theory: on FIRST boot nothing is connected yet, so there
-  should be no incoming bytes to fire an NMI. It is still a real latent
-  bug for `F1 -> e)config` while connected, and worth fixing.
-- The Ultimate's own 1541 emulation writing back into the mounted d64.
-  Cannot be inspected from here. The image `make disk` produces is sound
-  (c1541 -validate leaves the free count unchanged at 552).
+## KNOWN RISK — config_save() writes to disk with the serial NMI live
 
-**This matters for the shareware disk** (docs/11): distribution disks
-are cfg-free by design, so EVERY new user takes exactly the path that
-failed here. Do not ship the free disk until this is understood.
+Not observed in the field; found by reading, and worth fixing before the
+free disk ships to anyone.
 
-To confirm causality, deploy a cfg-free disk deliberately and press F1.
-`make deploy-c64u-disk-80-free` is now exactly that experiment: it ships
-cfg-free on purpose, so the free disk is the standing reproduction case
-rather than something to protect from the bug.
+`cfg.c :: config_save()` calls `cbm_save("@0:c64llm.cfg", ...)` bare.
+Every other disk access in the client brackets itself:
 
-Framing worth keeping (2026-07-22): injecting the cfg is testing
-convenience, nothing more. Entering the address at the config editor IS
-the product's first-run experience, so "works when a cfg was injected"
-is not a working program — for the shareware disk it is a total failure
-for 100% of users, on the F1 menu, which is the main way in.
+    music_hold_begin();
+    serial_rx_pause();
+    ok = module_load(name);      /* main.c :: mod_open */
+    serial_rx_resume();
+    music_hold_end();
+
+because JiffyDOS bit-bangs cycle-exact IEC transfers and a serial NMI
+mid-byte corrupts them. The save has no such guard, so in order of
+severity: a mangled WRITE (a corrupt c64llm.cfg is merely annoying - the
+client falls back to the config editor - but a bad block lands on the
+same disk that holds the overlay modules); dropped INCOMING frames,
+since the ACIA goes unserviced through the write; and a warbling tune,
+which is what music_hold exists to prevent.
+
+Why it has not bitten: on FIRST boot nothing is connected yet, so no
+bytes arrive and no NMI fires. The exposed path is `F1 -> e)config ->
+save` while connected - i.e. changing the server address mid-session,
+which is exactly when traffic is in flight.
+
+Fix is four lines, mirroring mod_open around the `config_save()` call in
+`mod_config.c`. Do it with the client-change bar: tui-80, tui, hayes,
+watchdog.
 
 ## OPEN BUG — crash to BASIC while typing (fix deployed, unconfirmed)
 

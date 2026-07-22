@@ -133,12 +133,9 @@ deploy-c64u-disk-80:
 # distribution disks - those stay cfg-free by design so a new user meets
 # the config editor.
 #
-# This is not a convenience. A disk deployed WITHOUT it makes the client
-# save its own cfg to the mounted image on first boot, and on 2026-07-22
-# every deploy that took that path came up with a dead F1 menu (module
-# loads, panel draws, MENU_LIST never arrives) while every deploy with
-# the cfg already present worked - five for five, across three different
-# client builds. The mechanism is not yet understood; see HANDOFF.md.
+# Purely a convenience: it saves retyping the address on every deploy.
+# (An earlier version of this comment claimed a cfg-free disk came up
+# with a dead F1 menu. It does not - see HANDOFF.md, RETRACTED.)
 #
 # NetConfig blob: 2 dummy bytes for the PRG header cbm_load skips, magic
 # C6 01, then host[32] and port[6], NUL-padded. Digits and dots are
@@ -158,10 +155,8 @@ inject-cfg:
 #
 # NO inject-cfg here, deliberately. A shareware disk ships cfg-free and
 # meets its user with the config editor, so this target IS the new-user
-# path - which is exactly the path that currently ends in a dead F1 menu
-# (HANDOFF.md, open bug). Injecting a cfg would hide the one bug that
-# every free-disk user is guaranteed to hit. `INJECT_CFG=1` opts in when
-# you just don't want to retype the address.
+# path and should be tested as one. `INJECT_CFG=1` opts in when you just
+# don't want to retype the address.
 deploy-c64u-disk-80-free: INJECT_CFG ?= 0
 deploy-c64u-disk-80-free:
 	$(MAKE) -C c64_client clean
