@@ -56,6 +56,18 @@ DIRECTIVE_FINAL_RE = re.compile(
 RECENT_N = 3
 
 
+# Tunes rejected by ear, by id. moods.json is GENERATED (sid_makedb.py),
+# and data/ is gitignored and never rsynced, so an edit there is undone by
+# the next rebuild and exists on one machine only. This list lives in src/
+# so it is version-controlled, deploys with the proxy, and survives a
+# regenerated database. Add a reason - "sounds bad" is a real reason, but
+# next time we should know whether it was taste or a broken relocation.
+BLOCKED_TUNE_IDS = {
+    # Audible glitches on real hardware, and not good enough to debug.
+    'MUSICIANS__S__Scan__Afrikaan_Beat',
+}
+
+
 class MusicLibrary:
     def __init__(self, db_path: Path, min_interval_s: float = 90.0):
         self.db_path = Path(db_path)
@@ -67,7 +79,8 @@ class MusicLibrary:
         self.tune_started = None  # monotonic time the current tune began
         try:
             db = json.loads(self.db_path.read_text())
-            self.tunes = db["tunes"]
+            self.tunes = [t for t in db["tunes"]
+                          if t.get("id") not in BLOCKED_TUNE_IDS]
             self.moods = db["moods"]
         except (OSError, KeyError, json.JSONDecodeError):
             pass  # library optional: proxy runs fine without music

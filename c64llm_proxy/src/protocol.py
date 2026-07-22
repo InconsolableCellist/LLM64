@@ -497,7 +497,11 @@ class ProtocolHandler:
                 "/find <text> - search this conversation\n"
                 "/findall <text> - search all conversations\n"
                 "/stats - server statistics\n"
-                "/mode - show current mode")
+                "/mode - show current mode\n"
+                "\n"
+                "Keys: F1 menu, F2 new, F3 cancel, F5 conversations,\n"
+                "F4/F6 scroll a page up/down, crsr up/down one line.\n"
+                "In an adventure, [OOC: ...] talks to the narrator.")
 
         elif cmd == 'mode':
             await self._send_canned(f"Current mode: {self.mode.label}")
