@@ -1,6 +1,9 @@
 # C64 LLM Interface - top-level targets
 
 PYTHON ?= python3
+# VICE tools (x64sc, c1541): native install if present, net.sf.VICE flatpak
+# otherwise. See emu/vice-run.sh.
+VICE_RUN ?= ./emu/vice-run.sh
 # Test proxy port: distinct from 6400 so a live proxy can keep running
 TESTPORT ?= 6464
 
@@ -136,5 +139,5 @@ deploy-c64u-disk-80-diag:
 	@# magic C6 01, then host[32] and port[6], NUL-padded. Digits and
 	@# dots are identical in PETSCII and ASCII, so no conversion needed.
 	$(PYTHON) -c "open('c64_client/build/user.cfg','wb').write(b'\x00\x10\xc6\x01'+b'$(C64_CFG_HOST)'.ljust(32,b'\0')+b'$(C64_CFG_PORT)'.ljust(6,b'\0'))"
-	c1541 c64_client/build/c64llm.d64 -write c64_client/build/user.cfg c64llm.cfg
+	$(VICE_RUN) c1541 c64_client/build/c64llm.d64 -write c64_client/build/user.cfg c64llm.cfg
 	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm.d64

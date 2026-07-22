@@ -75,7 +75,8 @@ whole stack is verified end-to-end by automated tests running in VICE.
 ## Quick start (emulator)
 
 Prereqs: `cc65`, `vice` (x64sc), `python3`, and `tcpser` for the
-Hayes-mode test.
+Hayes-mode test. VICE can be a distro package or the `net.sf.VICE`
+flatpak — `emu/vice-run.sh` finds either.
 
 ```bash
 # one-time proxy setup

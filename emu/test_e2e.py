@@ -48,6 +48,33 @@ CRUMB_NAMES = {
 }
 
 
+VICE_RUN = str(Path(__file__).resolve().parent / 'vice-run.sh')
+
+
+def vice_tool(name):
+    """argv prefix for a VICE binary (x64sc, c1541, ...).
+
+    Routed through emu/vice-run.sh, which prefers a native install and
+    falls back to the net.sf.VICE flatpak. The wrapper execs, so the
+    process the Stack starts is still the emulator itself.
+    """
+    return [VICE_RUN, name]
+
+
+def have_vice_tool(name):
+    """True if `name` can be run either natively or via the flatpak."""
+    if shutil.which(name):
+        return True
+    if not shutil.which('flatpak'):
+        return False
+    app = os.environ.get('VICE_FLATPAK', 'net.sf.VICE')
+    info = subprocess.run(['flatpak', 'info', '-l', app],
+                          capture_output=True, text=True)
+    if info.returncode != 0:
+        return False
+    return (Path(info.stdout.strip()) / 'files' / 'bin' / name).exists()
+
+
 def find_free_port():
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
@@ -275,10 +302,10 @@ def main():
         d64_path = None
         copy_target = None
         mod1 = Path(args.prg + '.1')
-        if mod1.exists() and shutil.which('c1541'):
+        if mod1.exists() and have_vice_tool('c1541'):
             d64_path = artifacts / 'modules.d64'
-            cmd = ['c1541', '-format', 'c64llm,01', 'd64', str(d64_path),
-                   '-write', str(mod1), 'c64llm.1']
+            cmd = [*vice_tool('c1541'), '-format', 'c64llm,01', 'd64',
+                   str(d64_path), '-write', str(mod1), 'c64llm.1']
             for ext in ('2', '3', '4', '5'):
                 mod = Path(f'{args.prg}.{ext}')
                 if mod.exists():
@@ -298,7 +325,7 @@ def main():
                 # blank disk on unit 9: the disk-copy module's target
                 copy_target = artifacts / 'copy_target.d64'
                 subprocess.run(
-                    ['c1541', '-format', 'target,02', 'd64',
+                    [*vice_tool('c1541'), '-format', 'target,02', 'd64',
                      str(copy_target)],
                     check=True, capture_output=True)
 
@@ -312,7 +339,7 @@ def main():
             # VICE only auto-enables drive 8; unit 9 needs its type set
             disk8 += ['-drive9type', '1541', '-9', str(copy_target)]
         stack.start('vice', [
-            'x64sc', '-default', *speed, '-sounddev', 'dummy',
+            *vice_tool('x64sc'), '-default', *speed, '-sounddev', 'dummy',
             '+confirmonexit',
             '-acia1', '-acia1mode', str(args.acia_mode),
             '-acia1base', '0xDE00',
@@ -1190,7 +1217,8 @@ def main():
         if d64_path and args.tui and args.cols80:
             saved = artifacts / 'saved.cfg'
             subprocess.run(
-                ['c1541', str(d64_path), '-read', 'c64llm.cfg', str(saved)],
+                [*vice_tool('c1541'), str(d64_path), '-read', 'c64llm.cfg',
+                 str(saved)],
                 check=True, capture_output=True)
             blob = saved.read_bytes()[2:]  # skip the PRG load-address header
             host = blob[2:34].rstrip(b'\0').decode('ascii', 'replace')
@@ -1206,7 +1234,7 @@ def main():
         # legitimately skipped)
         if copy_target and args.tui and args.cols80:
             out = subprocess.run(
-                ['c1541', str(copy_target), '-list'],
+                [*vice_tool('c1541'), str(copy_target), '-list'],
                 capture_output=True, text=True).stdout.lower()
             for want in ('c64llm.1', 'c64llm.2', 'c64llm.3', 'c64llm.4',
                          'c64llm.5',
