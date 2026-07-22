@@ -20,14 +20,14 @@ void proto_init(ProtoContext* ctx, uint8_t* payload_buffer, uint16_t buffer_size
 /* Calculate XOR checksum */
 uint8_t proto_calc_crc(uint8_t msg_type, uint16_t length, const uint8_t* payload) {
     uint8_t crc = msg_type;
-    uint16_t i;
 
     crc ^= (length & 0xFF);
     crc ^= ((length >> 8) & 0xFF);
 
-    for (i = 0; i < length; i++) {
-        crc ^= payload[i];
-    }
+    /* The per-byte sweep is the hot part (up to 512 B/frame, every
+       frame) - it lives in crc.s. XOR-accumulate: crc_xor seeds from 0,
+       so ^= folds it onto the header bytes bit-for-bit. */
+    crc ^= crc_xor(payload, length);
 
     return crc;
 }

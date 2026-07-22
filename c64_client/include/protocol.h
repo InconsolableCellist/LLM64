@@ -77,4 +77,8 @@ void proto_send_cancel(void);
  */
 uint8_t proto_calc_crc(uint8_t msg_type, uint16_t length, const uint8_t* payload);
 
+/* XOR of len payload bytes, seeded from 0 (crc.s). The header bytes
+   stay in proto_calc_crc's C; this is only the hot per-byte sweep. */
+uint8_t __fastcall__ crc_xor(const uint8_t* buf, uint16_t len);
+
 #endif /* PROTOCOL_H */
