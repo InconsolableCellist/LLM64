@@ -20,4 +20,10 @@
    Returns nonzero on success. */
 uint8_t module_load(const char* name);
 
+/* Nonzero if the named module is ALREADY in the slot from an earlier
+   load, i.e. it can be re-entered without touching the disk. Nothing
+   else writes the slot, so this stays true until the next
+   module_load() of a different module. */
+uint8_t module_in_slot(const char* name);
+
 #endif /* LOADER_H */

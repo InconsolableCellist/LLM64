@@ -532,6 +532,19 @@ static uint8_t mod_open(const char* name, void (*run)(void)) {
     uint8_t ok;
     diag_note_mod(name[7]);   /* "c64llm.N" -> N */
     diag_crumb(DC_MODLOAD);
+    /* Already in the slot (the usual case for F1 - open, close, open):
+       skip the load entirely. Nothing else writes the slot, so the
+       code is still there, and with no IEC transfer there is no NMI
+       hazard to mask and no reason to silence the tune. F1 goes from a
+       ~1s drive access with a hole in the music to instant. Menu
+       CONTENT is unaffected: mod_menu_run refetches it over the wire
+       (MSG_GET_MENU) on every open. */
+    if (module_in_slot(name)) {
+        diag_crumb(DC_MODLOADED);
+        run();
+        diag_crumb(DC_MODDONE);
+        return 1;
+    }
     /* The tune is HELD across the load - tried playing through it, and
        it is worse. IEC transfers keep interrupts disabled to hold their
        bit-banged timing, so the 60Hz CIA tick that drives music_play is
