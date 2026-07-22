@@ -667,9 +667,15 @@ PRG, +47 bytes BSS**.
   heartbeat must outlive the read timeout or the client's ~43s watchdog
   aborts first and the real error never arrives.
 
-Known loss, accepted: the two built-in pattern tunes are unreachable in
-soft-80 now. Ask if you want them back - the jukebox is where they would
-go.
+The two built-in pattern tunes ("Dungeon Depths", "Northward Road") are
+GONE, not merely unreachable - player, note table, sequences and all
+(2026-07-22, user's call). They predated streamed SIDs and a 10k HVSC
+library replaced them. **Reclaimed 725 bytes** of an image that had 406
+free: headroom went 406 -> 1131 bytes (hayes MODE80 build, measured as
+$9C00 minus the top of BSS - the overlay slot is the ceiling, and code
+growth pushes BSS up into the same space). The 40-col fallback menu's
+'s' is a plain local stop now. Git history has the player if it is ever
+wanted back.
 
 ### 4. Screensaver / always-on assistant
 Idle detection client-side; unsolicited server frames already work

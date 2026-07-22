@@ -760,28 +760,16 @@ def main():
                         raise AssertionError('menu panel title missing')
                     return scr
 
-                # The built-in pattern tunes (off -> Dungeon Depths ->
-                # Northward Road -> off) cycle on the client's own 's'
-                # action. SOFT80 no longer offers it: the server-fed menu
-                # dropped 'Music: next / stop' now that stopping lives in
-                # /music stop and the jukebox's own 's' key, and two
-                # music entries side by side read as two features.
-                # music_toggle() is therefore unreachable in the soft-80
-                # build - the 10k library replaced those two tunes there
-                # - but the 40-col fallback menu still carries it, and
-                # that is what this exercises.
+                # The two built-in pattern tunes are GONE (music.s): a
+                # 10k SID library replaced them and the player cost ~725
+                # bytes of a resident image that had 406 free. The 40-col
+                # fallback menu's 's' is a plain local stop now; soft-80
+                # reaches stopping through /music stop and the jukebox's
+                # own key, and its server-fed menu lists neither.
                 if not args.cols80:
                     monitor.keyboard_feed_petscii(b'\x85')
                     wait_for_screen(monitor, r'S  music \(off\)', 15,
                                     artifacts, f'{tag}-menu-music')
-                    monitor.keyboard_feed('s')
-                    wait_for_screen(monitor, r'music: dungeon depths', 15,
-                                    artifacts, f'{tag}-music-on')
-                    monitor.keyboard_feed_petscii(b'\x85')
-                    monitor.keyboard_feed('s')
-                    wait_for_screen(monitor, r'music: northward road', 15,
-                                    artifacts, f'{tag}-music-2')
-                    monitor.keyboard_feed_petscii(b'\x85')
                     monitor.keyboard_feed('s')
                     wait_for_screen(monitor, r'music off', 15,
                                     artifacts, f'{tag}-music-off')

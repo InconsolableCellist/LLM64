@@ -38,7 +38,6 @@ void mod_sound_run(void);
 #endif
 
 /* music.s */
-void music_next(void);
 extern uint8_t music_state;
 extern uint16_t music_ext_init;
 extern uint16_t music_ext_play_addr;
@@ -396,7 +395,7 @@ static void menu_open(void) {
     ui_draw_row(2, "  Menu", COLOR_WHITE, 0);
     ui_draw_row(4, "  n)ew  c)onvs  a)dventure  r)oles  m)odels",
                 COLOR_CYAN, 0);
-    ui_draw_row(5, "  s)ound  x)cancel  e)config  d)iskcopy  h)elp",
+    ui_draw_row(5, "  s)ilence  x)cancel  e)config  d)iskcopy  h)elp",
                 COLOR_CYAN, 0);
     ui_draw_row(7, "  f1 or stop: close", COLOR_GRAY2, 0);
 #else
@@ -410,12 +409,8 @@ static void menu_open(void) {
     ui_draw_row(10, "  H  help", COLOR_CYAN, 0);
     if (music_state == 0) {
         ui_draw_row(11, "  S  music (off)", COLOR_CYAN, 0);
-    } else if (music_state == 1) {
-        ui_draw_row(11, "  S  music: dungeon depths", COLOR_CYAN, 0);
-    } else if (music_state == 2) {
-        ui_draw_row(11, "  S  music: northward road", COLOR_CYAN, 0);
     } else {
-        ui_draw_row(11, "  S  music: streamed (s stops)", COLOR_CYAN, 0);
+        ui_draw_row(11, "  S  stop the music", COLOR_CYAN, 0);
     }
     ui_draw_row(13, "  F1 or stop: close", COLOR_GRAY2, 0);
 #endif
@@ -1049,17 +1044,13 @@ static void cancel_stream(void) {
 /* --- local menu actions ----------------------------------------------
    Shared by the resident F1 menu and the menu module's '!' commands. */
 
-static void music_toggle(void) {
-    music_next();
-    if (music_state == 0) {
-        ui_status("Music off.");
-    } else if (music_state == 1) {
-        ui_status("Music: Dungeon Depths");
-    } else if (music_state == 2) {
-        ui_status("Music: Northward Road");
-    } else {
-        ui_status("Music: streamed tune");
-    }
+/* The built-in pattern tunes are gone (see music.s), so 's' is a plain
+   local stop now. Kept for the 40-column fallback menu: soft-80 reaches
+   stopping through the jukebox's own key and /music stop, and its
+   server-fed menu no longer lists this at all. */
+static void music_stop_local(void) {
+    music_ext_stop();
+    ui_status("Music off.");
 }
 
 #ifdef SOFT80
@@ -1091,7 +1082,7 @@ static void menu_local(uint8_t a) {
     switch (a) {
         case 'n': new_conversation(); break;
         case 'x': cancel_stream(); break;
-        case 's': music_toggle(); break;
+        case 's': music_stop_local(); break;
 #ifdef SOFT80
         case 'c': if (state == ST_IDLE) convmgr_open(); break;
         case 'e': config_open(); break;
