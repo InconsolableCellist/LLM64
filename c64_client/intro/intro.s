@@ -2,8 +2,9 @@
 ; C64 LLM / LLM64 - shareware intro (free disk only)
 ;
 ; The first file on build/c64llm-free.d64. Run Disk / LOAD"*",8,1 boots
-; it; it shows a multicolor picture with a five-row text panel under it,
-; plays a SID, enforces a short nag countdown, and on any key chain-loads
+; it; it shows the LLM64 logo over a cycling Commodore rainbow with a
+; five-row text panel under it (raster split at row 20), plays a SID,
+; enforces a short nag countdown, and on any key chain-loads
 ; the real client - which overwrites this program entirely. The registered
 ; disk does not carry it, and no resident client byte knows it exists.
 ;
@@ -12,13 +13,19 @@
 ;
 ; Memory once init has run:
 ;   $0334-$03FF  chain-load stub (copied there at exit; cassette buffer)
-;   $0400-$07E7  bitmap screen RAM (the picture's fg/bg nibble pairs)
+;   $0400-$07E7  bitmap screen RAM (one color byte per cell; the bar rows
+;                are what the rainbow animation rewrites)
 ;   $0801-<$0C00 this program
 ;   $0C00-$0FE7  text screen; only rows 20-24 ($0F20+) are ever displayed
-;   $2000-$3F3F  multicolor bitmap
-;   $4000-$76A5  the loaded data blob, source of every copy above
+;   $2000-$3F3F  multicolor bitmap (the drawn LLM64 logo)
+;   $4000-$72BD  the loaded data blob, source of every copy above
 ;   $B000-$BF95  the relocated tune
-;   $D800-$DBE7  color RAM (picture, with rows 20-24 recolored for text)
+;   $DB20-$DBE7  color RAM for the text panel rows only
+;
+; The logo uses %01 pixels exclusively, so every lit cell takes its color
+; from the upper nibble of one screen-RAM byte and color RAM is never read
+; above the panel - which is why the blob carries no color RAM, and why
+; cycling the rainbow is six 40-byte fills. See tools/make_intro_assets.py.
 ; ---------------------------------------------------------------------
 
 .setcpu "6502"
@@ -49,8 +56,9 @@ IRQEXIT = $EA81         ; pull A/X/Y, RTI
 ; Where the blob's parts sit once loaded (contract with make_intro_assets.py)
 BLOB_BITMAP = $4000
 BLOB_SCREEN = $5F40
-BLOB_COLRAM = $6328
-BLOB_TUNE   = $6710
+BLOB_TUNE   = $6328
+
+BAR_FRAMES  = 6         ; frames between rainbow steps (~8 steps/sec PAL)
 
 BITMAP  = $2000         ; VIC bank 0, $D018 = $18
 SCREEN  = $0400
@@ -105,11 +113,7 @@ start:
         lda     #0
         sta     $D020
         sta     $D021
-        lda     #1
-        sta     $0286           ; white
-        lda     #147
-        jsr     CHROUT          ; clear screen
-        lda     #<msg_loading
+        lda     #<msg_loading   ; prints in the power-on text color
         ldx     #>msg_loading
         jsr     print
 
@@ -124,6 +128,18 @@ start:
         ldx     #<name_d
         ldy     #>name_d
         jsr     load_file
+
+        ; Blank the text screen's colors before the picture goes up. IRQ B
+        ; cannot switch $D018 on row 20's own raster line - the VIC fetches
+        ; the video matrix at the start of that badline - so it switches on
+        ; the line before, and the right-hand ~60% of the picture's LAST
+        ; raster line is drawn in text mode from the untouched top of
+        ; $0C00. Clearing with the text color set to black makes that leak
+        ; black on black. (The KERNAL's clear fills color RAM from $0286.)
+        lda     #0
+        sta     $0286
+        lda     #147
+        jsr     CHROUT
 
         jsr     do_copies
         jsr     draw_text
@@ -150,8 +166,7 @@ start:
         sta     $D01A           ; raster IRQ on
         lda     #LINE_A
         sta     $D012
-        lda     $D011
-        and     #$7F            ; raster compare MSB = 0
+        lda     #$1B            ; also clears the raster compare MSB
         sta     $D011
         lda     #<irq_a
         sta     $0314
@@ -159,6 +174,10 @@ start:
         sta     $0315
         lda     #FRAMES_PER_SEC
         sta     tick
+        lda     #BAR_FRAMES
+        sta     bar_tick
+        ldx     #0
+        stx     bar_phase
         lda     #NAG_SECONDS
         sta     secs_left
         sta     secs_shown
@@ -214,20 +233,14 @@ key_loop:
         sta     $D016           ; multicolor off
         lda     #$15
         sta     $D018           ; screen $0400, uppercase charset
-        lda     #6
-        sta     $D020
-        lda     #14
-        sta     $D021           ; power-on colors
         lda     #$37
         sta     $01             ; a stock machine for the chained client
         lda     #0
         sta     $C6             ; drop the key that dismissed the intro
         lda     #14
         sta     $0286
-        lda     #147
-        jsr     CHROUT          ; clear: the picture's color RAM is still up
-        lda     #<msg_boot
-        ldx     #>msg_boot
+        lda     #<msg_loading
+        ldx     #>msg_loading
         jsr     print
         cli
 
@@ -254,6 +267,12 @@ irq_a:
         lda     #PIC_BG
         sta     $D021
         jsr     SID_PLAY
+        dec     bar_tick
+        bne     @nobars
+        lda     #BAR_FRAMES
+        sta     bar_tick
+        jsr     bars_step
+@nobars:
         dec     tick
         bne     :+
         lda     #FRAMES_PER_SEC
@@ -414,6 +433,42 @@ color_text:
         bne     @row
         rts
 
+; Roll the rainbow down one row. Each bar row is 40 screen-RAM bytes of a
+; single color (the bitmap under them never changes), so a step is six
+; 40-byte fills with the palette read at a rotating offset.
+; The palette is emitted twice, so X can walk BAR_COUNT entries from any
+; starting phase without a wrap test in the loop.
+bars_step:
+        ldx     bar_phase
+        inx
+        cpx     #BAR_COUNT
+        bcc     :+
+        ldx     #0
+:       stx     bar_phase
+        txa
+        clc
+        adc     #BAR_COUNT
+        sta     bar_end
+        lda     #<(SCREEN + BAR_ROW * 40)
+        sta     CPDST
+        lda     #>(SCREEN + BAR_ROW * 40)
+        sta     CPDST+1
+@row:   lda     bar_colors,x
+        ldy     #39
+:       sta     (CPDST),y
+        dey
+        bpl     :-
+        lda     CPDST
+        clc
+        adc     #40
+        sta     CPDST
+        bcc     :+
+        inc     CPDST+1
+:       inx
+        cpx     bar_end
+        bne     @row
+        rts
+
 ; Rewrite the countdown's two digit cells in place.
 draw_secs:
         ldx     #$20            ; screen code for space
@@ -470,24 +525,26 @@ stub_msg:       .byte   "load error", 0
 name_d:         .byte   "c64 llm.d"     ; lowercase: see stub_name above
 name_d_len = * - name_d
 
-; Unpacking the blob, in the order docs/11 prescribes: the color RAM copy
-; must land before color_text recolors its last five rows. Every
-; destination is clear of both this program and the blob at $4000, so
-; these are dumb non-overlapping moves.
+; Unpacking the blob. Every destination is clear of both this program and
+; the blob at $4000, so these are dumb non-overlapping moves.
 copy_tab:
         .addr   BLOB_TUNE,   SID_LOAD
         .word   SID_SIZE
-        .addr   BLOB_COLRAM, COLRAM
-        .word   1000
         .addr   BLOB_SCREEN, SCREEN
         .word   1000
         .addr   BLOB_BITMAP, BITMAP
         .word   8000
 copy_tab_len = * - copy_tab
 
-msg_loading:    .byte   13, 13, "  loading...", 0
-msg_boot:       .byte   13, "  loading c64 llm...", 0
-msg_err:        .byte   13, "  load error", 0
+; Screen-RAM bytes for the rainbow, generated alongside the drawn logo so
+; the two can never disagree.
+bar_colors:
+        BAR_COLOR_TABLE
+        BAR_COLOR_TABLE
+        .assert * - bar_colors = BAR_COUNT * 2, error, "bar table size mismatch"
+
+msg_loading:    .byte   147, 13, 13, "  loading...", 0  ; 147 = clear
+msg_err:        .byte   13, "disk error", 0
 
 ; The panel: five rows of exactly 40 columns, PETSCII, converted to
 ; screen codes at run time. Lowercase source letters render as capitals
@@ -522,5 +579,8 @@ row_colors:
 .segment "VARS"
 dev:            .res    1       ; boot device; read by the stub at $0334
 tick:           .res    1       ; frames left in the current second
+bar_tick:       .res    1       ; frames left before the rainbow steps
+bar_phase:      .res    1       ; palette offset of the topmost bar
+bar_end:        .res    1       ; bars_step's palette stop index
 secs_left:      .res    1
 secs_shown:     .res    1       ; what the panel currently displays

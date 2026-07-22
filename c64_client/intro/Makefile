@@ -7,8 +7,8 @@ AS = ca65
 LD = ld65
 BUILD = ../build
 
-# Regenerate assets/ from these with:
-#   python3 ../../tools/make_intro_assets.py assets/intro_art.png \
+# Regenerate assets/ (the drawn logo plus the tune) with:
+#   python3 ../../tools/make_intro_assets.py \
 #           ../../c64llm_proxy/data/sids/b000_full/<tune>.sid -o assets/
 # The outputs are committed, so a plain build needs neither PIL nor the
 # SID library.

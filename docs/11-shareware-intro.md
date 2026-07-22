@@ -16,8 +16,8 @@ Two distribution disks from one codebase:
   client in any way.**
 - **Free disk** — `build/c64llm-free.d64`. Identical contents PLUS a
   standalone intro PRG as the FIRST file on the disk. Booting the disk
-  runs the intro: a multicolor picture (made with the same pipeline as
-  adventure-mode illustrations), SID music, a short pitch for C64 LLM,
+  runs the intro: a drawn LLM64 logo over an animated Commodore
+  rainbow, SID music, a short pitch for C64 LLM,
   the support links (foxipso.com and patreon.com/c/foxipso), a nag
   countdown, then "press any key". On keypress the intro loads the real
   client from the same disk and jumps into it. From there everything is
@@ -44,13 +44,13 @@ Nothing in the resident client knows or cares which disk it booted from.
 1. `c64_client/intro/` — new directory: `intro.s` (ca65 assembly),
    `intro.cfg` (ld65 config), `Makefile`, `assets/` (committed binary
    assets + the script-readable metadata that generated them).
-2. `tools/make_intro_assets.py` — converts a source PNG + a relocated
-   `.sid` into `intro_data.bin` and the generated `intro_gen.inc`
-   (addresses/constants) that `intro.s` includes.
+2. `tools/make_intro_assets.py` — draws the logo and packs it with a
+   relocated `.sid` into `intro_data.bin` plus the generated
+   `intro_gen.inc` (addresses/constants) that `intro.s` includes.
 3. `c64_client/Makefile` — new `disk-free` target (added AFTER the
    `all:` rule, per HANDOFF.md rule 10).
 4. Root `Makefile` — new `deploy-c64u-disk-80-free` target.
-5. A committed image asset and a committed tune asset (see §5).
+5. A committed tune asset and the generated blob (see §5).
 6. Emulator smoke test (§9) passing; existing `make test-all` still
    passing untouched (you did not modify anything it covers, so a
    failure means you strayed).
@@ -130,8 +130,9 @@ The intro is TWO files on disk:
   room to spare; if it ever doesn't, move logic, not the screen.
 - **`c64 llm.d`** — one concatenated data blob with a $4000 load
   address, fetched by the intro itself via KERNAL LOAD (secondary
-  address 1): bitmap 8000 + screen 1000 + colram 1000 + tune
-  (≤4096), ~14K at $4000–~$77FF (offsets in §5.3). Print `LOADING...` via `$FFD2`
+  address 1): bitmap 8000 + screen 1000 + tune (≤4096), ~13K at
+  $4000–~$72BD (offsets in §5.3). There is no color RAM in the blob —
+  see §5.1. Print `LOADING...` via `$FFD2`
   before this LOAD — on a stock 1541 it takes ~45s and a silent black
   screen would read as a hang (JiffyDOS: a few seconds).
 
@@ -155,12 +156,12 @@ Runtime layout after init's copies:
 | $2000–$3F3F  | multicolor bitmap (copied from $4000)                  |
 | $4000–~$77FF | the loaded data blob (source of all copies)            |
 | $B000–$BFFF  | the relocated SID tune (copied from the blob)          |
-| $D800–$DBE7  | color RAM (copied from the blob, then rows 20–24       |
-|              | overwritten with the text color)                       |
+| $DB20–$DBE7  | color RAM, text panel rows only (rows 0–19 are black)  |
 
-Init order: LOAD blob → copy tune → copy colram → copy screen → copy
-bitmap → render text rows into $0C00 → set text color RAM rows →
-`SID init` call → install IRQ vectors → enable raster IRQ.
+Init order: LOAD blob → clear the screen with the text color set to
+black (§4.1, the seam) → copy tune → copy screen → copy bitmap → render
+text rows into $0C00 → set text color RAM rows → `SID init` call →
+install IRQ vectors → enable raster IRQ.
 
 Other notes:
 
@@ -172,7 +173,7 @@ Other notes:
 
 ### 4.1 Screen layout (raster split)
 
-Top: rows 0–19 of the multicolor bitmap (the picture).
+Top: rows 0–19 of the multicolor bitmap (the logo and the rainbow).
 Bottom: rows 20–24 in TEXT mode (the pitch + links + countdown).
 
 This is the classic split-screen intro trick and costs ~40 lines of
@@ -191,22 +192,29 @@ assembly. Two raster IRQs per frame via `$0314` vector, `$D01A = 1`:
   ack `$D019`, then `JMP $EA81` (pulls the registers the KERNAL entry
   pushed, then RTI — a bare RTI from a `$0314` handler corrupts A/X/Y).
   Music and the `$EA31` chain happen only in IRQ A.
-- Only bitmap rows 0–19 (160 of 200 lines) are ever visible — compose
-  or crop the source picture so nothing important sits in the bottom
-  fifth, or letterbox to 160×160 before conversion.
-- A one-to-two line flicker at the seam is acceptable for v1. If it
-  offends, the standard fix is switching registers during the horizontal
-  border (busy-wait on `$D012` change then a few NOPs) — polish, not
-  required.
+- Only bitmap rows 0–19 (160 of 200 lines) are ever visible; the
+  generator draws nothing below that.
+- **The seam is not optional and not cosmetic.** IRQ B cannot switch
+  `$D018` on row 20's own raster line ($D3): that line is a badline and
+  the VIC fetches the video matrix at the start of it, so a late switch
+  would display row 20 from the *wrong* matrix. Switching on $D2 means
+  the right-hand ~60% of the picture's LAST raster line is drawn in text
+  mode, out of the untouched top of $0C00 — which showed up as a row of
+  white dots across the bottom bar. The fix is to make the leak
+  invisible rather than to chase the raster: clear the screen with
+  `$0286 = 0` before the picture goes up, so the KERNAL fills colour RAM
+  rows 0–19 with black and the leaked characters are black on black.
+  What remains is one raster line of the bottom bar clipped short on the
+  right, which reads as nothing. A cycle-exact switch in the horizontal
+  border would remove even that — polish, not required.
 
 The TEXT screen lives at **$0C00**: init renders it with a small loop
 from a string table in the code PRG (screen codes, not PETSCII —
 lowercase charset screen codes are a–z=1–26, A–Z=65–90, digits/
 punctuation as ASCII; verify against `font48.s`-era habits in VICE
 rather than trusting a table from memory). Text color: set color RAM
-$D800+ for rows 20–24 during init — order matters: copy the image's
-1000 colram bytes first, then overwrite the last 5 rows, i.e. offsets
-800–999, with the text color.
+$DB20+ for rows 20–24 during init, one color per row. Rows 0–19 must
+already be black by then — see the seam note above.
 
 IMPORTANT — screen RAM conflict: the bitmap's color pairs occupy
 $0400 (used by IRQ A via `$D018=$18`), the text occupies $0C00 (used by
@@ -262,31 +270,39 @@ Committed to git under `c64_client/intro/assets/` so the build never
 needs PIL, the network, or mlboy. The generator script and its inputs
 are committed too so assets are reproducible.
 
-### 5.1 Picture
+### 5.1 Logo
 
-Produced with the SAME converter the adventure pipeline uses:
-`c64llm_proxy/src/imaging.py::convert_to_c64_mc(img)` → returns
-`(bitmap 8000, screen 1000, colram 1000, bg byte)`. The first three go
-into the data blob in that order; `bg` becomes the `PIC_BG` constant
-in `intro_gen.inc`.
+**Not a picture.** The intro screen is a DRAWN logo: chunky block
+letters reading `LLM` at full height with `64` at half height,
+top-justified beside them, over the Commodore rainbow, all on black.
+An AI-generated illustration was built first and rejected — at 160×200
+in 16 colors a generated scene reads as exactly what it is, and a
+text-only logo is both more period-correct and more honest. The
+`convert_to_c64_mc` path is no longer used here at all.
 
-Source image options, in order of preference:
+Drawing it instead of converting it buys the thing that makes the
+screen move: **an exact color model.** Every lit pixel is `%01`, whose
+color is the upper nibble of that cell's screen-RAM byte. `%00` is the
+global background (`$D021`, black); `%10` and `%11` never occur. So:
 
-1. **Generate one with the adventure image backend** (nano-banana /
-   ComfyUI via the proxy's imaging path) — one-off, done by the human
-   or by you WITH THE USER'S GO-AHEAD (API quota is theirs; ask first,
-   per project convention). Prompt suggestion: *"Retro 1980s airbrushed
-   box-art of a Commodore 64 on a desk, its screen glowing, speech
-   bubble of text connecting to a friendly robot; bold 'C64 LLM' logo
-   across the top; vivid colors, dramatic lighting."* Iterate with
-   `render_preview_mc` until it reads well at 160×200.
-2. Any existing art/PNG the user supplies, run through the same
-   function (see `c64llm_proxy/tools/img2c64.py` for the hires version
-   of exactly this wrapper — write the small `--mc` variant or extend
-   that script).
+- a cell's color is exactly one byte in screen RAM,
+- one bar of the rainbow is 40 identical bytes,
+- **cycling the rainbow is six 40-byte fills per step** — no bitmap
+  rewriting, no per-cell bookkeeping,
+- color RAM is never read above the text panel, which is why the blob
+  carries none.
 
-Commit the source PNG alongside the generated blob, plus the preview
-PNG from `render_preview_mc` so reviewers can see what shipped.
+`tools/make_intro_assets.py` owns the layout: 5×7 block glyphs scaled
+by `BLOCK_W`/`BLOCK_H`, `BAR_COLORS` for the rainbow, and a build-time
+check that the logo cannot grow down into the bar rows. It emits the
+bar palette into `intro_gen.inc` as a `BAR_COLOR_TABLE` macro, so the
+colors that are drawn and the colors that are animated are one source.
+
+Palette note: `BAR_COLORS` is deliberately the bright half of the C64
+palette with no orange — indices 2 (red) and 8 (orange) are dark browns
+beside yellow, and the textbook red-orange-yellow rainbow reads as mud
+on black. Light red → yellow → light green → cyan → light blue → purple
+spans the same spectrum with nothing muddy in it.
 
 ### 5.2 Music
 
@@ -329,22 +345,23 @@ LOAD the intro depends on.
 
 ### 5.3 Generator script contract
 
-`tools/make_intro_assets.py <source.png> <tune.sid> -o c64_client/intro/assets/`
+`tools/make_intro_assets.py <tune.sid> -o c64_client/intro/assets/`
 writes:
 
 - `intro_data.bin` — the complete `c64 llm.d` file: 2-byte load
-  address ($00 $40), then bitmap 8000 + screen 1000 + colram 1000 +
-  tune memory image. Fixed offsets, so the intro's copy loops use
-  constants: bitmap at $4000, screen $5F40, colram $6328, tune $6710.
+  address ($00 $40), then bitmap 8000 + screen 1000 + tune memory
+  image. Fixed offsets, so the intro's copy loops use constants:
+  bitmap at $4000, screen $5F40, tune $6328.
 - `intro_gen.inc` (ca65 include: `SID_INIT`, `SID_PLAY`, `SID_SONG`,
-  `SID_SIZE`, `PIC_BG` constants)
-- `intro_preview.png`
+  `SID_SIZE`, `SID_LOAD`, `PIC_BG`, `BAR_ROW`, `BAR_COUNT`, and the
+  `BAR_COLOR_TABLE` macro)
+- `intro_preview.png` — what the C64 will show, bottom five rows dimmed
+  because the intro draws those itself
 
-It imports `convert_to_c64_mc`/`render_preview_mc` from
-`c64llm_proxy/src/imaging.py` the same way `img2c64.py` does
-(`sys.path` insert). The Makefile copies `intro_data.bin` into
-`build/` for c1541; `intro.s` includes `intro_gen.inc` only — no
-`.incbin` of assets into the code PRG.
+Only the preview needs PIL, and it is skipped with a note if PIL is
+absent: the blob and the include are pure stdlib. The Makefile copies
+`intro_data.bin` into `build/` for c1541; `intro.s` includes
+`intro_gen.inc` only — no `.incbin` of assets into the code PRG.
 
 ## 6. Build integration
 
@@ -461,7 +478,7 @@ user checks it.
 
 - Free disk boots to intro; registered disk unchanged byte-for-byte in
   behavior.
-- Intro shows the generated multicolor picture, plays the chosen tune,
+- Intro shows the drawn logo with the rainbow cycling, plays the tune,
   shows the pitch + both URLs, enforces the countdown, chains cleanly
   into the stock client on any key.
 - No resident-client source file modified. `make -C c64_client clean &&
@@ -519,19 +536,26 @@ the corrections and the things worth knowing next time.
   rather than a thing to remember.
 - **`intro.cfg` enforces the $0C00 ceiling**: `MAIN` is sized `$03FF`
   from $0801, so outgrowing the text screen is a link error, not a
-  mystery. Current build ends at $0BD0 — 48 bytes spare.
-- **The generator crops the source to 16:10 before conversion.** The
-  adventure pipeline's `_letterbox` pads to 320x200 preserving aspect,
-  so feeding it a square image would put black bars down both sides and
-  waste half the screen. Compose art with the bottom fifth expendable:
-  `intro_preview.png` dims it so this is visible at review time.
+  mystery. **The current build ends at $0BFE — two bytes spare.** The
+  next thing that needs room should move `text_rows`/`text_prompt` (240
+  bytes of panel text) out of the PRG and into the data blob, where
+  bytes are nearly free; do not raise the ceiling, $0C00 is the screen.
+- **The screen is a drawn logo, not a converted picture** (§5.1). The
+  first implementation did use the adventure image backend, and the
+  result was rejected on sight: an AI illustration crushed to 160x200
+  in 16 colors announces itself. Drawing the logo also made the
+  animation nearly free, and removed color RAM from the blob entirely.
+- **The seam had to be fixed, not tolerated** (§4.1). The mid-line
+  `$D018` switch leaked the untouched top of $0C00 into the last raster
+  line of the picture as white dots. Clearing with `$0286 = 0` so
+  colour RAM rows 0-19 are black costs 10 bytes and makes it invisible.
 - **Panel text says LLM64**, matching the logo in the artwork; the app
   rename from C64 LLM was in flight when this shipped. Disk filenames
   (`c64llm`, `c64 llm`, `c64 llm.d`) are unchanged and are a contract
   with the registered disk — renaming them means touching `disk:`.
 
-**Shipped assets:** picture generated with the adventure image backend
-(nano-banana), source PNG committed as `assets/intro_art.png`. Tune is
+**Shipped assets:** the logo is drawn by the generator — there is no
+source image to commit, and no PIL needed to build. Tune is
 `We Are Mature (tune 3)` by Alexander Wiklund / FairLight, from the
 relocated `b000_full` library — 3989 bytes at $B000-$BF95. **The §5.2
 licensing note still stands**: an HVSC tune is baked into a disk that
@@ -553,8 +577,15 @@ Two VICE facts that saved time and will again:
   emulated stock 1541 takes ~40s, which is exactly why `LOADING...`
   prints first.
 
-One bug worth naming, because it is a 6502 evergreen: rendering the
-panel with `ldx #199 / ... / dex / bpl` writes exactly one byte. 199 has
-bit 7 set, so the first `dex` already leaves N set. Count up and `cpx`,
-or split the loop. The prompt row's `ldx #39` loop was correct, which
-made the failure look like a memory-map problem for a while.
+Two bugs worth naming:
+
+- **`ldx #199 / ... / dex / bpl` writes exactly one byte.** 199 has bit
+  7 set, so the first `dex` already leaves N set. Count up and `cpx`, or
+  split the loop. The prompt row's `ldx #39` loop was correct, which
+  made the failure look like a memory-map problem for a while. A 6502
+  evergreen — check every `bpl` countdown whose start is above 127.
+- **Reading animated state through the VICE monitor needs one call.**
+  Each `read_memory` resumes the machine, so sampling six bar rows with
+  six reads interleaves six different animation frames and the result
+  looks like a corrupted palette. Read the whole region in a single
+  request, then slice it.
