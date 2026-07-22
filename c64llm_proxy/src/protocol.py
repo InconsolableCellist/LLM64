@@ -21,6 +21,7 @@ from . import advmap
 from .markup import colorize_for_wire, split_safe
 from .markup import prompt_snippet as color_prompt_snippet
 from .images import ImageService
+from .imagegen import make_backend
 
 
 class MessageType(IntEnum):
@@ -160,13 +161,19 @@ class ProtocolHandler:
             self.logger.info(
                 f"Music library: {len(self.music.tunes)} tunes")
 
-        # Scene illustrations (optional: needs Pillow + the gemini key,
-        # or the C64LLM_IMG_FIXTURE test hook)
-        self.images = ImageService(Path(self.config.data_dir),
-                                   mode=getattr(self.config, 'images_mode',
-                                                'ask'))
+        # Scene illustrations (optional: needs Pillow + a configured
+        # backend, or the C64LLM_IMG_FIXTURE test hook)
+        images_cfg = getattr(self.config, 'images_cfg', {})
+        self.images = ImageService(
+            Path(self.config.data_dir),
+            mode=getattr(self.config, 'images_mode', 'ask'),
+            backend=make_backend(images_cfg, self.config.data_dir,
+                                 getattr(self.config, 'config_dir', '.')),
+            style_prefix=images_cfg.get('style_prefix'))
         if self.images.available:
-            self.logger.info(f"Images enabled (mode: {self.images.mode})")
+            self.logger.info(f"Images enabled (backend: "
+                             f"{self.images.backend.name}, "
+                             f"mode: {self.images.mode})")
 
     def set_write_callback(self, callback: Callable):
         """Set callback for writing to client"""
@@ -1263,7 +1270,7 @@ class ProtocolHandler:
         if not 1 <= n <= len(pics):
             await self._send_canned("No such picture. /pics lists them.")
             return
-        path = self.images.dir / f"{pics[n - 1]['stem']}.blob"
+        path = self.images.blob_path(pics[n - 1]['stem'])
         try:
             data = path.read_bytes()
         except OSError:

@@ -121,8 +121,13 @@ class Config:
 
         # Scene illustrations: auto (directives generate immediately),
         # ask (directives suggest, /pic confirms - the default: images
-        # cost real API money), off
-        self.images_mode = config.get('images', {}).get('mode', 'ask')
+        # cost real API money), off. The rest of the table (backend
+        # choice and its per-backend settings) goes to imagegen
+        # unparsed; relative paths in it resolve against config.toml.
+        self.images_cfg = config.get('images', {})
+        self.images_mode = self.images_cfg.get('mode', 'ask')
+        self.config_dir = str(Path(config_file).resolve().parent) \
+            if config_file else '.'
 
         # Claude Code mode: the proxy drives a coding-agent session and
         # the C64 is its terminal. 'command' must point at the claude

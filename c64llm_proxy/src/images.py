@@ -1,47 +1,65 @@
 """Scene illustration service: generation, C64 conversion, storage.
 
-Backends: nano-banana (Gemini) by default; the C64LLM_IMG_FIXTURE env var
-substitutes a local PNG for every generation (tests, dry runs - no API
-cost). Modes (config [images].mode):
+The generator itself lives behind imagegen.make_backend() - Gemini,
+an OpenAI-compatible endpoint, ComfyUI, or a fixture file (docs/12).
+This module owns everything around it: the style wrapper, the C64
+conversion, and where the results land. Modes (config [images].mode):
 
   auto   - [[IMAGE: desc]] directives generate immediately (rate-limited)
   ask    - directives become a suggestion; the user triggers with /pic
   off    - directives ignored; /pic still works
 
-Generated originals and converted blobs are stored under data/images/
-and registered in the conversation's meta so the UI can list them later.
+Originals and converted blobs are stored per conversation under
+data/images/<conv_id>/<epoch>.{png,blob}, and the stem
+("<conv_id>/<epoch>") is registered in the conversation's meta so /pics
+can re-stream one without paying for it twice.
 """
 
 import asyncio
 import logging
-import os
 import time
 from pathlib import Path
 
 AUTO_INTERVAL_S = 240.0
 
+# Style guidance matters as much as the converter: art made of flat
+# shapes and high contrast survives 16 colors nearly untouched, and image
+# models love drawing frames unless told not to. Overridable via
+# [images].style_prefix - ComfyUI workflows that own their look set "".
+DEFAULT_STYLE_PREFIX = (
+    "Dark fantasy adventure game scene painted in a bold 16-color retro "
+    "palette, flat color areas, strong silhouettes, high contrast, "
+    "dramatic lighting. The artwork fills the ENTIRE frame edge to edge "
+    "- no borders, no frame, no letterboxing, no text. Scene: ")
+
 
 class ImageService:
-    def __init__(self, data_dir: Path, mode: str = "ask"):
+    def __init__(self, data_dir: Path, mode: str = "ask", backend=None,
+                 style_prefix: str = None):
         self.dir = Path(data_dir) / "images"
         self.mode = mode
+        self.backend = backend
+        # None means "unset" (use the default); "" is a real choice.
+        self.style_prefix = (DEFAULT_STYLE_PREFIX if style_prefix is None
+                             else style_prefix)
         self.logger = logging.getLogger(__name__)
         self._last_auto = 0.0
         self.pending_prompt = None   # last suggested-but-not-generated
-        self._fixture = os.environ.get("C64LLM_IMG_FIXTURE")
 
     @property
     def available(self) -> bool:
-        if self.mode == "off":
+        if self.mode == "off" or self.backend is None:
             return False
-        if self._fixture:
-            return True
         try:
             import PIL  # noqa: F401
-            from . import nano_banana
-            return nano_banana.key_available()
         except ImportError:
             return False
+        return self.backend.available()
+
+    def blob_path(self, stem: str) -> Path:
+        """Where a registered picture's blob lives. Old flat stems
+        (conv_epoch) still resolve; new ones carry their folder."""
+        return self.dir / f"{stem}.blob"
 
     def prompt_snippet(self) -> str:
         """Instruction block appended to the adventure system prompt."""
@@ -76,29 +94,24 @@ class ImageService:
 
     def _generate_sync(self, prompt: str, conv_id, caption=None):
         from .imaging import convert_to_c64_mc
+        from .imagegen import ImageGenError
         from PIL import Image
         import io
 
-        if self._fixture:
-            raw = Path(self._fixture).read_bytes()
-        else:
-            from . import nano_banana
-            # Style guidance matters as much as the converter: art made
-            # of flat shapes and high contrast survives 16 colors nearly
-            # untouched, and image models love drawing frames unless told
-            raw = nano_banana.generate(
-                "Dark fantasy adventure game scene painted in a bold "
-                "16-color retro palette, flat color areas, strong "
-                "silhouettes, high contrast, dramatic lighting. The "
-                "artwork fills the ENTIRE frame edge to edge - no "
-                "borders, no frame, no letterboxing, no text. Scene: "
-                + prompt, purpose="adventure")
+        raw = self.backend.generate(self.style_prefix + prompt,
+                                    purpose="adventure")
 
-        self.dir.mkdir(parents=True, exist_ok=True)
-        stem = f"{conv_id}_{int(time.time())}"
+        # One folder per conversation, matching conversations/<id>.json.
+        folder = self.dir / str(conv_id).replace("/", "_")
+        folder.mkdir(parents=True, exist_ok=True)
+        stem = f"{folder.name}/{int(time.time())}"
         (self.dir / f"{stem}.png").write_bytes(raw)
 
-        img = Image.open(io.BytesIO(raw))
+        try:
+            img = Image.open(io.BytesIO(raw))
+        except Exception as e:
+            # Whatever the backend handed back, it wasn't an image.
+            raise ImageGenError(f"backend returned unreadable image data: {e}")
         bitmap, screen, colram, bg = convert_to_c64_mc(img, caption=caption)
         blob = bitmap + screen + colram
         (self.dir / f"{stem}.blob").write_bytes(blob + bytes([bg]))

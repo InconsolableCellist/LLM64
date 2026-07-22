@@ -158,8 +158,9 @@ VICE-based e2e test suite.
 - **Proxy** (`c64llm_proxy/src`): protocol.py (the big one: dispatch,
   pacing, media streaming with BEGIN-handshake + windowed flow control),
   modes.py (system prompts incl. adventure [[STATE]] JSON), music.py
-  (directive hold-back filter for [[MUSIC/IMAGE/STATE]]), imaging.py
-  (nano-banana → C64 multicolor), conversation.py (persistence + meta),
+  (directive hold-back filter for [[MUSIC/IMAGE/STATE]]), imagegen.py
+  (pluggable image backends) + imaging.py (→ C64 multicolor) +
+  images.py (style, storage), conversation.py (persistence + meta),
   claude_session.py (/code driver). Handlers that await a client reply
   must NOT run on the reader task — use `_spawn_media()` (deadlock class).
 - **Status row (row 24)**: free status text on the left, then the
@@ -718,15 +719,29 @@ growth pushes BSS up into the same space). The 40-col fallback menu's
 's' is a plain local stop now. Git history has the player if it is ever
 wanted back.
 
-### 3g. Pluggable image backends — SPECCED (docs/12-image-backends.md)
-Replace the hardcoded nano-banana client with a backend interface:
-gemini (unchanged default), any OpenAI-compatible `/images/generations`
-endpoint, ComfyUI (workflow-API JSON with a `{PROMPT}` placeholder,
-queue-and-poll), and fixture. Proxy-only work — no wire or client
-changes. The spec in docs/12 is written to be implemented as-is:
-interface, config schema, safety rules (keys in headers only, size
-caps, `available()` must never do network I/O — it runs every turn),
-ordered steps, tests, and the end-user setup guide.
+### 3g. Pluggable image backends — DONE (docs/12-image-backends.md)
+`nano_banana.py` is gone; `src/imagegen.py` holds `ImageBackend` and four
+implementations picked by `[images].backend`: **gemini** (still the
+default, still works with zero config on this machine — key from
+`[images.gemini].key`, then `GEMINI_API_KEY`, then the legacy
+`~/Pictures/nano-banana/.gemini.env`), **openai** (any
+`/images/generations` endpoint; handles gpt-image-1's `response_format`
+rejection with one retry, and url-style responses), **comfyui**
+(API-format workflow JSON with a `{PROMPT}` token, queue-and-poll,
+seeds randomized or every identical prompt returns ComfyUI's cache), and
+**fixture** (`C64LLM_IMG_FIXTURE` still forces it). Proxy-only — no wire
+or client change. Load-bearing invariants, all covered by
+`tests/test_imagegen.py`: keys go in headers only and never appear in an
+exception, every body is read through a 16 MB cap, and `available()`
+does no network I/O because it runs on every assistant turn. The style
+wrapper moved to `[images].style_prefix` (unset = the original
+dark-fantasy text, `""` for ComfyUI workflows that own their look).
+Storage is now per conversation — `data/images/<conv_id>/<epoch>.{png,blob}`,
+stem `"<conv_id>/<epoch>"` in the conversation meta — matching
+`conversations/<id>.json`. Pre-existing flat stems still resolve, and
+`/pic <n>` already says "That picture's data is gone" for a missing blob.
+`config.toml.example` documents all four backends; docs/12 has the
+end-user setup guide.
 
 ### 4. Screensaver / always-on assistant
 Idle detection client-side; unsolicited server frames already work
