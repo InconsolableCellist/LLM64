@@ -49,16 +49,18 @@ VICE-based e2e test suite.
 - **TWO distribution disks now**: `c64llm.d64` (registered) and
   `c64llm-free.d64` (shareware intro first, docs/11). They differ only by
   the intro. `deploy-c64u-disk-80-free` deploys the free one.
-  `/Temp` always receives the FIXED name `c64llm.d64` — it is the scratch
-  slot the telnet automation drives, which can't see the browser
-  highlight and so assumes one c64llm file is there. `/Flash` keeps each
-  artifact's real name, so both disks persist side by side and you pick
-  from the Ultimate's menu. Deploying free does NOT clobber registered in
-  Flash; it does replace it in Temp.
-- Both deploy targets run `inject-cfg` (`CFG_DISK=` selects the image).
-  The free disk needs it for the same reason the paid one does — the
-  dead-F1-menu bug below — even though a real shareware release must
-  ship cfg-free. For a release: `make -C c64_client disk-free`, stop.
+- **Deploys go to `/Flash` only, under the artifact's real name.** The
+  `/Temp` mirror is gone: it is a RAM disk wiped on power-off and the
+  user never boots from it. Both disks therefore persist side by side and
+  are picked from the Ultimate's own menu without a rebuild.
+  `emu/u64_telnet.py` navigates Flash and selects the file BY NAME
+  (`_browser_pick`), raising with a screen dump if it is not listed —
+  running the wrong image would look exactly like a code bug.
+- **`inject-cfg` is the paid deploy only** (`CFG_DISK=` selects the
+  image; `INJECT_CFG=1` opts the free deploy in). It is a convenience so
+  the maintainer need not retype the address — NOT a fix. The free
+  deploy deliberately ships cfg-free, because that is the new-user path
+  and it is the reproduction case for the dead-F1-menu bug below.
 - Fresh d64s carry no cfg (first boot opens the config editor). When
   deploying to the user's machine, inject their cfg first:
   blob = `b'\x00\x10\xc6\x01' + b'192.168.1.21'.ljust(32,b'\0') + b'6400'.ljust(6,b'\0')`,
@@ -267,6 +269,15 @@ are cfg-free by design, so EVERY new user takes exactly the path that
 failed here. Do not ship the free disk until this is understood.
 
 To confirm causality, deploy a cfg-free disk deliberately and press F1.
+`make deploy-c64u-disk-80-free` is now exactly that experiment: it ships
+cfg-free on purpose, so the free disk is the standing reproduction case
+rather than something to protect from the bug.
+
+Framing worth keeping (2026-07-22): injecting the cfg is testing
+convenience, nothing more. Entering the address at the config editor IS
+the product's first-run experience, so "works when a cfg was injected"
+is not a working program — for the shareware disk it is a total failure
+for 100% of users, on the F1 menu, which is the main way in.
 
 ## OPEN BUG — crash to BASIC while typing (fix deployed, unconfirmed)
 

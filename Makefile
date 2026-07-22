@@ -149,19 +149,21 @@ inject-cfg:
 # title-bar hash inside the disk is a lie.
 #
 # It lands in /Flash as c64llm-free.d64, beside the registered
-# c64llm.d64, so both stay bootable from the Ultimate's menu; only the
-# /Temp scratch copy is overwritten (see emu/u64_telnet.py).
+# c64llm.d64, so both stay bootable from the Ultimate's menu.
 #
-# inject-cfg applies here too, and NOT because the free disk should ship
-# with a config - it must not. It is because a cfg-free disk currently
-# comes up with a dead F1 menu (HANDOFF.md, open bug), which would look
-# exactly like the intro having broken something. For a real release
-# build the disk with `make -C c64_client disk-free` and stop there.
+# NO inject-cfg here, deliberately. A shareware disk ships cfg-free and
+# meets its user with the config editor, so this target IS the new-user
+# path - which is exactly the path that currently ends in a dead F1 menu
+# (HANDOFF.md, open bug). Injecting a cfg would hide the one bug that
+# every free-disk user is guaranteed to hit. `INJECT_CFG=1` opts in when
+# you just don't want to retype the address.
 deploy-c64u-disk-80-free:
 	$(MAKE) -C c64_client clean
 	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
 	$(MAKE) -C c64_client disk-free
+ifdef INJECT_CFG
 	$(MAKE) inject-cfg CFG_DISK=c64_client/build/c64llm-free.d64
+endif
 	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm-free.d64
 
 # Same disk, built DIAG=1 (crash post-mortem block at $02A7, see

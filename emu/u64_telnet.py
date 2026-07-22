@@ -102,42 +102,54 @@ def _context_pick(u, entry):
     u.key('enter')
 
 
+def _browser_pick(u, filename):
+    """In an open file browser, move the highlight to `filename` and open
+    its context menu. Raises if the name is not on screen.
+
+    Entering a directory leaves the highlight on the first entry, so the
+    move is (target row - first entry row) presses of Down. Failing loudly
+    beats guessing: running the wrong disk image looks like a code bug."""
+    import time
+    lines = u.text().splitlines()
+    hits = [i for i, l in enumerate(lines) if filename.lower() in l.lower()]
+    if not hits:
+        raise RuntimeError(
+            f'{filename!r} not in the browser listing:\n{u.text()}')
+    row = hits[0]
+    first = row
+    while first > 0 and lines[first - 1].strip():
+        first -= 1
+    for _ in range(row - first):
+        u.key('down')
+        time.sleep(0.1)
+    u.key('enter')      # context menu on the highlighted file
+
+
 def deploy_and_run(path, host='192.168.1.64'):
-    """Upload a PRG or D64 to /Temp via FTP and run it via the telnet
+    """Upload a PRG or D64 to /Flash via FTP and run it via the telnet
     menu. For a .d64 the Ultimate's 'Run Disk' mounts it on the drive
     (JiffyDOS-fast, config saves write back into the image) and boots
     LOAD"*",8,1.
 
-    NOTE: the screen reconstruction can't see the browser highlight,
-    so this assumes the uploaded file is the FIRST entry the cursor
-    lands on - keep /Temp free of other c64llm files (the deploy
-    targets overwrite in place, so this holds in practice).
-
-    That is why /Temp always gets the same fixed name whatever we are
-    handed: it is the scratch slot the menu automation drives, and only
-    one thing may live there. /Flash is different - it is the persistent
-    copy the user boots by hand, so it keeps the artifact's REAL name.
-    Without that, deploying the free disk would overwrite the registered
-    one in Flash and the two could never sit side by side."""
+    /Flash only, and under the artifact's REAL name. /Temp is a RAM disk
+    that is wiped on power-off and the user never boots from it, so
+    mirroring there bought nothing; keeping the real name is what lets
+    c64llm.d64 and c64llm-free.d64 sit side by side and be picked from
+    the Ultimate's own menu without a rebuild."""
     import subprocess
     import os
     is_d64 = path.lower().endswith('.d64')
-    temp_name = 'c64llm.d64' if is_d64 else 'c64llm.prg'
-    flash_name = os.path.basename(path)
+    name = os.path.basename(path)
     subprocess.run(['curl', '-sS', '-T', path,
-                    f'ftp://{host}/Temp/{temp_name}', '--user', 'anonymous:'],
-                   check=True)
-    # /Temp is a RAM disk (gone on power-off); keep a persistent copy
-    # in /Flash so a cold boot has the current build on hand.
-    subprocess.run(['curl', '-sS', '-T', path,
-                    f'ftp://{host}/Flash/{flash_name}', '--user', 'anonymous:'],
+                    f'ftp://{host}/Flash/{name}', '--user', 'anonymous:'],
                    check=True)
     u = U64Screen(host)
     u.pump(1.0)
     u.key('left', 6)   # up to the root listing from wherever we are
-    u.key('down', 2)   # SD -> Flash -> Temp
-    u.key('right')     # enter Temp
-    u.key('enter')     # context menu on the highlighted file
+    u.key('down')      # SD -> Flash
+    u.key('right')     # enter Flash
+    u.pump(0.5)
+    _browser_pick(u, name)
     u.pump(0.5)
     if is_d64:
         _context_pick(u, 'run disk')
@@ -145,7 +157,8 @@ def deploy_and_run(path, host='192.168.1.64'):
         u.key('enter')  # first entry: Run
     u.pump(1.0)
     u.close()
-    print('deployed and running' + (' (disk mounted)' if is_d64 else ''))
+    print(f'deployed /Flash/{name} and running'
+          + (' (disk mounted)' if is_d64 else ''))
 
 
 if __name__ == '__main__':
