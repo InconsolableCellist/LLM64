@@ -213,6 +213,47 @@ VICE-based e2e test suite.
   SID `music_state` assert — tcpser real-time pacing at 9600; real HW is
   proven at 19200. Don't chase it as part of unrelated work.
 
+## OPEN BUG — a disk deployed with no cfg comes up with a dead F1 menu
+
+Found 2026-07-22 while chasing what looked like a client regression and
+was not. Symptom: press F1, the menu module loads from disk and draws
+its panel, "fetching from server..." never resolves. The proxy RECEIVES
+the GET_MENU and sends a well-formed MENU_LIST (verified independently:
+11 entries, CRC good, single 252-byte frame). The client can still SEND
+- it is only receiving that is dead - and the state survives a redial.
+
+**The variable is whether c64llm.cfg was already on the disk**, i.e.
+whether the client ran its first-boot config editor and SAVED the cfg to
+the mounted image. Five deploys, three different client builds:
+
+  d04cafc  no cfg (typed the IP)   F1 dead
+  d04cafc  no cfg, after redial    F1 dead
+  b9a71b0  cfg injected            F1 works
+  2b43435  cfg injected            F1 works
+  d04cafc  cfg injected            F1 works
+
+So the code was innocent; `make deploy-c64u-disk-80` now runs
+`inject-cfg` so the maintainer's disk never takes that path.
+
+**Mechanism NOT understood.** Two candidates, neither confirmed:
+- `config_save()` (cfg.c) calls `cbm_save` with the serial NMI LIVE.
+  Every other disk access brackets itself - `mod_open` does
+  `serial_rx_pause()` / `serial_rx_resume()` around `module_load`
+  precisely because "JiffyDOS bit-bangs cycle-exact IEC transfers and a
+  serial NMI mid-byte would corrupt them". The save has no such guard.
+  Against this theory: on FIRST boot nothing is connected yet, so there
+  should be no incoming bytes to fire an NMI. It is still a real latent
+  bug for `F1 -> e)config` while connected, and worth fixing.
+- The Ultimate's own 1541 emulation writing back into the mounted d64.
+  Cannot be inspected from here. The image `make disk` produces is sound
+  (c1541 -validate leaves the free count unchanged at 552).
+
+**This matters for the shareware disk** (docs/11): distribution disks
+are cfg-free by design, so EVERY new user takes exactly the path that
+failed here. Do not ship the free disk until this is understood.
+
+To confirm causality, deploy a cfg-free disk deliberately and press F1.
+
 ## OPEN BUG — crash to BASIC while typing (fix deployed, unconfirmed)
 
 **Symptom** (reported 2026-07-21, build f694a27): adventure mode, a few
@@ -676,6 +717,16 @@ $9C00 minus the top of BSS - the overlay slot is the ceiling, and code
 growth pushes BSS up into the same space). The 40-col fallback menu's
 's' is a plain local stop now. Git history has the player if it is ever
 wanted back.
+
+### 3g. Pluggable image backends — SPECCED (docs/12-image-backends.md)
+Replace the hardcoded nano-banana client with a backend interface:
+gemini (unchanged default), any OpenAI-compatible `/images/generations`
+endpoint, ComfyUI (workflow-API JSON with a `{PROMPT}` placeholder,
+queue-and-poll), and fixture. Proxy-only work — no wire or client
+changes. The spec in docs/12 is written to be implemented as-is:
+interface, config schema, safety rules (keys in headers only, size
+caps, `available()` must never do network I/O — it runs every turn),
+ordered steps, tests, and the end-user setup guide.
 
 ### 4. Screensaver / always-on assistant
 Idle detection client-side; unsolicited server frames already work

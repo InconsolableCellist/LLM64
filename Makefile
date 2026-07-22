@@ -121,13 +121,40 @@ deploy-c64u-disk-80:
 	$(MAKE) -C c64_client clean
 	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
 	$(MAKE) -C c64_client disk
+	$(MAKE) inject-cfg
 	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm.d64
+
+# Write the maintainer's NetConfig into the freshly built disk. NOT for
+# distribution disks - those stay cfg-free by design so a new user meets
+# the config editor.
+#
+# This is not a convenience. A disk deployed WITHOUT it makes the client
+# save its own cfg to the mounted image on first boot, and on 2026-07-22
+# every deploy that took that path came up with a dead F1 menu (module
+# loads, panel draws, MENU_LIST never arrives) while every deploy with
+# the cfg already present worked - five for five, across three different
+# client builds. The mechanism is not yet understood; see HANDOFF.md.
+#
+# NetConfig blob: 2 dummy bytes for the PRG header cbm_load skips, magic
+# C6 01, then host[32] and port[6], NUL-padded. Digits and dots are
+# identical in PETSCII and ASCII, so no conversion needed.
+inject-cfg:
+	$(PYTHON) -c "open('c64_client/build/user.cfg','wb').write(b'\x00\x10\xc6\x01'+b'$(C64_CFG_HOST)'.ljust(32,b'\0')+b'$(C64_CFG_PORT)'.ljust(6,b'\0'))"
+	$(VICE_RUN) c1541 c64_client/build/c64llm.d64 -write c64_client/build/user.cfg c64llm.cfg
+
+# The free (shareware) disk: identical contents plus the intro PRG as the
+# first file, so Run Disk boots the intro and the intro chain-loads the
+# client. Rule 1 applies as always - commit first, then build, or the
+# title-bar hash inside the disk is a lie.
+deploy-c64u-disk-80-free:
+	$(MAKE) -C c64_client clean
+	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
+	$(MAKE) -C c64_client disk-free
+	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm-free.d64
 
 # Same disk, built DIAG=1 (crash post-mortem block at $02A7, see
 # docs/07-crash-postmortem.md) and with a config already on it, so it
 # boots straight to the chat instead of the first-run config editor.
-# Distribution disks stay cfg-free by design - this target is for the
-# maintainer's own machine while a bug is being hunted.
 C64_CFG_HOST ?= $(C64_PROXY_IP)
 C64_CFG_PORT ?= 6400
 
