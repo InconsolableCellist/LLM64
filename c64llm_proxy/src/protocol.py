@@ -142,6 +142,8 @@ class ProtocolHandler:
         # stop key). Kept apart from _music_manual so the status chrome
         # can stop naming a tune that is no longer audible.
         self._music_stopped = False
+        # One setup tune per trip through the front door
+        self._adv_music = False
         self._wire_hold = ''
         # What the player typed this turn, for the map's direction
         # fallback ("n", "go north"). Never load-bearing - it only
@@ -519,6 +521,7 @@ class ProtocolHandler:
                 # keeps it, and it is option 2 without the asking.
                 await self._start_adventure(arg)
             else:
+                self._adv_music = False
                 self._adv_setup = AdventureSetup(
                     templates=self._templates.list())
                 await self._send_canned(self._adv_setup.opening_screen())
@@ -2092,6 +2095,35 @@ class ProtocolHandler:
         self.stream_task = asyncio.create_task(
             self._stream_response(hidden_user_msg=self.mode.kickoff()))
 
+    # Character creation is several minutes of menus before a word of
+    # story, and silence makes it feel like filling in a form.
+    # 'adventurous' first - the mood of setting out - with fallbacks in
+    # case a library has that bucket empty.
+    SETUP_MOODS = ('adventurous', 'heroic', 'mysterious', 'serene')
+
+    async def _setup_music(self):
+        """A tune for the character-creation stages. Once per setup, and
+        never over a manual choice. It does NOT claim manual control
+        itself: the narrator must be able to take the soundtrack the
+        moment the story opens, which is the whole point of starting one
+        here rather than making the player ask."""
+        if (self._adv_music or self._music_manual
+                or not self.music.available):
+            return
+        self._adv_music = True
+        for mood in self.SETUP_MOODS:
+            tune = self.music.pick(mood)
+            if not tune:
+                continue
+            self.music.mark_changed()
+            self.conv_manager.set_meta('music', {'mood': mood,
+                                                 'tune': tune['id']})
+            # Spawned, never awaited: send_sid waits for an ACK that only
+            # the reader task can dispatch, and this runs ON that task.
+            self._spawn_media(self.send_sid(tune))
+            self.logger.info("setup music: %s (%s)", tune['title'], mood)
+            return
+
     async def _adv_setup_input(self, text: str):
         """One turn of the front door (docs/09-adventure-setup.md). The
         state machine decides what to show; this only performs what it
@@ -2109,6 +2141,7 @@ class ProtocolHandler:
                 # are reused, so the expensive pass is not paid again.
                 reply, _ = setup.start_reroll(saved)
                 await self._send_canned(reply)
+                await self._setup_music()
                 return
             self._adv_setup = None
             await self._start_adventure(
@@ -2149,6 +2182,13 @@ class ProtocolHandler:
             return
         if reply:
             await self._send_canned(reply)
+            # Music once the player commits to BUILDING a character.
+            # Not at the chooser: options 1 and 2 go straight into play,
+            # where the narrator picks the soundtrack itself, and a SID
+            # in flight makes the client swallow Return as 'Busy' - no
+            # reason to spend that on someone who chose 'surprise me'.
+            if self._adv_setup and self._adv_setup.state == 'stage':
+                await self._setup_music()
 
     async def _stop_music(self):
         """Silence the client and make it STAY silent. Stopping is a

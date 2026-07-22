@@ -1016,13 +1016,63 @@ def main():
                     # chooser -> four stages -> review -> edit one line
                     # and come back -> begin. Zero client bytes, so this
                     # is purely proxy behaviour seen through the C64.
+                    # Silence first, or the music assertion below is
+                    # vacuous - an earlier test may have left a tune
+                    # running. /auto hands the soundtrack back, so the
+                    # setup tune is not suppressed as a manual choice.
+                    monitor.keyboard_feed('/music stop\r')
+                    wait_for_screen(monitor, r'music off', 20, artifacts,
+                                    f'{tag}-adv-silence')
+                    wait_ready(monitor, 20, artifacts, f'{tag}-adv-sil-rdy')
+                    monitor.keyboard_feed('/auto\r')
+                    wait_for_screen(monitor,
+                                    r'narrator picks the music again', 20,
+                                    artifacts, f'{tag}-adv-auto')
+                    wait_ready(monitor, 20, artifacts, f'{tag}-adv-auto-rdy')
+
+                    def adv_wait_idle(label, timeout=30):
+                        """Ready - or the tune title that legitimately
+                        replaced it when the setup music landed.
+
+                        Read the LEFT 40 COLUMNS of the status row only.
+                        Two things carry the tune name elsewhere and both
+                        are true permanently: the scrollback (the
+                        narrator announces its choice) and the row's
+                        right-hand chrome. Matching either returns
+                        instantly, and the keystroke that follows is
+                        swallowed while the client is still drawing."""
+                        end = time.time() + timeout
+                        while time.time() < end:
+                            rows = monitor.screen_text().splitlines()
+                            row = (rows[24][:40].lower()
+                                   if len(rows) > 24 else '')
+                            if 'ready.' in row or 'astro chase' in row:
+                                return
+                            time.sleep(POLL_INTERVAL)
+                        raise AssertionError(
+                            f'client never went idle ({label})')
+
                     monitor.keyboard_feed('/adventure\r')
                     wait_for_screen(monitor, r'surprise me', 30,
                                     artifacts, f'{tag}-adv-menu')
-                    wait_ready(monitor, 30, artifacts, f'{tag}-adv-w0')
+                    adv_wait_idle(f'{tag}-adv-w0')
                     monitor.keyboard_feed('3\r')
                     wait_for_screen(monitor, r'step 1 of 10', 20,
                                     artifacts, f'{tag}-adv-s1')
+                    # Character creation brings its own music - several
+                    # minutes of menus before a word of story. Wait for
+                    # it to LAND before typing: the client swallows
+                    # Return as 'Busy' while a SID is in flight, and
+                    # this harness types faster than any human reads.
+                    deadline = time.time() + 40
+                    while monitor.read_memory(
+                            labels['_music_state'],
+                            labels['_music_state'])[0] != 0xFF:
+                        if time.time() > deadline:
+                            raise AssertionError(
+                                'character creation started in silence')
+                        time.sleep(1)
+                    print('  PASS: character creation has music')
                     # Choices are made BY NAME, not by number: the class
                     # list is filtered by rolled dice, so numbering is
                     # not deterministic. Wanderer has no requirements and
@@ -1041,14 +1091,13 @@ def main():
                         ('Bruni Ashvein',         'step 9 of 9'),
                     ]
                     for answer, expect in script:
-                        wait_ready(monitor, 30, artifacts,
-                                   f'{tag}-adv-{expect[5]}')
+                        adv_wait_idle(f'{tag}-adv-{expect[5]}')
                         monitor.keyboard_feed(answer + '\r')
                         wait_for_screen(monitor, expect, 20, artifacts,
                                         f'{tag}-adv-{expect[5]}b')
                     print('  PASS: character stages, and a non-caster '
                           'skips the spell step')
-                    wait_ready(monitor, 30, artifacts, f'{tag}-adv-w9')
+                    adv_wait_idle(f'{tag}-adv-w9')
                     monitor.keyboard_feed('the flooded nave\r')
                     scr = wait_for_screen(monitor, r'your adventure:', 25,
                                           artifacts, f'{tag}-adv-review')
@@ -1060,7 +1109,7 @@ def main():
                         raise AssertionError(
                             f'spell line shown for a non-caster:\n{scr}')
                     print('  PASS: adventure setup reaches the review')
-                    wait_ready(monitor, 30, artifacts, f'{tag}-adv-r1')
+                    adv_wait_idle(f'{tag}-adv-r1')
                     # Edit the Tone line and confirm it returns to the
                     # review rather than walking forward again.
                     monitor.keyboard_feed('2\r')
@@ -1073,7 +1122,7 @@ def main():
                     wait_for_screen(monitor, r'Tone\s+hopeful', 20,
                                     artifacts, f'{tag}-adv-back')
                     print('  PASS: an edit returns to the review')
-                    wait_ready(monitor, 30, artifacts, f'{tag}-adv-r2')
+                    adv_wait_idle(f'{tag}-adv-r2')
                     monitor.keyboard_feed('y\r')
                     # The prep pass runs first ("Preparing the world"),
                     # then the adventure itself.
