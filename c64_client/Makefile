@@ -59,8 +59,10 @@ endif
 
 # DIAG=1 compiles in the crash post-mortem block (src/diag.s): a
 # breadcrumb ring and a C-stack canary at $02A7, both readable with PEEK
-# after the machine drops to BASIC. Costs ~240 bytes of the ~307-byte
-# module-slot headroom, so it is opt-in rather than always-on.
+# after the machine drops to BASIC. Costs ~240 bytes of the module-slot
+# headroom (~819 bytes free in the MODE80 DIAG-off map after the asm hot
+# loops and the baud config landed), so it is opt-in rather than
+# always-on.
 ifdef DIAG
 CFLAGS += -DDIAG
 ASFLAGS += -D DIAG
