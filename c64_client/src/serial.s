@@ -100,6 +100,9 @@ rx_masked:      .res 1          ; RX IRQ currently masked (ring was full).
                                 ; command write, and with 'drop on DTR
                                 ; low' / 'RTS handshake' enabled a kHz
                                 ; stream of rewrites glitches the line.
+fg_lock:        .res 1          ; foreground is mid-pickup of the ACIA data
+                                ; register - the NMI must keep its hands off
+                                ; it (SEI cannot mask NMI). See fg_pickup.
 rx_buffer:      .res RX_RING_SIZE
 rx_buffer_end:
 
@@ -247,6 +250,8 @@ _acia_init_hw:
 ; run our own matrix scanner (keyboard.s) instead of the KERNAL's.
 ;---------------------------------------
 drain_sub:
+        lda fg_lock             ; foreground is mid-pickup: leave the data
+        bne @rts                ; register alone, it finishes the read
 @chk:   lda ACIA_STATUS
         tax
         and #$04                ; overrun flag: a byte was lost in hardware
@@ -361,8 +366,10 @@ raw_nmi_entry:
         txa
         pha
         lda ACIA_STATUS
-        bpl @out
-        jsr drain_sub
+        bmi @drain              ; bit7: the ACIA raised this one
+        and #ACIA_SR_RDRF       ; bit7 clear but a byte is waiting? then a
+        beq @out                ; foreground status read ate our flag - the
+@drain: jsr drain_sub           ; interrupt is still ours (see acia_nmi_entry)
 @out:   pla
         tax
         pla
@@ -374,30 +381,26 @@ raw_nmi_entry:
 ; cartridges commonly raise NMI, so drain here too; anything that is
 ; not ours (RESTORE key) chains to the KERNAL with registers intact.
 ;---------------------------------------
+; Bit 7 of the status register is NOT a reliable "was it me" test: the
+; 6551 clears it on ANY status read, and the foreground reads status in
+; four places (serial_available, serial_write's TDRE poll,
+; serial_can_write, serial_flush). If one of those lands between the
+; ACIA asserting the line and this handler running, bit 7 reads clear,
+; we chain to the KERNAL RESTORE handler, and the received byte stays
+; stranded in the data register - fatal at 38400, where the next byte
+; overruns before serial_available's poll heals it. So also accept the
+; interrupt when RDRF says a byte is waiting; the cost is that a
+; RESTORE keypress arriving in the same microseconds as a byte is
+; swallowed instead of chained (press it again when the line is idle).
 acia_nmi_entry:
         pha
         txa
         pha
         lda ACIA_STATUS
-        bpl @chain              ; not the ACIA: RESTORE etc.
-@drain: and #ACIA_SR_RDRF
-        beq @ours
-        lda rx_used+1
-        cmp #>RX_RING_SIZE
-        bcs @nfull
-        lda ACIA_DATA
-        jsr ring_write
-        inc rx_used
-        bne @nmore
-        inc rx_used+1
-@nmore: lda ACIA_STATUS
-        jmp @drain
-@nfull: inc overflows           ; ring full: mask RX IRQ (see drain_sub)
-        lda #ACIA_CMD_VALUE | 2
-        sta ACIA_COMMAND
-        lda #1
-        sta rx_masked
-@ours:
+        bmi @drain              ; ours: the interrupt flag is still set
+        and #ACIA_SR_RDRF       ; flag eaten by a foreground read?
+        beq @chain              ; no byte either: RESTORE etc.
+@drain: jsr drain_sub           ; honours fg_lock; counts overruns
         pla
         tax
         pla
@@ -407,6 +410,62 @@ acia_nmi_entry:
         tax
         pla
         jmp nmi_chain
+
+;---------------------------------------
+; fg_pickup - rescue a byte the interrupt never got (foreground context)
+;
+; Both contexts read the same data register, so the read has to be
+; owned by exactly one of them. SEI is not enough: it stops the IRQ
+; path but the 6551 raises NMI on real hardware, and an NMI landing
+; between our status read and our "lda ACIA_DATA" makes both contexts
+; read the register - the NMI banks the byte, we bank a stale copy, and
+; the ring gets a duplicate that fails CRC downstream.
+;
+; fg_lock closes that window without touching ACIA_COMMAND (command
+; writes are poison on the C64U modem - it re-evaluates DTR/RTS on each
+; one). With the lock held the NMI returns without reading, and this
+; routine's re-read of the status register decides who actually takes
+; the byte: RDRF still set means it is ours, RDRF clear means the
+; interrupt beat us to it and there is nothing to do. Either way
+; exactly one context reads ACIA_DATA, and the byte is always read by
+; someone - which matters because the 6551 asserts the interrupt LINE
+; while RDRF stands, and the 6502's NMI is edge-triggered: a byte whose
+; edge was missed would otherwise sit there forever with no new edge
+; coming, i.e. serial dead.
+;
+; Preserves A/X/Y (callers use them for loop state).
+;---------------------------------------
+fg_pickup:
+        php
+        sei                     ; lock out the IRQ path first...
+        pha
+        txa
+        pha
+        tya
+        pha
+        lda #1
+        sta fg_lock             ; ...then the NMI path
+        lda ACIA_STATUS
+        and #ACIA_SR_RDRF
+        beq @unlock             ; the interrupt already took it
+        lda rx_used+1           ; room in the ring?
+        cmp #>RX_RING_SIZE
+        bcs @unlock             ; full: the masked path owns this byte
+        lda ACIA_DATA
+        jsr ring_write
+        inc rx_used
+        bne @unlock
+        inc rx_used+1
+@unlock:
+        lda #0
+        sta fg_lock
+        pla
+        tay
+        pla
+        tax
+        pla
+        plp
+        rts
 
 ;---------------------------------------
 ; uint8_t serial_available(void)
@@ -420,8 +479,8 @@ acia_nmi_entry:
 ; gated to real mask transitions because the C64U modem re-evaluates
 ; DTR/RTS on every command write (kHz rewrites glitched the line:
 ; dropped packets, even hangups with 'drop on DTR low' enabled).
-; IRQs are masked around the pickup to keep the ring writer
-; single-threaded.
+; The pickup itself goes through fg_pickup, which keeps the ring writer
+; single-threaded against BOTH interrupt paths.
 ;---------------------------------------
 _serial_available:
         php
@@ -438,14 +497,7 @@ _serial_available:
 @pick:  lda ACIA_STATUS
         and #ACIA_SR_RDRF
         beq @counts
-        lda rx_used+1           ; room in the ring?
-        cmp #>RX_RING_SIZE
-        bcs @counts             ; full: the masked path owns this byte
-        lda ACIA_DATA           ; stranded byte: pick it up ourselves
-        jsr ring_write
-        inc rx_used
-        bne @counts
-        inc rx_used+1
+        jsr fg_pickup           ; stranded byte: pick it up ourselves
 @counts:
         plp
         lda rx_used
@@ -587,16 +639,30 @@ _serial_overruns:
 
 ;---------------------------------------
 ; uint8_t serial_write(uint8_t byte)
-; Waits for TDRE with a timeout fallback (~2 byte times) so a stuck
+; Waits for TDRE with a timeout fallback (~4 byte times) so a stuck
 ; TDRE (real 65C51 bug) degrades to pacing instead of hanging.
+;
+; Every poll of the status register here clears the ACIA's interrupt
+; flag, so a byte arriving during a TX burst can lose its interrupt
+; entirely - and the client does send windowed ACKs while a stream is
+; still arriving. Rather than leave that byte for the next main-loop
+; poll (too late at 38400), rescue it right here: the spin is idle time
+; anyway. fg_pickup preserves X (the timeout counter) and Y (the byte
+; being sent).
 ;---------------------------------------
 _serial_write:
         tay                     ; save byte
-        ldx #0                  ; timeout: 256 * ~9 cycles per inner pass
+        ldx #0                  ; timeout: 256 * ~17 cycles per inner pass
 @wait_outer:
         lda ACIA_STATUS
+        sta tmp2                ; tmp1 belongs to push_and_write
         and #ACIA_SR_TDRE
         bne @send
+        lda tmp2
+        and #ACIA_SR_RDRF
+        beq @nopick
+        jsr fg_pickup
+@nopick:
         inx
         bne @wait_outer
         ; TDRE never set: fall back to a fixed one-byte-time delay
