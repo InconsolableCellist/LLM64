@@ -46,6 +46,19 @@ VICE-based e2e test suite.
   `c64llm.1`–`.4` + `c64llm.cfg`. `make deploy-c64u-disk-80` builds and
   deploys; `emu/u64_telnet.py` mirrors to BOTH `/Temp` (RAM disk, wiped on
   power-off) and `/Flash` (persistent; the user boots from /Flash).
+- **TWO distribution disks now**: `c64llm.d64` (registered) and
+  `c64llm-free.d64` (shareware intro first, docs/11). They differ only by
+  the intro. `deploy-c64u-disk-80-free` deploys the free one.
+  `/Temp` always receives the FIXED name `c64llm.d64` — it is the scratch
+  slot the telnet automation drives, which can't see the browser
+  highlight and so assumes one c64llm file is there. `/Flash` keeps each
+  artifact's real name, so both disks persist side by side and you pick
+  from the Ultimate's menu. Deploying free does NOT clobber registered in
+  Flash; it does replace it in Temp.
+- Both deploy targets run `inject-cfg` (`CFG_DISK=` selects the image).
+  The free disk needs it for the same reason the paid one does — the
+  dead-F1-menu bug below — even though a real shareware release must
+  ship cfg-free. For a release: `make -C c64_client disk-free`, stop.
 - Fresh d64s carry no cfg (first boot opens the config editor). When
   deploying to the user's machine, inject their cfg first:
   blob = `b'\x00\x10\xc6\x01' + b'192.168.1.21'.ljust(32,b'\0') + b'6400'.ljust(6,b'\0')`,

@@ -138,18 +138,30 @@ deploy-c64u-disk-80:
 # NetConfig blob: 2 dummy bytes for the PRG header cbm_load skips, magic
 # C6 01, then host[32] and port[6], NUL-padded. Digits and dots are
 # identical in PETSCII and ASCII, so no conversion needed.
+CFG_DISK ?= c64_client/build/c64llm.d64
 inject-cfg:
 	$(PYTHON) -c "open('c64_client/build/user.cfg','wb').write(b'\x00\x10\xc6\x01'+b'$(C64_CFG_HOST)'.ljust(32,b'\0')+b'$(C64_CFG_PORT)'.ljust(6,b'\0'))"
-	$(VICE_RUN) c1541 c64_client/build/c64llm.d64 -write c64_client/build/user.cfg c64llm.cfg
+	$(VICE_RUN) c1541 $(CFG_DISK) -write c64_client/build/user.cfg c64llm.cfg
 
 # The free (shareware) disk: identical contents plus the intro PRG as the
 # first file, so Run Disk boots the intro and the intro chain-loads the
 # client. Rule 1 applies as always - commit first, then build, or the
 # title-bar hash inside the disk is a lie.
+#
+# It lands in /Flash as c64llm-free.d64, beside the registered
+# c64llm.d64, so both stay bootable from the Ultimate's menu; only the
+# /Temp scratch copy is overwritten (see emu/u64_telnet.py).
+#
+# inject-cfg applies here too, and NOT because the free disk should ship
+# with a config - it must not. It is because a cfg-free disk currently
+# comes up with a dead F1 menu (HANDOFF.md, open bug), which would look
+# exactly like the intro having broken something. For a real release
+# build the disk with `make -C c64_client disk-free` and stop there.
 deploy-c64u-disk-80-free:
 	$(MAKE) -C c64_client clean
 	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
 	$(MAKE) -C c64_client disk-free
+	$(MAKE) inject-cfg CFG_DISK=c64_client/build/c64llm-free.d64
 	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm-free.d64
 
 # Same disk, built DIAG=1 (crash post-mortem block at $02A7, see

@@ -111,17 +111,26 @@ def deploy_and_run(path, host='192.168.1.64'):
     NOTE: the screen reconstruction can't see the browser highlight,
     so this assumes the uploaded file is the FIRST entry the cursor
     lands on - keep /Temp free of other c64llm files (the deploy
-    targets overwrite in place, so this holds in practice)."""
+    targets overwrite in place, so this holds in practice).
+
+    That is why /Temp always gets the same fixed name whatever we are
+    handed: it is the scratch slot the menu automation drives, and only
+    one thing may live there. /Flash is different - it is the persistent
+    copy the user boots by hand, so it keeps the artifact's REAL name.
+    Without that, deploying the free disk would overwrite the registered
+    one in Flash and the two could never sit side by side."""
     import subprocess
+    import os
     is_d64 = path.lower().endswith('.d64')
-    name = 'c64llm.d64' if is_d64 else 'c64llm.prg'
+    temp_name = 'c64llm.d64' if is_d64 else 'c64llm.prg'
+    flash_name = os.path.basename(path)
     subprocess.run(['curl', '-sS', '-T', path,
-                    f'ftp://{host}/Temp/{name}', '--user', 'anonymous:'],
+                    f'ftp://{host}/Temp/{temp_name}', '--user', 'anonymous:'],
                    check=True)
     # /Temp is a RAM disk (gone on power-off); keep a persistent copy
     # in /Flash so a cold boot has the current build on hand.
     subprocess.run(['curl', '-sS', '-T', path,
-                    f'ftp://{host}/Flash/{name}', '--user', 'anonymous:'],
+                    f'ftp://{host}/Flash/{flash_name}', '--user', 'anonymous:'],
                    check=True)
     u = U64Screen(host)
     u.pump(1.0)
