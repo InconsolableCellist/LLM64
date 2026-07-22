@@ -1271,6 +1271,14 @@ int main(void) {
     chat_append_petscii(g_port);
     chat_finish();
 
+    /* The two ways in. Client-side rather than proxy-side on purpose:
+       this must appear on first connect even if the server is a version
+       that says nothing, and it is the one moment a new user is looking
+       at an empty screen with no idea what to type. */
+    chat_start(2);
+    chat_append_petscii("Type /help for more help, or F1 for the main menu");
+    chat_finish();
+
     /* Drop any autostart leftovers before accepting input; the harness
        waits for the Ready status, so drain first */
     while (kbhit()) cgetc();

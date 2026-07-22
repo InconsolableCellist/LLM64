@@ -44,8 +44,8 @@ VICE-based e2e test suite.
 - **C64 Ultimate** at 192.168.1.64 (FTP + telnet menu), dials 192.168.1.21:6400.
 - **Canonical client distribution = ONE d64**: PRG + overlay modules
   `c64llm.1`–`.4` + `c64llm.cfg`. `make deploy-c64u-disk-80` builds and
-  deploys; `emu/u64_telnet.py` mirrors to BOTH `/Temp` (RAM disk, wiped on
-  power-off) and `/Flash` (persistent; the user boots from /Flash).
+  deploys; `emu/u64_telnet.py` uploads to `/Flash` (persistent; the user
+  boots from there and never uses `/Temp`).
 - **TWO distribution disks now**: `c64llm.d64` (registered) and
   `c64llm-free.d64` (shareware intro first, docs/11). They differ only by
   the intro. `deploy-c64u-disk-80-free` deploys the free one.
@@ -57,10 +57,11 @@ VICE-based e2e test suite.
   (`_browser_pick`), raising with a screen dump if it is not listed —
   running the wrong image would look exactly like a code bug.
 - **`inject-cfg` is the paid deploy only** (`CFG_DISK=` selects the
-  image; `INJECT_CFG=1` opts the free deploy in). It is a convenience so
-  the maintainer need not retype the address — NOT a fix. The free
-  deploy deliberately ships cfg-free, because that is the new-user path
-  and it is the reproduction case for the dead-F1-menu bug below.
+  image; `INJECT_CFG=1` opts the free deploy in). Pure convenience —
+  it saves retyping the address. The free deploy deliberately ships
+  cfg-free because that is the new-user path and should be tested as
+  one. Confirmed on hardware 2026-07-22: a cfg-free free disk boots,
+  takes the typed address, and its F1 menu streams normally.
 - Fresh d64s carry no cfg (first boot opens the config editor). When
   deploying to the user's machine, inject their cfg first:
   blob = `b'\x00\x10\xc6\x01' + b'192.168.1.21'.ljust(32,b'\0') + b'6400'.ljust(6,b'\0')`,

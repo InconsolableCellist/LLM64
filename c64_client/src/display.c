@@ -700,11 +700,15 @@ void ui_status(const char* msg) {
 static void draw_frame(void) {
     uint8_t i;
 #ifdef SOFT80
-    ui_draw_row(0, " C64 LLM " GIT_HASH "  F1=menu  F5=convs  Return=send",
+    /* Return=send is self-evident once you have typed anything; the
+       scroll keys are not discoverable at all, so they get the space. */
+    ui_draw_row(0, " C64 LLM " GIT_HASH "  F1=menu  F5=convs  F4/F6=scroll",
                 COLOR_WHITE, 1);
 #else
-    /* 40 columns: F5 hint doesn't fit; the F1 menu lists it */
-    ui_draw_row(0, " C64 LLM " GIT_HASH "  F1=menu  Return=send", COLOR_WHITE, 1);
+    /* 40 columns: F5 hint doesn't fit; the F1 menu lists it. Single
+       spaces here - with a dirty hash the row is otherwise exactly 40
+       and one more character would be truncated. */
+    ui_draw_row(0, " C64 LLM " GIT_HASH " F1=menu F4/F6=scroll", COLOR_WHITE, 1);
 #endif
     for (i = 0; i < TEXT_COLS; ++i) {
 #ifdef SOFT80
