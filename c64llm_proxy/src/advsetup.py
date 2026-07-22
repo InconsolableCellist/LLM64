@@ -245,9 +245,9 @@ class AdventureSetup:
                        % (i, it['name'], it['cost'], it.get('blurb', '')))
         out += ["",
                 "Pick as numbers: e.g. 1 4 7",
-                "Add something of your own after a +  (costs %d): "
-                "e.g. 1 4 + my mother's locket"
-                % gear.get('custom_cost', 2),
+                "Anything of your own goes after a +, one + each "
+                "(%d points each):" % gear.get('custom_cost', 2),
+                "  e.g. 1 4 + my mother's locket + a stolen key",
                 "0 = travel light"]
         return out
 
@@ -373,10 +373,10 @@ class AdventureSetup:
                 return self.stage_screen(), ACT_NONE
             self._record('scores', self.answers.get('scores'))
         elif kind == 'spend':
-            picks, custom, cost, err = self._spend(text)
+            picks, customs, cost, err = self._spend(text)
             if err:
                 return (err + "\n\n" + self.stage_screen()), ACT_NONE
-            self._record(key, picks + ([custom] if custom else []))
+            self._record(key, picks + customs)
         elif kind == 'choice':
             opts = self.options(st)
             chosen = self._match_one(text, opts)
@@ -454,28 +454,38 @@ class AdventureSetup:
         return t[:60]
 
     def _spend(self, text):
-        """(picked_names, custom_or_None, cost, error_or_None)."""
+        """(picked_names, custom_names, cost, error_or_None).
+
+        EVERY '+' starts a new item, not just the first. Splitting on
+        only the first one turned "+ rope + a lucky coin" into a single
+        item named "rope + a lucky coin", charged once and cut off at 40
+        characters - wrong, and silently so.
+        """
         items = chargen.gear_options(self.rules, self.answers.get('class', ''))
         gear = self.rules.get('equipment') or {}
         budget = gear.get('points', 6)
-        head, _, custom = text.partition('+')
-        custom = custom.strip()[:40] or None
+        head, sep, rest = text.partition('+')
+        customs = []
+        if sep:
+            for part in rest.split('+'):
+                part = part.strip()[:40]
+                if part and part not in customs:
+                    customs.append(part)
         picks = []
         for tok in head.replace(',', ' ').split():
             if tok == '0':
                 continue
             if not tok.isdigit() or not 1 <= int(tok) <= len(items):
-                return [], None, 0, f'"{tok[:12]}" is not on the list.'
+                return [], [], 0, f'"{tok[:12]}" is not on the list.'
             name = items[int(tok) - 1]['name']
             if name not in picks:
                 picks.append(name)
         cost = sum(it['cost'] for it in items if it['name'] in picks)
-        if custom:
-            cost += gear.get('custom_cost', 2)
+        cost += gear.get('custom_cost', 2) * len(customs)
         if cost > budget:
-            return [], None, cost, (f"That is {cost} points and you have "
-                                    f"{budget}. Drop something.")
-        return picks, custom, cost, None
+            return [], [], cost, (f"That is {cost} points and you have "
+                                  f"{budget}. Drop something.")
+        return picks, customs, cost, None
 
     def _advance(self):
         self.stage += 1

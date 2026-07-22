@@ -147,6 +147,31 @@ check("numbers and a custom item both land",
 check("the custom item is priced",
       chargen.gear_cost(RULES, s.answers['gear']),
       GEAR['items'][0]['cost'] + GEAR['custom_cost'])
+
+# EVERY '+' starts a new item. Splitting on only the first one made
+# "+ rope + a coin" a single item literally named "rope + a coin",
+# charged once and truncated at 40 characters - wrong, and silently so.
+s3 = to_race(fresh())
+s3.answers['scores'] = {a: 15 for a in RULES['abilities']}
+s3.feed('1'); s3.feed('Fighter'); s3.feed('1 2')
+s3.feed('+ a lucky coin + my fathers ring + a stolen key')
+check("each + is its own item", s3.answers['gear'],
+      ['a lucky coin', 'my fathers ring', 'a stolen key'])
+check("...each priced separately",
+      chargen.gear_cost(RULES, s3.answers['gear']),
+      3 * GEAR['custom_cost'])
+
+# ...and the budget still binds: a fourth would be 8 points of 6
+s4 = to_race(fresh())
+s4.answers['scores'] = {a: 15 for a in RULES['abilities']}
+s4.feed('1'); s4.feed('Fighter'); s4.feed('1 2')
+reply, _ = s4.feed('+ one + two + three + four')
+check("too many custom items are refused", 'gear' in s4.answers, False)
+if '8 points' not in reply:
+    failures.append(f"refusal does not price the custom items: {reply!r}")
+s4.feed('+ one + one + two')
+check("duplicates collapse rather than double-charge",
+      s4.answers['gear'], ['one', 'two'])
 check("gear reaches the character block",
       'carrying' in s.character_block(), True)
 
