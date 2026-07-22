@@ -42,11 +42,21 @@ static uint8_t cur[TEXT_COLS];
 static uint8_t cur_len;
 static uint8_t cur_color;
 
-/* Pending word for wrapping */
+/* Pending word for wrapping. Non-static under SOFT80: the asm fast path
+   in append.s writes wbuf/wlen directly for the common printable char. */
+#ifdef SOFT80
+uint8_t wbuf[TEXT_COLS];
+uint8_t wlen;
+#else
 static uint8_t wbuf[TEXT_COLS];
 static uint8_t wlen;
+#endif
 
+#ifdef SOFT80
+uint8_t view_scroll;         /* 0 = pinned to bottom; append.s clears it */
+#else
 static uint8_t view_scroll;  /* 0 = pinned to bottom */
+#endif
 static uint8_t frozen;       /* suppress rendering (bulk conversation load) */
 static uint8_t lines_dirty;  /* a line committed since last full redraw */
 static uint8_t commits_pending;  /* commits since last full draw (scroll opt) */
@@ -252,8 +262,13 @@ void chat_start(uint8_t role) {
 
 /* Reverse video is per-CHARACTER (cell bit 7) with no pair-granularity
    limit, so bold is consumed at append time and stored in the cell
-   itself - zero columns, zero extra RAM. */
+   itself - zero columns, zero extra RAM. Non-static under SOFT80 so the
+   asm fast path can OR it into the stored cell. */
+#ifdef SOFT80
+uint8_t rev_on;
+#else
 static uint8_t rev_on;
+#endif
 
 void chat_append_ascii_char(uint8_t c) {
     if (c == 0x0D) return;
@@ -304,6 +319,7 @@ void chat_append_ascii_char(uint8_t c) {
     }
 }
 
+#ifndef SOFT80
 void chat_append_ascii(const char* s) {
     while (*s) {
         chat_append_ascii_char((uint8_t)*s);
@@ -311,6 +327,13 @@ void chat_append_ascii(const char* s) {
     }
     view_scroll = 0;
 }
+#else
+/* SOFT80: the hot loop is in append.s. It inlines the common case
+   (printable, non-space, word not full -> wbuf[wlen++] = c | rev_on)
+   and calls chat_append_ascii_char for every special byte (space, CR,
+   LF, the 0x01-0x1E markers) and for the word-full hard wrap, so the
+   state machine stays in one place. Declared in the header. */
+#endif
 
 void chat_append_petscii(const char* s) {
     while (*s) {
