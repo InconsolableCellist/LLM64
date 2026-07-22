@@ -551,14 +551,18 @@ msg_err:        .byte   13, "disk error", 0
 ; only after pet2scr; uppercase source (LLM64, AI, SID) renders as
 ; capitals in the lowercase charset. Count every row - the assembler
 ; will not do it for you, so .assert does.
+; Blank rows 1 and 3 are deliberate breathing room, not leftovers: the
+; pitch lines that were here made the panel read as clutter under the
+; logo. They must still be written - the clear at init only touches the
+; KERNAL's own screen at $0400, so $0C00 is uninitialized RAM.
 text_rows:
-row0:   .byte   "       LLM64  *  evaluation copy        "
+row0:   .byte   "          LLM64  *  shareware           "
         .assert * - row0 = 40, error, "panel row 0 is not 40 columns"
-row1:   .byte   "  chat with an AI, play D&D adventures  "
+row1:   .byte   "                                        "
         .assert * - row1 = 40, error, "panel row 1 is not 40 columns"
-row2:   .byte   "  with live SID music and AI pictures.  "
+row2:   .byte   "  foxipso.com | patreon.com/c/foxipso   "
         .assert * - row2 = 40, error, "panel row 2 is not 40 columns"
-row3:   .byte   "  foxipso.com | patreon.com/c/foxipso   "
+row3:   .byte   "                                        "
         .assert * - row3 = 40, error, "panel row 3 is not 40 columns"
 row4:   .byte   "       please wait 10 seconds...        "
         .assert * - row4 = 40, error, "panel row 4 is not 40 columns"
@@ -573,7 +577,7 @@ text_prompt:
         .assert * - text_prompt = 40, error, "prompt row is not 40 columns"
 
 row_colors:
-        .byte   1, 14, 14, 3, 7         ; white, lt blue, lt blue, cyan, yellow
+        .byte   1, 0, 3, 0, 7           ; title white, links cyan, prompt yellow
 
 ; ---------------------------------------------------------------------
 .segment "VARS"
