@@ -40,6 +40,7 @@ class MessageType(IntEnum):
     GET_MENU = 0x3B  # ';' - request the server-fed menu
     GET_NOWPLAYING = 0x3C  # '<' - jukebox asks what is playing
     FAV_TUNE = 0x3D  # '=' - toggle favorite on the current tune
+    SET_BAUD = 0x3E  # '>' - client's wire rate: 2 bytes LE, nominal/100
     ACK = 0x40  # '@' - was 0x10
     NAK = 0x41  # 'A' - was 0x11
 
@@ -106,6 +107,10 @@ class ProtocolHandler:
         # path; interleaving their DATA frames on the wire (and in the
         # client's shared chunk map) would corrupt both transfers.
         self._media_lock = asyncio.Lock()
+        # Wire baud this session is pacing to. None until the client
+        # announces it via SET_BAUD; falls back to config.wire_baud (the
+        # old-client default). Only bulk pacing reads it.
+        self._wire_baud = None
         # BEGIN handshake event: set when the client ACKs a SID/IMG
         # BEGIN (music silenced, rendering drained - clear to stream)
         self._begin_ack = None
@@ -278,6 +283,8 @@ class ProtocolHandler:
                 await self.handle_get_nowplaying()
             elif msg_type == MessageType.FAV_TUNE:
                 await self.handle_fav_tune()
+            elif msg_type == MessageType.SET_BAUD:
+                self.handle_set_baud()
             elif msg_type == MessageType.ACK:
                 self.logger.debug("ACK received")
                 if self._begin_ack is not None \
@@ -909,7 +916,26 @@ class ProtocolHandler:
 
     @property
     def bulk_pace_per_byte(self) -> float:
-        return (10.0 / self.config.wire_baud) * self.BULK_PACE_MARGIN
+        baud = self._wire_baud or self.config.wire_baud
+        return (10.0 / baud) * self.BULK_PACE_MARGIN
+
+    def handle_set_baud(self):
+        """Client announced its wire rate (SET_BAUD): 2 bytes LE, nominal
+        baud / 100. Retune this session's bulk pacing to match; leave
+        config.wire_baud as the fallback for clients that never send it.
+        Fire-and-forget - no reply, matching the client. An out-of-range
+        value is ignored rather than trusted."""
+        if len(self.payload) < 2:
+            self.logger.warning("SET_BAUD: short payload, ignored")
+            return
+        nominal = (self.payload[0] | (self.payload[1] << 8)) * 100
+        if nominal < 1200 or nominal > 115200:
+            self.logger.warning(f"SET_BAUD: implausible {nominal}, ignored")
+            return
+        self._wire_baud = nominal
+        self.logger.info(
+            f"SET_BAUD: pacing bulk to {nominal} baud "
+            f"({self.bulk_pace_per_byte*1000:.3f} ms/byte)")
 
     async def _send_bulk(self, msg_type: MessageType, payload: bytes):
         """Send one bulk frame and sleep out its wire time."""

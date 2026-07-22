@@ -5,6 +5,7 @@
 #include "protocol.h"
 #include "serial.h"
 #include "text.h"
+#include "cfg.h"
 #include <string.h>
 
 /* Initialize protocol handler */
@@ -178,6 +179,18 @@ void proto_send_nak(void) {
 /* Helper: Send PING */
 void proto_send_ping(void) {
     proto_send_message(MSG_PING, NULL, 0);
+}
+
+/* Tell the proxy our wire rate so its bulk pacing matches. Payload is
+   nominal baud / 100, little-endian. Fire and forget: the proxy sets a
+   session field and sends nothing back, so no wait_for_ack. Harmless to
+   an old proxy too - an unknown type is logged and ignored. */
+void proto_send_set_baud(void) {
+    uint16_t v = baud_nominal_div100();
+    uint8_t payload[2];
+    payload[0] = (uint8_t)(v & 0xFF);
+    payload[1] = (uint8_t)(v >> 8);
+    proto_send_message(MSG_SET_BAUD, payload, 2);
 }
 
 /* Send a message whose payload is PETSCII text, converted to ASCII.

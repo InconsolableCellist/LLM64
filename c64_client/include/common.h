@@ -110,6 +110,11 @@ typedef enum {
 #define MSG_GET_MENU            0x3B  /* ';' - request the server-fed menu */
 #define MSG_GET_NOWPLAYING      0x3C  /* '<' - ask what is playing */
 #define MSG_FAV_TUNE            0x3D  /* '=' - toggle favorite on it */
+#define MSG_SET_BAUD            0x3E  /* '>' - tell the proxy our wire
+                                         rate so its bulk pacing tracks
+                                         it. Payload: 2 bytes LE, nominal
+                                         baud / 100 (48/96/192). Fire and
+                                         forget - no ACK. */
 #define MSG_ACK                 0x40  /* '@' - was 0x10 */
 #define MSG_NAK                 0x41  /* 'A' - was 0x11 */
 #define MSG_CHAT_CHUNK          0x50  /* 'P' - was 0x20 */

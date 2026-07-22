@@ -38,4 +38,33 @@ uint8_t config_save(void);
 
 void build_dial_string(void);
 
+/* Wire-speed setting, stored in the cfg and pushed to the ACIA divisor.
+   Index into an internal control-byte table:
+     0 = 4800  nominal / 9600  on real HW ($1C)  slow-link fallback
+     1 = 9600  nominal / 19200 on real HW ($1E)  default
+     2 = 19200 nominal / 38400 on real HW ($1F)  BAUD38400 builds only
+   Show the hardware rate in the UI; VICE runs the nominal rate. */
+#define BAUD_IDX_9600   0
+#define BAUD_IDX_19200  1
+#define BAUD_IDX_38400  2
+#ifdef BAUD38400
+#define BAUD_IDX_DEFAULT BAUD_IDX_38400
+#define BAUD_IDX_MAX     BAUD_IDX_38400
+#else
+#define BAUD_IDX_DEFAULT BAUD_IDX_19200
+/* 38400 stays out of the runtime cycle until the NMI fix soaks on
+   hardware (HANDOFF Task 5/6): only a BAUD38400 build exposes it. */
+#define BAUD_IDX_MAX     BAUD_IDX_19200
+#endif
+
+extern uint8_t g_baud_idx;
+
+/* Nominal baud / 100 for the current index (48 / 96 / 192) - the
+   MSG_SET_BAUD payload the proxy paces from. */
+uint16_t baud_nominal_div100(void);
+
+/* Copy g_baud_idx's control byte into the ACIA driver's acia_ctrl, so
+   the next acia_init_hw brings the link up at that rate. */
+void baud_apply(void);
+
 #endif /* CFG_H */

@@ -1274,6 +1274,10 @@ int main(void) {
         cgetc();
     }
 
+    /* Server is reachable: tell it our wire rate so bulk pacing tracks
+       the ACIA divisor (no reply expected, so send and move on). */
+    proto_send_set_baud();
+
     proto_send_new_conversation();
     wait_for_ack(4000);
 

@@ -67,6 +67,7 @@ void proto_send_text(uint8_t msg_type, const char* petscii_text);
 void proto_send_ack(void);
 void proto_send_nak(void);
 void proto_send_ping(void);
+void proto_send_set_baud(void);
 void proto_send_chat(const char* text);
 void proto_send_new_conversation(void);
 void proto_send_list_conversations(void);

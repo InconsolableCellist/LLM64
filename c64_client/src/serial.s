@@ -23,6 +23,7 @@
         .export _acia_init_hw
         .export _acia_send_at_command
         .export _acia_get_status
+        .export _acia_ctrl
         .export _serial_rx_count
         .export _serial_overflows
         .export _serial_overruns
@@ -64,6 +65,9 @@ ACIA_SR_TDRE = $10      ; Transmit Data Register Empty
 ; than plenty of ordinary code. See the CLI dance around _music_play
 ; below, which exists because a play routine already outran one byte
 ; time at 9600.
+; Compile-time DEFAULT only. The live value is the _acia_ctrl DATA byte
+; below, which cfg.c overwrites from c64llm.cfg's baud setting before
+; acia_init_hw runs. BAUD38400 just seeds a faster default.
 .ifdef BAUD38400
 ACIA_CTRL_VALUE = $1F
 .else
@@ -107,6 +111,12 @@ rx_buffer:      .res RX_RING_SIZE
 rx_buffer_end:
 
         .data
+; Live ACIA control-register value (baud + format), read by
+; acia_init_hw. In DATA, not a constant, so cfg.c can set it from the
+; saved baud index (extern uint8_t acia_ctrl) before init. Seeded with
+; the build-time default.
+_acia_ctrl:     .byte ACIA_CTRL_VALUE
+
 ; Chain to the previous NMI handler via a patched absolute JMP. An
 ; indirect "jmp (vector)" would hit the 6502 page-boundary bug if the
 ; vector byte ever landed at $xxFF.
@@ -178,7 +188,7 @@ _acia_init_hw:
         dey
         bne @reset_delay
 
-        lda #ACIA_CTRL_VALUE
+        lda _acia_ctrl
         sta ACIA_CONTROL
 
         ; Reset ring buffer

@@ -1328,8 +1328,10 @@ def main():
         time.sleep(2)  # let -exitscreenshot write
 
         # The config editor's save must have landed on the d64 itself:
-        # read c64llm.cfg back out and check the blob (magic C6 01,
-        # host at +2, port at +34, NUL-padded PETSCII).
+        # read c64llm.cfg back out and check the blob. v2 layout: magic
+        # C6 02, host at +2, port at +34, baud index at +40 (all after
+        # the 2-byte PRG load-address header). The editor never touches
+        # baud here, so it saves the build default (idx 1 = 19200 HW).
         if d64_path and args.tui and args.cols80:
             saved = artifacts / 'saved.cfg'
             subprocess.run(
@@ -1339,11 +1341,13 @@ def main():
             blob = saved.read_bytes()[2:]  # skip the PRG load-address header
             host = blob[2:34].rstrip(b'\0').decode('ascii', 'replace')
             port = blob[34:40].rstrip(b'\0').decode('ascii', 'replace')
-            if blob[:2] != b'\xc6\x01' or host != '10.0.0.7' or port != '6502':
+            baud_idx = blob[40] if len(blob) > 40 else None
+            if (blob[:2] != b'\xc6\x02' or host != '10.0.0.7'
+                    or port != '6502' or baud_idx != 1):
                 raise AssertionError(
                     f'cfg on disk wrong: magic={blob[:2].hex()} '
-                    f'host={host!r} port={port!r}')
-            print('  PASS: c64llm.cfg on the d64 holds the edited config')
+                    f'host={host!r} port={port!r} baud_idx={baud_idx!r}')
+            print('  PASS: c64llm.cfg on the d64 holds the edited v2 config')
 
         # The disk-copy module's target must hold the module files
         # (the main PRG isn't on the test's modules.d64, so it is
