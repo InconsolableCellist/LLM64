@@ -113,10 +113,20 @@ g('{', B, '..#', '.#.', '##.', '.#.', '..#', B, B)
 g('|', B, '.#.', '.#.', '.#.', '.#.', '.#.', B, B)
 g('}', B, '#..', '.#.', '.##', '.#.', '#..', B, B)
 g('~', B, B, '.##', '##.', B, B, B, B)
-g('\x7f', '###', '###', '###', '###', '###', '###', '###', '###')
+# 0x7F is a real glyph now, not the fallback block it used to be: a
+# quarter note, so the status row can say "music" in one column. PETSCII
+# has no note and there was no spare slot below 0x7F; cell_from_ascii()
+# gated this code off (c < 0x7F) only because nothing lived here. The
+# 40-col build has no font of ours to extend and still shows '?'.
+g('\x7f', B, '..#', '..#', '..#', '..#', '###', '##.', B)
+
+# Anything the table does not define. Reachable only if a code in
+# 0x20-0x7F is left out - kept SEPARATE from 0x7F so that putting a
+# glyph there cannot silently change what a missing glyph looks like.
+FALLBACK = ('###', '###', '###', '###', '###', '###', '###', '###')
 
 def glyph_bytes(code):
-    rows = G.get(chr(code), G['\x7f'])
+    rows = G.get(chr(code), FALLBACK)
     by = []
     for r in rows:
         v = 0

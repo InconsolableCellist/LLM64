@@ -74,7 +74,9 @@ static const uint8_t role_colors[4] = {
 
 static uint8_t cell_from_ascii(uint8_t c) {
 #ifdef SOFT80
-    if (c >= 0x20 && c < 0x7F) return c;
+    /* 0x7F included: it carries the music note (tools/make_font.py).
+       It was excluded only because that slot held the fallback block. */
+    if (c >= 0x20 && c <= 0x7F) return c;
     return 0x3F;  /* '?' */
 #else
     return ascii_to_screen(c);
@@ -628,8 +630,70 @@ void ui_set_hints(uint8_t flags) {
     draw_hints();
 }
 
+#ifdef SOFT80
+/* Server-composed right-hand chrome: where you are, and what is
+   playing. The PROXY owns the text - it arrives preformatted in the
+   HINT frame and the client only places it - so what the row says can
+   change without ever touching the client again. Same bargain as the
+   server-fed F1 menu.
+
+   Soft-80 only: 40 columns have no room for it beside the status text,
+   and no font of ours to draw a note with. */
+char ui_chrome[UI_CHROME_MAX + 1];
+
+/* Columns the last draw actually used. One byte, and it is what lets a
+   chrome string SHRINK without leaving its own tail on the row - the
+   alternative was keeping a copy of the status text (~77 bytes) just to
+   repaint under it. */
+static uint8_t chrome_w;
+
+/* Right-aligned, one column clear of the hint corner, so a short string
+   hugs the corner instead of floating. Like draw_hints() this draws
+   over whatever ui_draw_row left in rowbuf and blits only its own span,
+   which is what stops ordinary status text from clobbering it. */
+static void draw_chrome(void) {
+    uint8_t n = 0;
+    uint8_t start, pad, i;
+    while (ui_chrome[n]) ++n;
+    if (n > TEXT_COLS - 6) n = TEXT_COLS - 6;
+    if (!n && !chrome_w) return;
+    /* if/else, not a ternary: cc65 generates poor code for those, and
+       draw_hints() below already pays that lesson forward. */
+    if (n >= chrome_w) {
+        pad = 0;
+    } else {
+        pad = chrome_w - n;
+    }
+    start = TEXT_COLS - 5 - n - pad;
+    for (i = 0; i < pad; ++i) rowbuf[start + i] = 0x20 | 0x80;
+    for (i = 0; i < n; ++i) {
+        rowbuf[start + pad + i] =
+            cell_from_ascii((uint8_t)ui_chrome[i]) | 0x80;
+    }
+    ui_blit_span(STATUS_ROW, rowbuf, start, n + pad);
+    chrome_w = n;
+}
+
+void ui_set_chrome(const char* s) {
+    uint8_t i = 0;
+    while (s[i] && i < UI_CHROME_MAX) {
+        ui_chrome[i] = s[i];
+        ++i;
+    }
+    ui_chrome[i] = 0;
+    draw_chrome();
+}
+#endif
+
 void ui_status(const char* msg) {
     ui_draw_row(STATUS_ROW, msg, COLOR_WHITE, 1);
+#ifdef SOFT80
+    /* After the row, before the hints: every status write would
+       otherwise blank the chrome, which is exactly what happens to
+       anything not redrawn on top here. */
+    chrome_w = 0;               /* the row repaint already blanked it */
+    draw_chrome();
+#endif
     if (ui_hints || ui_pics) draw_hints();
 }
 

@@ -162,6 +162,29 @@ VICE-based e2e test suite.
   (nano-banana → C64 multicolor), conversation.py (persistence + meta),
   claude_session.py (/code driver). Handlers that await a client reply
   must NOT run on the reader task — use `_spawn_media()` (deadlock class).
+- **Status row (row 24)**: free status text on the left, then the
+  proxy-composed **chrome** (where you are + the playing tune), then the
+  `!P`/picture-tally corner. The chrome arrives PREFORMATTED in the HINT
+  frame - `[flags][pics][chrome\0]`, grown the same way the pic count
+  was - so what it says can change with no client rebuild. It is
+  SOFT80-only (40 columns have no room and no font of ours), redrawn
+  after every `ui_status()` in display.c, and `chrome_w` exists so a
+  shorter string cannot leave its own tail behind. Compose it in
+  `protocol.py :: _chrome()`.
+- **Music control**: MUSIC_STOP `0x61` silences a streamed SID; no ACK.
+  `/music stop|off` and the jukebox's `s` key both land there, and both
+  go THROUGH the proxy on purpose - the proxy decides whether the
+  narrator may start a tune again, so a local-only stop would be
+  restarted by the next `[[MUSIC:]]` directive. `/music next` re-picks
+  within the current mood. The F1 'Music: next / stop' entry is gone,
+  which also makes the two built-in pattern tunes (`music_toggle`)
+  unreachable in soft-80 - the 10k library replaced them there; the
+  40-col fallback menu still has them.
+- **Font 0x7F is a music note** (`tools/make_font.py`, soft-80 only).
+  That slot used to hold the fallback block and `cell_from_ascii()`
+  gated it off; the fallback now lives in a separate FALLBACK entry.
+  Regenerate with `python3 tools/make_font.py` - font48.s is generated
+  and committed, and nothing in the Makefile rebuilds it.
 - **Adventure state**: LLM emits `[[STATE: {...}]]`, stripped by the
   filter, normalized into meta `adv_state`, re-injected into the system
   prompt each turn. Old conversations lack it until the LLM first emits
@@ -568,7 +591,7 @@ yet. Also the natural place to START music, which the jukebox cannot -
 it only reports. Needs a paged list over the wire like the conversation
 manager, plus a mood picker.
 
-### 3e. Adventure map — BUILT proxy-side, NOT YET PLAYTESTED
+### 3e. Adventure map — BUILT, first playthrough read (2026-07-22)
 `docs/10-adventure-map.md` is the spec; phases 1, 2 and 4 are implemented
 (`src/advmap.py`, `tests/test_map.py`). Phase 3 (`/map` as a hires
 picture) is deliberately NOT built — see the note at the end.
@@ -600,16 +623,53 @@ picture) is deliberately NOT built — see the note at the end.
   `_start_adventure` seeds the graph from it (rooms `visited: false`,
   rendered parenthesised). Silent on failure.
 
-**Next step is a playtest, not more code** (docs/10 §8): does Gemma emit
-`[[MAP:]]` at all, and does it rewrite `location` cosmetically ("Deeper
-in the Whispering Woods") and invent rooms? Read the proxy log for
-`map: ` lines and `data/conversations/<id>.json` for `adv_map`. If
-directions never arrive the map is correct but flat (`?>4` everywhere)
-and the fix is prompt work, not fuzzier matching.
+**The first playthrough is in and the design held** (conversation
+1784706552, 21 turns, 4 rooms): Gemma DOES emit `[[MAP:]]`, location
+strings were byte-identical on every revisit, no room was invented, and
+the player's typed "n" filled one direction the model left out. It also
+emitted `dir=` three times without moving, which the rules already
+handle as description rather than travel.
+
+One real bug came out of it and is fixed: the collision rule only
+checked the near end of an edge, so a direction refused from one side
+was accepted when the same claim arrived from the other, and the Great
+Hall ended up with two rooms to its west. `_conflict()` now checks both
+ends. Keep reading `map: ` lines in the proxy log - they are one per
+turn and name the location that arrived.
 
 **Do not add `/map pic` while the NMI/ACIA transposed-byte race is still
 open** — it is another 9000-byte bulk transfer and it will muddy that
 evidence.
+
+### 3f. Status row, music control, character creation - DONE
+Shipped together because they needed one client rebuild (f297c35 + this
+one). Resident cost measured against the previous build: **+357 bytes
+PRG, +47 bytes BSS**.
+
+- **The place you are in now sits in the status row**, beside the tune,
+  as proxy-composed chrome in the HINT frame (see the crib sheet).
+- **Stopping music finally exists**: `/music stop` and the jukebox's `s`
+  key, both via MUSIC_STOP. This had to be built BEFORE the F1
+  'Music: next / stop' entry could be dropped, because that entry was
+  the only way to stop a streamed SID. `/music next` re-picks in the
+  current mood without claiming manual control.
+- **A music note glyph** at 0x7F in the soft-80 4x8 font; the 40-col
+  build still shows '?' and always will (no font of ours there).
+- **An automatic music change now says why**, in the scrollback, over
+  NOTICE - a standing request from before.
+- **Character creation**: says out loud that it is starting (the jump
+  from two "?" answers straight into dice read as a skipped step), step
+  numbers no longer skip when a stage does not apply, races and classes
+  carry a line of flavour, four new races, anything you type is accepted
+  as your own race or class, and a 6-point Gear stage with a custom
+  entry. Every adventure now opens with one line on how to play.
+- **Timeouts**: API read 300s -> 600s, heartbeat cap 180s -> 630s. The
+  heartbeat must outlive the read timeout or the client's ~43s watchdog
+  aborts first and the real error never arrives.
+
+Known loss, accepted: the two built-in pattern tunes are unreachable in
+soft-80 now. Ask if you want them back - the jukebox is where they would
+go.
 
 ### 4. Screensaver / always-on assistant
 Idle detection client-side; unsolicited server frames already work

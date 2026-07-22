@@ -490,6 +490,14 @@ def main():
                     time.sleep(1)  # let the status line settle
                     print('  PASS: [[MUSIC]] directive switched tune')
 
+                    # The narrator says WHY the music changed, in the
+                    # scrollback, where it survives the status row
+                    if not re.search(r'narrator chose', screen, re.I):
+                        screen = wait_for_screen(
+                            monitor, r'narrator chose', 20, artifacts,
+                            f'{tag}-music-why')
+                    print('  PASS: the narrator says why the music changed')
+
                     # Scene illustration: [[IMAGE:]] directive (ask mode)
                     # parks a suggestion; /pic streams the converted
                     # fixture into the bitmap at $E000/$CC00
@@ -576,6 +584,33 @@ def main():
                         time.sleep(1)
                     print('  PASS: image dismissed, chat restored, '
                           'caption shown, music paused + resumed')
+
+                    # /music stop: MUSIC_STOP silences a streamed SID.
+                    # This is the control that had to exist BEFORE the
+                    # F1 'Music: next / stop' entry could be removed -
+                    # it was the only way to stop a tune.
+                    # AFTER the image tests on purpose: those assert the
+                    # tune plays through a transfer, so silencing it any
+                    # earlier fails them.
+                    monitor.keyboard_feed('/music stop\r')
+                    wait_for_screen(monitor, r'music off', 20, artifacts,
+                                    f'{tag}-music-stop')
+                    deadline = time.time() + 15
+                    while monitor.read_memory(
+                            labels['_music_state'],
+                            labels['_music_state'])[0] == 0xFF:
+                        if time.time() > deadline:
+                            raise AssertionError(
+                                '/music stop left the SID playing')
+                        time.sleep(0.5)
+                    print('  PASS: /music stop silences a streamed SID')
+                    wait_ready(monitor, 20, artifacts, f'{tag}-stop-ready')
+                    # Stopping is manual, so hand the soundtrack back
+                    monitor.keyboard_feed('/auto\r')
+                    wait_for_screen(monitor,
+                                    r'narrator picks the music again', 20,
+                                    artifacts, f'{tag}-auto-2')
+                    wait_ready(monitor, 20, artifacts, f'{tag}-auto-2-rdy')
 
                     # Picture browser: list + re-show from cache
                     monitor.keyboard_feed('/pics\r')
@@ -725,37 +760,31 @@ def main():
                         raise AssertionError('menu panel title missing')
                     return scr
 
-                # Music toggle via the F1 menu ('s' = local action).
-                # In cols80 a streamed SID is still playing from the
-                # music tests: S first stops it, then cycles the
-                # pattern tunes off->tune1->tune2->off as always
-                if args.cols80:
-                    open_f1_menu(f'{tag}-menu-music')
-                    monitor.keyboard_feed('s')
-                    wait_for_screen(monitor, r'music off', 15,
-                                    artifacts, f'{tag}-music-ext-stop')
-                    open_f1_menu(f'{tag}-menu-music-off')
-                else:
+                # The built-in pattern tunes (off -> Dungeon Depths ->
+                # Northward Road -> off) cycle on the client's own 's'
+                # action. SOFT80 no longer offers it: the server-fed menu
+                # dropped 'Music: next / stop' now that stopping lives in
+                # /music stop and the jukebox's own 's' key, and two
+                # music entries side by side read as two features.
+                # music_toggle() is therefore unreachable in the soft-80
+                # build - the 10k library replaced those two tunes there
+                # - but the 40-col fallback menu still carries it, and
+                # that is what this exercises.
+                if not args.cols80:
                     monitor.keyboard_feed_petscii(b'\x85')
                     wait_for_screen(monitor, r'S  music \(off\)', 15,
                                     artifacts, f'{tag}-menu-music')
-                monitor.keyboard_feed('s')
-                wait_for_screen(monitor, r'music: dungeon depths', 15,
-                                artifacts, f'{tag}-music-on')
-                if args.cols80:
-                    open_f1_menu(f'{tag}-menu-music-2')
-                else:
+                    monitor.keyboard_feed('s')
+                    wait_for_screen(monitor, r'music: dungeon depths', 15,
+                                    artifacts, f'{tag}-music-on')
                     monitor.keyboard_feed_petscii(b'\x85')
-                monitor.keyboard_feed('s')
-                wait_for_screen(monitor, r'music: northward road', 15,
-                                artifacts, f'{tag}-music-2')
-                if args.cols80:
-                    open_f1_menu(f'{tag}-menu-music-3')
-                else:
+                    monitor.keyboard_feed('s')
+                    wait_for_screen(monitor, r'music: northward road', 15,
+                                    artifacts, f'{tag}-music-2')
                     monitor.keyboard_feed_petscii(b'\x85')
-                monitor.keyboard_feed('s')
-                wait_for_screen(monitor, r'music off', 15,
-                                artifacts, f'{tag}-music-off')
+                    monitor.keyboard_feed('s')
+                    wait_for_screen(monitor, r'music off', 15,
+                                    artifacts, f'{tag}-music-off')
 
                 # F1 menu -> M lists models (numbered); /model 2 picks
                 if args.cols80:
@@ -1064,6 +1093,29 @@ def main():
                                     artifacts, f'{tag}-adv-begun')
                     print('  PASS: review confirmed preps and starts')
                     wait_ready(monitor, 60, artifacts, f'{tag}-adv-idle')
+
+                    # Where you are, in the status row. The proxy
+                    # composes the whole right-hand string and the HINT
+                    # frame carries it; the client only places it. Read
+                    # the STATUS ROW specifically - "dark room" is also
+                    # in the chat text, so a whole-screen match would
+                    # pass without the chrome ever being drawn.
+                    deadline = time.time() + 20
+                    row = ''
+                    while time.time() < deadline:
+                        rows = monitor.screen_text().splitlines()
+                        row = rows[24] if len(rows) > 24 else ''
+                        if 'dark room' in row.lower():
+                            break
+                        time.sleep(POLL_INTERVAL)
+                    else:
+                        (artifacts / f'fail-{tag}-chrome.txt').write_text(
+                            monitor.screen_text())
+                        raise AssertionError(
+                            f'the place never reached the status row: '
+                            f'{row!r}')
+                    print('  PASS: the place you are in sits in the '
+                          'status row')
 
                     # /map: the proxy has been building a graph from the
                     # state block's `location` (docs/10), so one turn in

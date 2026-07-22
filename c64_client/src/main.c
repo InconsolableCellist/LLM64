@@ -762,6 +762,17 @@ static void handle_message(uint8_t msg_type) {
                directly rather than passed - a second argument would go
                on the C stack for no gain. */
             if (proto_get_length(&proto) > 1) ui_pics = hp[1];
+#ifdef SOFT80
+            /* Byte 2 onward: the proxy-composed right-hand chrome, nul
+               terminated. Grown the same way the picture count was, so
+               a proxy that predates it simply sends nothing here. */
+            /* No conversion: the chrome stays ASCII end to end, which
+               is what soft-80 cells are (and petscii_to_ascii_str does
+               not even exist in this build). */
+            if (proto_get_length(&proto) > 2) {
+                ui_set_chrome((const char*)hp + 2);
+            }
+#endif
             /* A scene became ready (bit0 rising): announce it with a
                rainbow attention line, not just the quiet status
                indicator. Only while idle - never mid-stream. */
@@ -776,6 +787,12 @@ static void handle_message(uint8_t msg_type) {
             break;
         }
 #ifdef SOFT80
+        case MSG_MUSIC_STOP:
+            /* Silence a streamed SID. No ACK: nothing is waiting on it,
+               and a lost frame costs one unstopped tune, not a stuck
+               transfer. */
+            music_ext_stop();
+            break;
         case MSG_SID_BEGIN: {
             /* load(2) init(2) play(2) song(1) size(2) vol(1) resume(1)
                window(1) name(nul) */

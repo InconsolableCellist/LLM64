@@ -56,12 +56,16 @@ class MessageType(IntEnum):
     IMG_BEGIN = 0x5A  # 'Z' - fullscreen image incoming
     IMG_DATA = 0x5B  # '[' - image bytes (8000 bitmap + 1000 matrix)
     IMG_END = 0x5C  # '\' - image complete
-    HINT = 0x5D  # ']' - persistent status flags (bit0: pic suggestion)
+    HINT = 0x5D  # ']' - [flags(bit0: pic)][pics][chrome\0]; chrome is
+    #                    the right-hand status text (place, music),
+    #                    composed here so it can change with no client
+    #                    rebuild. Soft-80 only on the client side.
     NOTICE = 0x60  # '`' - out-of-band system line (dice results)
     NOWPLAYING = 0x5F  # '_' - [flags][elapsed:2][secs:2] then
     #                     title\0 author\0 mood\0 (jukebox module)
     MENU_LIST = 0x5E  # '^' - menu entries: [n][more] then
     #                   [key][label\0][cmd\0] each; cmd "!x" = client-local
+    MUSIC_STOP = 0x61  # 'a' - silence a streamed SID (no ACK)
 
 
 # Common Unicode punctuation -> ASCII approximations, applied before the
@@ -133,6 +137,10 @@ class ProtocolHandler:
         # manual stretch, not every time a directive is ignored.
         self._music_manual = False
         self._manual_notice_sent = False
+        # The player silenced the music (/music stop, or the jukebox's
+        # stop key). Kept apart from _music_manual so the status chrome
+        # can stop naming a tune that is no longer audible.
+        self._music_stopped = False
         self._wire_hold = ''
         # What the player typed this turn, for the map's direction
         # fallback ("n", "go north"). Never load-bearing - it only
@@ -492,6 +500,7 @@ class ProtocolHandler:
                 return
             await self._stop_claude()
             self._switch_mode(Mode(self.config))
+            await self._send_hint()   # drop the place from the row
             await self._send_canned("Chat mode. New conversation started.")
 
         elif cmd in ('code', 'claude'):
@@ -641,6 +650,9 @@ class ProtocolHandler:
                 # scene change. (The jukebox panel's 'n' key sends
                 # exactly this shape of command.)
                 mood = arg.lower()
+                if mood in ('stop', 'off', 'silence'):
+                    await self._stop_music()
+                    return
                 if mood == 'next':
                     mood = (self.conv_manager.get_meta('music')
                             or {}).get('mood', '')
@@ -668,6 +680,7 @@ class ProtocolHandler:
             if self._music_manual:
                 self._music_manual = False
                 self._manual_notice_sent = False
+                self._music_stopped = False
                 await self._send_canned(
                     "The narrator picks the music again.")
             else:
@@ -999,7 +1012,9 @@ class ProtocolHandler:
             await self._send_bulk_stream(MessageType.SID_DATA, data)
             await self._send_bulk(MessageType.SID_END, b'')
         self._tunes_sent += 1
+        self._music_stopped = False
         self.music.tune_started = time.monotonic()
+        await self._send_hint()
         self.logger.info(f"Sent SID {tune['id']} ({len(data)} bytes"
                          f"{', retry' if is_retry else ''})")
 
@@ -1372,14 +1387,44 @@ class ProtocolHandler:
         except asyncio.CancelledError:
             pass
 
-    async def _send_hint(self, pending: int):
-        """Status-row indicators: '!P' when a scene is waiting, plus the
-        running picture count. One frame carries both so they can never
-        disagree, and the count is read from meta rather than tracked
-        separately - a loaded conversation then shows its own tally."""
+    # The client reserves 40 columns for it, right-aligned before the
+    # !P/tally corner (c64_client/include/ui.h, UI_CHROME_MAX).
+    CHROME_MAX = 40
+    NOTE = '\x7f'          # the 4x8 music note (tools/make_font.py)
+
+    def _chrome(self) -> str:
+        """The right-hand status row, composed HERE so its contents can
+        change without touching the client: where you are, and what is
+        playing. Place first - it is the thing you look at between
+        turns; the tune is the thing you glance at once."""
+        parts = []
+        if self.mode.name == 'adventure':
+            m = self.conv_manager.get_meta('adv_map') or {}
+            room = (m.get('rooms') or {}).get(m.get('at') or '')
+            if room:
+                parts.append(room['name'][:24])
+        tune, _mood = self._current_tune()
+        if tune and not self._music_stopped:
+            parts.append(self.NOTE + tune['title'][:20])
+        line = "  ".join(parts)
+        return line[:self.CHROME_MAX]
+
+    async def _send_hint(self, pending: int = None):
+        """Status-row indicators: '!P' when a scene is waiting, the
+        running picture count, and the composed chrome. One frame
+        carries all three so they can never disagree, and the count is
+        read from meta rather than tracked separately - a loaded
+        conversation then shows its own tally.
+
+        `pending` defaults to whatever is actually parked, so a call
+        made only to refresh the chrome cannot silently clear a waiting
+        scene suggestion."""
+        if pending is None:
+            pending = 1 if self.images.pending_prompt else 0
         pics = len(self.conv_manager.get_meta('images', []) or [])
-        await self.send_message(MessageType.HINT,
-                                bytes([pending & 1, min(pics, 255)]))
+        payload = bytes([pending & 1, min(pics, 255)])
+        payload += self._chrome().encode('ascii', errors='replace') + b'\x00'
+        await self.send_message(MessageType.HINT, payload)
 
     async def _send_notice(self, text: str):
         """An out-of-band system line in the scrollback (the dice path's
@@ -1668,6 +1713,9 @@ class ProtocolHandler:
             # and the state block has been parsed and validated.
             if self.mode.name == 'adventure' and mfilter:
                 self._ingest_map(mfilter.maps)
+                # The place in the status row is only as current as the
+                # last ingest, so refresh it in the same breath.
+                await self._send_hint()
 
             self.logger.info(f"Response complete: {len(full_response)} bytes")
 
@@ -1915,8 +1963,12 @@ class ProtocolHandler:
             ]
         if self.music.available:
             entries.append(('j', 'Jukebox / now playing', '!j'))
+        # No 'Music: next / stop' entry. It was the only way to stop a
+        # streamed SID, so removing it needed somewhere else for stop to
+        # live first: the jukebox panel's own 's' key and /music stop
+        # (both land on MUSIC_STOP). Two music entries side by side read
+        # as two different features, which they were not.
         entries += [
-            ('s', 'Music: next / stop', '!s'),
             ('x', 'Cancel reply', '!x'),
             ('e', 'Server config', '!e'),
             ('d', 'Copy client disk', '!d'),
@@ -2090,6 +2142,22 @@ class ProtocolHandler:
             return
         if reply:
             await self._send_canned(reply)
+
+    async def _stop_music(self):
+        """Silence the client and make it STAY silent. Stopping is a
+        manual act, so it also takes the soundtrack off the narrator -
+        otherwise the next [[MUSIC:]] directive restarts what the player
+        just switched off, which is the most annoying possible outcome.
+        /auto hands it back."""
+        self._music_stopped = True
+        self._music_manual = True
+        self._manual_notice_sent = False
+        self.music.tune_started = None
+        await self.send_message(MessageType.MUSIC_STOP, b'')
+        await self._send_hint()
+        await self._send_canned(
+            "Music off. /music <mood> starts another, /auto gives the "
+            "soundtrack back to the narrator.")
 
     def _current_tune(self):
         """(tune, mood) for whatever is playing, or (None, '')."""

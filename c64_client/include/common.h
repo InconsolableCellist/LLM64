@@ -125,7 +125,10 @@ typedef enum {
 #define MSG_IMG_BEGIN           0x5A  /* 'Z' - fullscreen image incoming */
 #define MSG_IMG_DATA            0x5B  /* '[' - image bytes (bitmap+matrix) */
 #define MSG_IMG_END             0x5C  /* '\' - image complete, show it */
-#define MSG_HINT                0x5D  /* ']' - status flags (bit0: pic) */
+#define MSG_HINT                0x5D  /* ']' - [flags(bit0: pic)][pics]
+                                         [chrome\0]; chrome is the
+                                         proxy-composed right-hand
+                                         status text (place, music) */
 #define MSG_MENU_LIST           0x5E  /* '^' - menu entries: [n][more]
                                          then [key][label\0][cmd\0] each;
                                          cmd "!x" = local action x */
@@ -135,6 +138,13 @@ typedef enum {
 #define MSG_NOWPLAYING          0x5F  /* '_' - jukebox state: [flags]
                                          [elapsed:2][secs:2] then
                                          title\0 author\0 mood\0 */
+#define MSG_MUSIC_STOP          0x61  /* 'a' - silence a streamed SID.
+                                         The proxy owns whether music
+                                         is playing (it decides when the
+                                         narrator may start one again),
+                                         so stopping goes through it -
+                                         /music stop, and the jukebox's
+                                         own stop key, both land here */
 
 /* Pseudo message type returned by proto_process_byte on checksum failure
    (not a wire value - chosen outside the protocol's type range) */

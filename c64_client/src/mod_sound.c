@@ -57,7 +57,7 @@ static const char S_TITLE[] = " c64 llm jukebox ";
 static const char S_FETCH[] = "asking the server...";
 static const char S_SILENT[] = "nothing playing";
 static const char S_HINT[]  = "type /music <mood> to start one";
-static const char S_FOOT1[] = "n = next tune     f = favorite";
+static const char S_FOOT1[] = "n = next   s = stop   f = favorite";
 static const char S_FOOT2[] = "f1 or stop = close";
 static const char S_READY[] = "Ready.";
 static const char S_BY[]    = "by ";
@@ -66,6 +66,12 @@ static const char S_SIG[]   = "voice 3";
 static const char S_AUTO[]  = "auto";
 static const char S_MANUAL[]= "manual";
 static const char S_NEXT[]  = "/music ";   /* + mood, built at send time */
+/* Stopping goes through the PROXY rather than calling music_ext_stop()
+   from here. The proxy is what decides whether the narrator may start a
+   tune again; a local stop would leave it believing music is playing
+   and the next [[MUSIC:]] directive would restart what you just
+   silenced. Round trip, and worth it. */
+static const char S_STOP[]  = "/music stop";
 
 /* Panel geometry, mirroring the menu module: all even so the 2-column
    color granularity lines up. */
@@ -398,6 +404,11 @@ static void jb_key(uint8_t k) {
                 proto_send_message(MSG_FAV_TUNE, 0, 0);
                 jb_draw_song();
             }
+            return;
+        case 0x73:      /* s */
+        case 0x53:      /* S */
+            mod_modal_end();
+            menu_pcmd = S_STOP;
             return;
         case 0x6E:      /* n */
         case 0x4E:      /* N */

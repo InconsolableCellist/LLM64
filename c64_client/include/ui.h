@@ -20,6 +20,16 @@ void ui_set_hints(uint8_t flags);
 extern uint8_t ui_hints;
 extern uint8_t ui_pics;   /* pictures in this conversation (status tally) */
 
+#ifdef SOFT80
+/* Persistent right-hand chrome, composed BY THE PROXY and arriving in
+   the HINT frame: where you are and what is playing. The client only
+   places it, so the row's contents can change with no client rebuild.
+   Redrawn after every status write, or ordinary status text erases it. */
+#define UI_CHROME_MAX 40
+void ui_set_chrome(const char* ascii);
+extern char ui_chrome[UI_CHROME_MAX + 1];
+#endif
+
 /* Full redraw of the static frame (title, separator) + chat + status */
 void ui_redraw_all(void);
 
