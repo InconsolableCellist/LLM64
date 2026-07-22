@@ -17,6 +17,7 @@ from .dice import expand as expand_dice
 from .advsetup import (AdventureSetup, STAGES, ACT_QUICK,
                        ACT_THEME, ACT_BEGIN, ACT_LOAD)
 from .advtemplates import TemplateStore
+from . import advmap
 from .markup import colorize_for_wire, split_safe
 from .markup import prompt_snippet as color_prompt_snippet
 from .images import ImageService
@@ -133,6 +134,10 @@ class ProtocolHandler:
         self._music_manual = False
         self._manual_notice_sent = False
         self._wire_hold = ''
+        # What the player typed this turn, for the map's direction
+        # fallback ("n", "go north"). Never load-bearing - it only
+        # fills a direction the model did not give (docs/10 section 0).
+        self._last_user_text = ''
         self._adv_setup = None
         self._templates = TemplateStore(self.config.data_dir)
         self._img_sent = False
@@ -421,6 +426,10 @@ class ProtocolHandler:
         # Add user message to conversation
         self.conv_manager.add_message('user', text)
 
+        # Post-dice-expansion, which is fine: a dice macro never looks
+        # like a movement command.
+        self._last_user_text = text
+
         # Start streaming task
         self.stream_task = asyncio.create_task(self._stream_response())
 
@@ -464,6 +473,7 @@ class ProtocolHandler:
                 "[roll:1d20] in a message - roll dice for real\n"
                 "/pic [desc|n] - illustrate scene / re-show pic n\n"
                 "/pics - list this conversation's pictures\n"
+                "/map [n|name] - the map / how to get there\n"
                 "/save [name] - checkpoint this conversation\n"
                 "/saves - list, /restore <n> - roll back\n"
                 "/history [page] - browse the full conversation\n"
@@ -534,6 +544,9 @@ class ProtocolHandler:
                 prompt = arg or self.images.pending_prompt
                 self.images.pending_prompt = None
                 self._spawn_media(self._illustrate(prompt))
+
+        elif cmd == 'map':
+            await self._show_map(arg)
 
         elif cmd in ('history', 'hist'):
             await self._show_history(arg)
@@ -747,6 +760,12 @@ class ProtocolHandler:
             snippet += self.music.prompt_snippet()
         if self.images.available:
             snippet += self.images.prompt_snippet()
+        # The map is adventure-only: nothing else has a geography to
+        # keep. It needs no server capability either - the graph is
+        # built by the proxy from the state block whether or not the
+        # model ever emits a MAP directive.
+        if getattr(mode, 'name', '') == 'adventure':
+            snippet += advmap.prompt_snippet()
         # Colour needs no server capability - the client renders it - so
         # it is unconditional, unlike music and images.
         snippet += color_prompt_snippet()
@@ -759,6 +778,9 @@ class ProtocolHandler:
         self._manual_notice_sent = False
         # A parked image suggestion belongs to the old conversation
         self.images.pending_prompt = None
+        # ...as does the last thing typed: the kickoff turn has no
+        # player command, and a stray one must not fill a map direction
+        self._last_user_text = ''
         self.conv_manager.new_conversation()
         # Record the mode on the conversation so loading it later can
         # restore the same experience (prompt, sampling, music directives)
@@ -1138,6 +1160,52 @@ class ProtocolHandler:
         lines.append("Open one via F5, then /find to jump.")
         await self._send_canned("\n".join(lines))
 
+    # The map is drawn into the SCROLLBACK rather than over the screen:
+    # a map is a reference you glance at, not an event you stage. 78
+    # columns, not 79 - the colour tag each line opens with takes a
+    # column of its own (docs/10 section 5.3).
+    MAP_WIDTH = 78
+
+    async def _show_map(self, arg: str):
+        """/map - the graph the proxy has been keeping (docs/10)."""
+        if self.mode.name != 'adventure':
+            await self._send_canned(
+                "The map only exists in adventure mode.")
+            return
+        m = self.conv_manager.get_meta('adv_map') or {}
+        if not m.get('rooms'):
+            await self._send_canned(
+                "No map yet - the story has not moved you anywhere.")
+            return
+        if arg:
+            # No model call: the cheapest correct answer in the design.
+            await self._send_canned(self._map_route(m, arg))
+            return
+        lines = advmap.render_ascii(m, width=self.MAP_WIDTH)
+        # Every line opens with a colour tag. It becomes a marker cell,
+        # so cur_len > 0 by the time the first space of the art arrives
+        # and the indentation survives (the client drops a leading space
+        # otherwise). The run carries across line breaks, so it must be
+        # closed once at the end or it tints the rest of the chat.
+        await self._send_canned(
+            "\n".join("[color=cyan]" + ln for ln in lines) + "[/color]")
+
+    @staticmethod
+    def _map_route(m, arg: str) -> str:
+        dest = advmap.find_room(m, arg)
+        if not dest:
+            return (f'No place like "{arg[:30]}" on the map. '
+                    "/map lists them.")
+        name = m['rooms'][dest]['name']
+        if dest == m.get('at'):
+            return f"You are already at {name}."
+        steps = advmap.route(m, dest)
+        if steps is None:
+            return f"{name}: the map knows no way there from here."
+        return "%s: %s. (%d place%s away.)" % (
+            name, ", then ".join(steps), len(steps),
+            '' if len(steps) == 1 else 's')
+
     async def _list_pics(self):
         """This conversation's generated pictures, newest first."""
         pics = self.conv_manager.get_meta('images', [])
@@ -1404,6 +1472,28 @@ class ProtocolHandler:
                 return f"{name}: {str(inp[k])[:60]}"
         return name
 
+    def _ingest_map(self, directives):
+        """One reply's worth of movement, folded into adv_map."""
+        # Read the location back from META rather than from the local
+        # `state`: that name only exists on a turn that carried a state
+        # block, and meta is the value that actually survived
+        # validation. The consequence is right and free - on a turn
+        # whose state block was dropped, `location` is last turn's
+        # value, so ingest correctly sees no move.
+        loc = None
+        try:
+            loc = (json.loads(
+                self.conv_manager.get_meta('adv_state') or '{}')
+                or {}).get('location')
+        except (ValueError, TypeError):
+            pass
+        m = self.conv_manager.get_meta('adv_map') or advmap.new_map()
+        for line in advmap.ingest(m, location=loc, directives=directives,
+                                  player_text=self._last_user_text):
+            self.logger.info("map: %s", line)
+        self.conv_manager.set_meta('adv_map', m)
+        self.conv_manager.save()
+
     async def _stream_response(self, hidden_user_msg: str = None):
         """Stream API response to C64"""
         hb = None
@@ -1451,6 +1541,16 @@ class ProtocolHandler:
                         "turn - trust it over your reading of the "
                         "transcript, and update it in this reply's "
                         "[[STATE: ...]] block: " + adv_state)
+                # The map, restated: the model never has to FIND the
+                # current node in a graph, it is told, with its exits and
+                # its routes. Whatever it believed last turn is silently
+                # overwritten by the truth this turn. After adv_state,
+                # because everything that changes must come after
+                # everything that does not (llama.cpp prefix cache).
+                block = advmap.prompt_block(
+                    self.conv_manager.get_meta('adv_map') or {})
+                if block:
+                    sys_prompt += "\n\n" + block
             if (mfilter and self.music.available and self.music.stale()
                     and sys_prompt):
                 sys_prompt += ("\n(The background music has been looping "
@@ -1529,6 +1629,12 @@ class ProtocolHandler:
                 if state is not None:
                     self.conv_manager.set_meta('adv_state', state)
                     self.conv_manager.save()
+
+            # Fold this reply into the map (docs/10). Both signals are in
+            # hand: the filter has every directive from the whole stream
+            # and the state block has been parsed and validated.
+            if self.mode.name == 'adventure' and mfilter:
+                self._ingest_map(mfilter.maps)
 
             self.logger.info(f"Response complete: {len(full_response)} bytes")
 
@@ -1736,7 +1842,16 @@ class ProtocolHandler:
                 ('v', 'Past pictures', '/pics'),
                 ('t', 'Save checkpoint', '/save'),
                 ('q', 'Back to chat mode', '/chat'),
-                ('m', 'Models', '/models'),
+                # The panel caps at 13 and this branch already fills it,
+                # so the map costs the /models entry - in ADVENTURE
+                # only, the one mode that has a geography. Switching
+                # models mid-adventure is rare (and /models is still
+                # typeable); a map is something you reach for
+                # constantly. Roleplay keeps Models: /map there would
+                # only ever answer "not in this mode", and the e2e
+                # drives the model list through this very key.
+                ('m', 'Map', '/map') if mode == 'adventure'
+                else ('m', 'Models', '/models'),
             ]
         else:
             # The two quick-starts lead: "new conversation, then type
@@ -1800,7 +1915,11 @@ class ProtocolHandler:
         "Be concrete and brief: a paragraph of setting, 3-5 named "
         "locations with how they connect, 2-3 people worth meeting, one "
         "secret the player could uncover, and the situation the player "
-        "opens in. This is YOUR notes, never shown to the player.")
+        "opens in. This is YOUR notes, never shown to the player. "
+        "Finish with a machine-readable index of the geography: a line "
+        "reading exactly MAP: and then one line per place, in the form "
+        "- The Flooded Nave | n: The Choir Stair | e: The Salt Cloister "
+        "- using only the directions n s e w ne nw se sw u d in out.")
 
     async def _prep_world(self, bundle: dict, character: str) -> str:
         """The 'DM prepares a campaign' pass. Returns the bible, or ''
@@ -1848,6 +1967,17 @@ class ProtocolHandler:
         mode.background = background
         self._attach_snippets(mode)
         self._switch_mode(mode)
+        # Seed the map from the prep notes' MAP: section, so the first
+        # /map is not empty and - more valuable - the model is anchored
+        # to place names it already committed to. Best-effort: a bad
+        # parse must never block an adventure starting.
+        if background:
+            seeded = advmap.new_map()
+            n = advmap.seed_from_notes(seeded, background)
+            if n:
+                self.conv_manager.set_meta('adv_map', seeded)
+                self.logger.info("map: seeded %d places from the prep "
+                                 "notes", n)
         await self.send_status("Generating your adventure...")
         self.stream_task = asyncio.create_task(
             self._stream_response(hidden_user_msg=self.mode.kickoff()))

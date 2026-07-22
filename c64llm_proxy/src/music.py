@@ -19,19 +19,21 @@ from pathlib import Path
 DIRECTIVE_RE = re.compile(
     # Canonical form. DOTALL so a STATE block's JSON may wrap, and ']]'
     # as the terminator so the JSON's own ']' cannot close it early.
-    r"\[\[\s*(MUSIC|IMAGE|STATE)\s*:\s*(.*?)\s*\]\]"
+    r"\[\[\s*(MUSIC|IMAGE|STATE|MAP)\s*:\s*(.*?)\s*\]\]"
     r"|"
     # Single-bracket fallback. Adventure replies open with a status line
     # that is itself single-bracketed - "[HP 15/20 | Gold 0 | ...]" - so
     # models copy that shape and emit "[MUSIC: eerie]". Those used to
     # leak onto the screen as text and silently do nothing.
-    # MUSIC/IMAGE only, and the value may not span ']' or a newline:
+    # MUSIC/IMAGE/MAP only, and the value may not span ']' or a newline:
     # STATE's JSON contains ']', so it has no safe single-bracket form.
+    # MAP is safe here because its value is '|'-separated key=value with
+    # no ']' of its own.
     # The lookbehind matters mid-stream: while "[[MUSIC: calm]]" is still
     # arriving it briefly reads as "[[MUSIC: calm]", and without it this
     # alternative would match the inner "[MUSIC: calm]" and leave a
     # stray "[]" on the screen.
-    r"(?<!\[)\[\s*(MUSIC|IMAGE)\s*:\s*([^\]\n]*?)\s*\]"
+    r"(?<!\[)\[\s*(MUSIC|IMAGE|MAP)\s*:\s*([^\]\n]*?)\s*\]"
     r"|(?!)",     # placeholder group 5, only ever filled at flush
     re.IGNORECASE | re.DOTALL)
 
@@ -186,8 +188,9 @@ class MusicDirectiveFilter:
     feed() returns text safe to forward; anything that could be the start
     of a directive is held back until it resolves either way. flush()
     returns whatever is still held at end of stream. Parsed directives
-    accumulate in .moods (music), .images (image descriptions) and
-    .states (adventure game-state JSON, newest last).
+    accumulate in .moods (music), .images (image descriptions),
+    .states (adventure game-state JSON, newest last) and .maps
+    (movement/geography, in the order they were emitted).
     """
 
     # Image descriptions can be a sentence and a state block carries a
@@ -200,6 +203,7 @@ class MusicDirectiveFilter:
         self.moods = []
         self.images = []
         self.states = []
+        self.maps = []
 
     # Openers worth holding a partial tail for (see _could_become_directive)
     # Colour markup is NOT extracted here - the tags stay in the text so
@@ -207,7 +211,8 @@ class MusicDirectiveFilter:
     # docs/08-inline-color.md); they are turned into marker cells at
     # egress. They are listed only so a tag split across stream chunks
     # is held back instead of going out half-written.
-    _PREFIXES = ("[[MUSIC:", "[[IMAGE:", "[[STATE:", "[MUSIC:", "[IMAGE:",
+    _PREFIXES = ("[[MUSIC:", "[[IMAGE:", "[[STATE:", "[[MAP:",
+                 "[MUSIC:", "[IMAGE:", "[MAP:",
                  "[COLOR", "[COLOUR", "[/COLOR", "[/COLOUR")
 
     def _extract(self, text: str, final: bool = False) -> str:
@@ -225,6 +230,8 @@ class MusicDirectiveFilter:
                 self.moods.append(value.lower())
             elif kind == "STATE":
                 self.states.append(value)
+            elif kind == "MAP":
+                self.maps.append(value)
             else:
                 self.images.append(value)
             return ""

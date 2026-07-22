@@ -568,26 +568,48 @@ yet. Also the natural place to START music, which the jukebox cannot -
 it only reports. Needs a paged list over the wire like the conversation
 manager, plus a mood picker.
 
-### 3e. Adventure map (EXPERIMENT, needs design first)
-Ask the LLM to lay out locations as it introduces them, keep the graph
-in state, and feed it back so it can route the player to somewhere they
-have already been. The pieces are half there: adventure mode already
-emits [[STATE: {...}]] with a `location`, normalized into meta
-`adv_state` and re-injected into the system prompt every turn - so a
-`map` object would inherit persistence and context-survival for free.
+### 3e. Adventure map — BUILT proxy-side, NOT YET PLAYTESTED
+`docs/10-adventure-map.md` is the spec; phases 1, 2 and 4 are implemented
+(`src/advmap.py`, `tests/test_map.py`). Phase 3 (`/map` as a hires
+picture) is deliberately NOT built — see the note at the end.
 
-Design questions to settle BEFORE coding:
-- Shape: edge list (`[["woods","gate","n"], ...]`) is compact and easy
-  for a model to append to; a nested dict drifts more.
-- Growth: adv_state is re-injected EVERY turn, so the map costs context
-  on every request forever. Needs a cap and a pruning rule (drop
-  unvisited leaves? keep the N most recent plus anything favourited?).
-- Frame limit: no proxy frame may exceed MAX_PAYLOAD 512.
-- Consistency: models are bad at maintaining a graph silently. Probably
-  needs the prompt to restate the current node's exits each turn.
-- Rendering: a text map on the C64 would be charming and is a natural
-  overlay module, but start by proving the LLM can keep the graph
-  coherent at all - the client side is worthless until then.
+- **The map is built from `[[STATE]].location changing`, not from a new
+  directive.** A move is recorded whenever the location changes, with
+  `dir=null` when nothing said which way; `[[MAP: dir=n | via=... |
+  exits=...]]` only decorates it. That is the whole safety argument: the
+  feature cannot fail on model compliance, it can only come out sparse.
+  Measured before building: 85/85 post-feature adventure replies carried
+  a status line, and a real 42-turn transcript revisited locations with
+  byte-identical names.
+- `adv_map` lives in conversation meta beside `adv_state`, so a loaded
+  conversation gets its map back with no code. Nothing is ever deleted
+  from it — the prompt budget truncates the RENDERING only, because
+  deleting is what breaks "how do I get back to X".
+- `advmap.py` is PURE (like `advsetup.py`): dicts in, dicts out, no
+  network/model/asyncio. Run `python3 tests/test_map.py`.
+- `/map` draws into the scrollback via `_send_canned` (~19 lines, ~3s).
+  Every line opens with `[color=cyan]` — the marker cell is what stops
+  the client dropping the leading spaces of the art (`cur_len > 0` in
+  `chat_append_ascii_char`) — and the run is closed exactly once at the
+  end or it tints the rest of the chat. `/map <n|name>` answers "how do
+  I get there" from a proxy-side BFS with no model call.
+- The F1 adventure menu was already at the client's MAX_MENU of 13, so
+  `('m', 'Map', '/map')` REPLACED `('m', 'Models', '/models')`. Trivially
+  reversible if the user disagrees; `/models` is still typeable.
+- `PREP_SYSTEM` now asks for a machine-readable `MAP:` tail, and
+  `_start_adventure` seeds the graph from it (rooms `visited: false`,
+  rendered parenthesised). Silent on failure.
+
+**Next step is a playtest, not more code** (docs/10 §8): does Gemma emit
+`[[MAP:]]` at all, and does it rewrite `location` cosmetically ("Deeper
+in the Whispering Woods") and invent rooms? Read the proxy log for
+`map: ` lines and `data/conversations/<id>.json` for `adv_map`. If
+directions never arrive the map is correct but flat (`?>4` everywhere)
+and the fix is prompt work, not fuzzier matching.
+
+**Do not add `/map pic` while the NMI/ACIA transposed-byte race is still
+open** — it is another 9000-byte bulk transfer and it will muddy that
+evidence.
 
 ### 4. Screensaver / always-on assistant
 Idle detection client-side; unsolicited server frames already work

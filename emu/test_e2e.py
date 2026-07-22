@@ -1059,6 +1059,28 @@ def main():
                                     artifacts, f'{tag}-adv-begun')
                     print('  PASS: review confirmed preps and starts')
                     wait_ready(monitor, 60, artifacts, f'{tag}-adv-idle')
+
+                    # /map: the proxy has been building a graph from the
+                    # state block's `location` (docs/10), so one turn in
+                    # there is exactly one room. This is also the ONLY
+                    # check that the leading-space trick survives the
+                    # client - every map line opens with a colour tag so
+                    # the art keeps its indentation (docs/10 5.3), and
+                    # that was read from source, never seen on a screen.
+                    monitor.keyboard_feed('/map\r')
+                    scr = wait_for_screen(monitor, r'the map - 1 place', 25,
+                                          artifacts, f'{tag}-adv-map')
+                    if '<- you are here' not in scr.lower():
+                        raise AssertionError(
+                            f'map legend missing its current room:\n{scr}')
+                    print('  PASS: /map draws the graph the proxy kept')
+                    wait_ready(monitor, 30, artifacts, f'{tag}-adv-map2')
+                    # ...and the route form answers without a model call
+                    monitor.keyboard_feed('/map 1\r')
+                    wait_for_screen(monitor, r'you are already at', 20,
+                                    artifacts, f'{tag}-adv-map-route')
+                    wait_ready(monitor, 30, artifacts, f'{tag}-adv-map-done')
+
                     monitor.keyboard_feed('/chat\r')
                     wait_for_screen(monitor, r'chat mode', 20,
                                     artifacts, f'{tag}-adv-done')
