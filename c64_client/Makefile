@@ -8,6 +8,10 @@ LD = ld65
 # Set CC65_HOME explicitly before running commands
 CC65_HOME = /usr/share/cc65
 
+# VICE tools (c1541, x64sc): native install if present, net.sf.VICE flatpak
+# otherwise. See emu/vice-run.sh (paths are relative to this directory).
+VICE_RUN ?= ../emu/vice-run.sh
+
 # Target
 TARGET = c64llm
 TARGETDIR = build
@@ -151,7 +155,7 @@ D64 = $(TARGETDIR)/c64llm.d64
 disk: $(D64)
 $(D64): $(PRG)
 	@test -f $(MOD1) || { echo "No $(MOD1) - build with MODE80=1"; exit 1; }
-	@c1541 -format "c64llm,01" d64 $(D64) \
+	@$(VICE_RUN) c1541 -format "c64llm,01" d64 $(D64) \
 	       -write $(PRG) "c64llm" \
 	       -write $(MOD1) "c64llm.1" \
 	       -write $(MOD2) "c64llm.2" \
@@ -168,11 +172,7 @@ clean:
 
 # Run in VICE emulator (if available)
 run: $(PRG)
-	@if command -v x64sc >/dev/null 2>&1; then \
-		x64sc $(PRG); \
-	else \
-		echo "VICE emulator (x64sc) not found"; \
-	fi
+	@$(VICE_RUN) x64sc $(PRG)
 
 # Upload to C64 via FTP
 C64_IP = 192.168.1.64

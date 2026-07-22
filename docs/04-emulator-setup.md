@@ -18,6 +18,35 @@ Each test boots a mock OpenAI SSE server (or the real one), the Python
 proxy, and `x64sc`, then reads the emulated screen RAM through VICE's
 binary monitor to assert progress. Screenshots land in `emu/artifacts/`.
 
+## Finding VICE (native or flatpak)
+
+Nothing calls `x64sc`/`c1541` directly. Every invocation goes through
+`emu/vice-run.sh <tool> [args...]`, which prefers a native install on
+`PATH` and falls back to the **net.sf.VICE flatpak**:
+
+```bash
+./emu/vice-run.sh x64sc -default ...    # native x64sc, or flatpak run
+```
+
+The wrapper `exec`s, so the process the test harness starts (and kills by
+process group) is still the emulator. Python callers use
+`vice_tool('x64sc')` / `have_vice_tool('c1541')` from `emu/test_e2e.py`;
+the makefiles use `$(VICE_RUN)`.
+
+Two things the flatpak sandbox needs, both supplied by the wrapper:
+
+- **`--share=network`.** The default sandbox gets a private network
+  namespace holding an isolated `lo`, so `-rsdev1 127.0.0.1:6400` reaches
+  nothing and the host cannot connect to the binary monitor. Sharing the
+  host netns makes both sides agree on what `127.0.0.1` means.
+- **`--cwd="$PWD"`** so relative paths on the command line still resolve.
+
+Sandbox caveat: the manifest shares `$HOME` and nothing else, so paths
+outside it fail — `c1541` cannot write a `.d64` under `/tmp`. Keep
+artifacts inside the repo, or export
+`VICE_FLATPAK_ARGS="--filesystem=/path"`. `VICE_FLATPAK` overrides the
+app id.
+
 ## Why this never worked before (troubleshooting archaeology)
 
 Four separate problems stacked on top of each other:
@@ -50,7 +79,8 @@ Four separate problems stacked on top of each other:
 ## The working VICE flags
 
 ```
-x64sc -acia1 -acia1mode 0 -acia1base 0xDE00 -acia1irq 2 -myaciadev 0 \
+./emu/vice-run.sh x64sc \
+      -acia1 -acia1mode 0 -acia1base 0xDE00 -acia1irq 2 -myaciadev 0 \
       -rsdev1 127.0.0.1:6400 +rsdev1ip232 -rsdev1baud 9600 \
       -autostartprgmode 1 -autostart c64_client/build/c64llm.prg
 ```

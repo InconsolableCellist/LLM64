@@ -10,6 +10,9 @@
 # The critical flags (this is what never worked before): the client drives a
 # 6551 ACIA at $DE00, so VICE needs the ACIA cartridge emulation (-acia1),
 # NOT the userport RS232 device. -myaciadev 0 routes it to -rsdev1.
+#
+# x64sc runs through emu/vice-run.sh: a native install if there is one,
+# otherwise the net.sf.VICE flatpak.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -37,7 +40,7 @@ esac
 DISK8=()
 [ -f c64_client/build/c64llm.d64 ] && DISK8=(-8 c64_client/build/c64llm.d64)
 
-exec x64sc \
+exec ./emu/vice-run.sh x64sc \
   -acia1 -acia1mode 0 -acia1base 0xDE00 -acia1irq 2 -myaciadev 0 \
   "${RSDEV[@]}" -rsdev1baud 9600 \
   "${DISK8[@]}" \

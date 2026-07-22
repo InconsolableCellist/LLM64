@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_e2e import (Stack, find_free_port, wait_for_port, proxy_python,
-                      wait_for_screen, PROXY_DIR, REPO)
+                      wait_for_screen, vice_tool, PROXY_DIR, REPO)
 from vice_monitor import ViceMonitor
 
 
@@ -75,7 +75,8 @@ def main():
 
         mon = find_free_port()
         stack.start('vice', [
-            'x64sc', '-default', '-sounddev', 'dummy', '+confirmonexit',
+            *vice_tool('x64sc'), '-default', '-sounddev', 'dummy',
+            '+confirmonexit',
             '-acia1', '-acia1mode', '0', '-acia1base', '0xDE00',
             '-acia1irq', '2', '-myaciadev', '0',
             '-rsdev1', '127.0.0.1:6400', '+rsdev1ip232',
