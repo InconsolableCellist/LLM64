@@ -1,8 +1,10 @@
 # 11 — Shareware intro (free vs. registered disk)
 
-Status: SPEC — not yet implemented. This document is written to be
-executed by a smaller model in a fresh session. Read it fully first;
-every section is load-bearing. Where it says "verbatim", copy verbatim.
+Status: IMPLEMENTED (see §11 for where reality differed from this spec).
+Written to be executed in a fresh session; read it fully first, every
+section is load-bearing. Two of its original claims were wrong and are
+corrected inline below — §11 says why, so the same mistakes do not get
+"fixed" back in.
 
 ## 1. What we are building
 
@@ -43,7 +45,7 @@ Nothing in the resident client knows or cares which disk it booted from.
    `intro.cfg` (ld65 config), `Makefile`, `assets/` (committed binary
    assets + the script-readable metadata that generated them).
 2. `tools/make_intro_assets.py` — converts a source PNG + a relocated
-   `.sid` into the `.bin` files and the generated `intro_gen.inc`
+   `.sid` into `intro_data.bin` and the generated `intro_gen.inc`
    (addresses/constants) that `intro.s` includes.
 3. `c64_client/Makefile` — new `disk-free` target (added AFTER the
    `all:` rule, per HANDOFF.md rule 10).
@@ -74,19 +76,29 @@ Facts the stub must respect:
 
 - **Device number**: read from `$BA` at intro start and reuse it (the
   client does the same — `boot_device` in cfg.c). Do not hardcode 8.
-- **Filename**: the client PRG is written to disk as `c64llm`. In a
+- **Filenames**: the client PRG is written to disk as `c64llm`. In a
   KERNAL SETNAM call the matching bytes are PETSCII `$43 $36 $34 $4C
-  $4C $4D` — which is what ca65 emits for the ASCII string `"C64LLM"`
-  (uppercase). Lowercase ASCII in the source would be wrong.
+  $4C $4D`, and those are what `ca65 -t c64` emits for the **lowercase**
+  string `"c64llm"`. The c64 target's charmap maps ASCII `a-z` → `$41-5A`
+  and `A-Z` → `$C1-DA` (the same mapping HANDOFF.md records for cc65
+  string literals), so uppercase `"C64LLM"` in the source assembles to
+  `$C3 $36 $34 $CC $CC $CD` and the LOAD fails. Verified with ca65 2.17;
+  an earlier revision of this doc had it exactly backwards. Same rule for
+  the intro's own data blob: c1541 name `c64 llm.d` ↔ ca65 `"c64 llm.d"`.
 - **Secondary address 1** (load to the file's own address, $0801).
-- **Banking**: the intro must never touch `$01`. It stays at the boot
-  default `$37` (BASIC+KERNAL in), so KERNAL LOAD just works and the
-  chained cc65 crt0 sees a normal machine.
+- **Banking**: the intro runs at `$01 = $36` — BASIC out, KERNAL and I/O
+  in — and restores `$37` immediately before the chain LOAD. It must not
+  stay at the boot default `$37`, because that banks the BASIC ROM over
+  `$A000-$BFFF` and `jsr SID_PLAY` at `$B003` would execute ROM instead
+  of the relocated tune. `$36` is what the client itself runs at
+  (HANDOFF.md, "Banking"); KERNAL LOAD, CHROUT and the `$EA31` IRQ chain
+  all work there. This is the only `$01` write in the program.
 - **Before the LOAD**: `SEI`, write `$D418 = 0` (SID off), restore the
   IRQ vector `$0314/$0315` to `$EA31`, set `$D01A = 0` (raster IRQ off),
-  ack `$D019`, restore `$D011/$D016/$D018/$DD00` to power-on text-mode
-  values (`$1B / $C8 / $17-or-$15 / $C7` — `$17` matches the client's
-  own mixed-case choice, either works since the client re-inits), `CLI`.
+  ack `$D019`, re-enable the CIA1 timer IRQ (`$DC0D = $81`), restore
+  `$D011/$D016/$D018` to power-on text-mode values (`$1B / $C8 / $15`),
+  and put `$01` back to `$37`, `CLI`. `$DD00` needs no restoring: the
+  intro never writes it, bank 0 being the power-on default.
   Music MUST be stopped before the LOAD, not held: IEC transfers starve
   the tick and produce audible warble (HANDOFF.md §3c5) — a clean cut
   to silence is the correct behavior here.
@@ -106,7 +118,8 @@ Pure ca65 assembly, ONE source file (`intro.s`), custom ld65 config.
 Do not use cc65 C here — the program is a static screen with an IRQ,
 and C would only add a runtime to fight with.
 
-VIC bank 0 ($0000–$3FFF), the power-on bank. Layout:
+Everything runs in VIC bank 0 ($0000–$3FFF), the power-on bank — no
+`$DD00` juggling.
 
 The intro is TWO files on disk:
 
@@ -117,8 +130,8 @@ The intro is TWO files on disk:
   room to spare; if it ever doesn't, move logic, not the screen.
 - **`c64 llm.d`** — one concatenated data blob with a $4000 load
   address, fetched by the intro itself via KERNAL LOAD (secondary
-  address 1): bitmap 8000 + screen 1000 + colram 1000 + bg 1 + tune
-  (≤4096), ~14K at $4000–~$77FF. Print `LOADING...` via `$FFD2`
+  address 1): bitmap 8000 + screen 1000 + colram 1000 + tune
+  (≤4096), ~14K at $4000–~$77FF (offsets in §5.3). Print `LOADING...` via `$FFD2`
   before this LOAD — on a stock 1541 it takes ~45s and a silent black
   screen would read as a hang (JiffyDOS: a few seconds).
 
@@ -167,8 +180,7 @@ assembly. Two raster IRQs per frame via `$0314` vector, `$D01A = 1`:
 
 - **IRQ A at line $2D** (just above the visible area):
   `$D011 = $3B` (bitmap on), `$D016 = $D8` (multicolor + 40 col),
-  `$D018 = $18` (screen $0400, bitmap $2000), `$D021 = <bg byte from
-  the asset>`. Then call the tune's play address once, then set up IRQ
+  `$D018 = $18` (screen $0400, bitmap $2000), `$D021 = PIC_BG`. Then call the tune's play address once, then set up IRQ
   B's raster line and `JMP $EA31` (keyboard scan + jiffy clock keep
   running — the countdown and GETIN depend on this).
 - **IRQ B at line ~$D2** (visible area starts at raster line $33; row
@@ -187,14 +199,14 @@ assembly. Two raster IRQs per frame via `$0314` vector, `$D01A = 1`:
   border (busy-wait on `$D012` change then a few NOPs) — polish, not
   required.
 
-The TEXT screen lives at **$0C00** (inside the PRG's address range —
-just make it a data segment placed there... no: $0C00 is below $2000 and
-inside the image gap. Simplest: reserve $0C00–$0FE7 by having init
-write the text rows directly to $0C00 with a tiny render loop from a
-string table in DATA). Text color: set color RAM $D800+ for rows 20–24
-during init (after the colram copy for the bitmap area — order matters:
-copy the image's 1000 colram bytes first, then overwrite the last 5
-rows, i.e. offsets 800–999, with the text color).
+The TEXT screen lives at **$0C00**: init renders it with a small loop
+from a string table in the code PRG (screen codes, not PETSCII —
+lowercase charset screen codes are a–z=1–26, A–Z=65–90, digits/
+punctuation as ASCII; verify against `font48.s`-era habits in VICE
+rather than trusting a table from memory). Text color: set color RAM
+$D800+ for rows 20–24 during init — order matters: copy the image's
+1000 colram bytes first, then overwrite the last 5 rows, i.e. offsets
+800–999, with the text color.
 
 IMPORTANT — screen RAM conflict: the bitmap's color pairs occupy
 $0400 (used by IRQ A via `$D018=$18`), the text occupies $0C00 (used by
@@ -216,11 +228,14 @@ the URLs exact):
 ```
 
 Row 4 counts down `10 ... 9 ... 8` (rewrite the two digit cells each
-second from the jiffy clock, `$A2` ticking at 60Hz), then becomes:
+second), then becomes:
 
 ```
- press any key  (registered disk skips this)
+  press any key - registered skips this
 ```
+
+(Mind the 40-column budget on every row; count characters, the
+assembler will not do it for you.)
 
 That last parenthetical is the entire monetization pitch of the nag —
 keep it friendly, not scolding. `NAG_SECONDS = 10` is a single `.define`
@@ -228,9 +243,14 @@ at the top of `intro.s`; the user may later prefer 5.
 
 ### 4.3 Countdown and key wait
 
-- During countdown: poll jiffy decrement, redraw the digits; **drain
+- During countdown: watch the seconds counter, redraw the digits; **drain
   and discard** the keyboard buffer (`GETIN` / `$FFE4` in the main
-  loop) so holding a key early does not skip.
+  loop) so holding a key early does not skip. Seconds come from a frame
+  counter in IRQ A, not the jiffy clock: the intro turns the CIA1 timer
+  IRQ off (`$DC0D = $7F`) so the raster IRQ is the only one running, and
+  the jiffy clock then advances at the raster rate rather than 60Hz.
+  One PAL second = 50 IRQ-A calls; on NTSC the nag runs ~20% short,
+  which is harmless.
 - After countdown: swap row 4's text, then loop on `GETIN` until any
   nonzero key arrives (STOP is not special; it is just a key here).
 - Music plays the whole time, through countdown and wait — it stops
@@ -246,9 +266,9 @@ are committed too so assets are reproducible.
 
 Produced with the SAME converter the adventure pipeline uses:
 `c64llm_proxy/src/imaging.py::convert_to_c64_mc(img)` → returns
-`(bitmap 8000, screen 1000, colram 1000, bg byte)`. The client's wire
-format concatenates them in that order; the intro asset does the same:
-one file `intro_pic.bin`, 10001 bytes.
+`(bitmap 8000, screen 1000, colram 1000, bg byte)`. The first three go
+into the data blob in that order; `bg` becomes the `PIC_BG` constant
+in `intro_gen.inc`.
 
 Source image options, in order of preference:
 
@@ -265,8 +285,8 @@ Source image options, in order of preference:
    of exactly this wrapper — write the small `--mc` variant or extend
    that script).
 
-Commit BOTH the source PNG and `intro_pic.bin`, plus the preview PNG
-from `render_preview_mc` so reviewers can see what shipped.
+Commit the source PNG alongside the generated blob, plus the preview
+PNG from `render_preview_mc` so reviewers can see what shipped.
 
 ### 5.2 Music
 
@@ -289,8 +309,8 @@ LOAD the intro depends on.
 - `tools/make_intro_assets.py` strips the PSID header exactly as
   `music.py::payload()` does (data offset at header bytes 6–7 big-
   endian; skip a 2-byte embedded load address if header bytes 8–9 are
-  zero), writes `intro_sid.bin`, and emits `init`/`play` addresses into
-  `intro_gen.inc`.
+  zero), appends the memory image to the data blob, and emits
+  `init`/`play` addresses into `intro_gen.inc`.
 - Call `init` once at startup with A = start_song−1 (X=Y=0), then
   `play` once per frame from IRQ A. PAL runs it at 50Hz vs the client's
   60Hz tick — tempo will be a touch slower than in-app; accepted.
@@ -312,16 +332,19 @@ LOAD the intro depends on.
 `tools/make_intro_assets.py <source.png> <tune.sid> -o c64_client/intro/assets/`
 writes:
 
-- `intro_pic.bin` (10001 bytes: bitmap+screen+colram+bg)
-- `intro_sid.bin` (headerless memory image for $B000)
+- `intro_data.bin` — the complete `c64 llm.d` file: 2-byte load
+  address ($00 $40), then bitmap 8000 + screen 1000 + colram 1000 +
+  tune memory image. Fixed offsets, so the intro's copy loops use
+  constants: bitmap at $4000, screen $5F40, colram $6328, tune $6710.
 - `intro_gen.inc` (ca65 include: `SID_INIT`, `SID_PLAY`, `SID_SONG`,
-  `PIC_BG`, `SID_SIZE` constants)
+  `SID_SIZE`, `PIC_BG` constants)
 - `intro_preview.png`
 
 It imports `convert_to_c64_mc`/`render_preview_mc` from
 `c64llm_proxy/src/imaging.py` the same way `img2c64.py` does
-(`sys.path` insert). `intro.s` pulls the two `.bin`s in with `.incbin`
-and includes `intro_gen.inc`.
+(`sys.path` insert). The Makefile copies `intro_data.bin` into
+`build/` for c1541; `intro.s` includes `intro_gen.inc` only — no
+`.incbin` of assets into the code PRG.
 
 ## 6. Build integration
 
@@ -330,9 +353,12 @@ and includes `intro_gen.inc`.
 ```make
 CC65_HOME = /usr/share/cc65
 BUILD = ../build
-$(BUILD)/intro.prg: intro.s intro.cfg assets/intro_pic.bin assets/intro_sid.bin
-	CC65_HOME=$(CC65_HOME) ca65 -t c64 intro.s -o $(BUILD)/intro.o
+all: $(BUILD)/intro.prg $(BUILD)/intro_data.bin
+$(BUILD)/intro.prg: intro.s intro.cfg assets/intro_gen.inc
+	CC65_HOME=$(CC65_HOME) ca65 -t c64 -I assets intro.s -o $(BUILD)/intro.o
 	CC65_HOME=$(CC65_HOME) ld65 -C intro.cfg -o $@ $(BUILD)/intro.o
+$(BUILD)/intro_data.bin: assets/intro_data.bin
+	cp $< $@
 ```
 
 (Adjust to taste; the point is it shares `build/` and touches nothing
@@ -348,9 +374,10 @@ default target; conditional blocks after base assignments):
 # contents. Registered disk ($(D64)) is untouched.
 D64FREE = $(TARGETDIR)/c64llm-free.d64
 INTRO = $(TARGETDIR)/intro.prg
+INTRODATA = $(TARGETDIR)/intro_data.bin
 
 $(INTRO): FORCE
-	$(MAKE) -C intro $(abspath $(INTRO))
+	$(MAKE) -C intro
 
 disk-free: $(D64FREE)
 $(D64FREE): $(PRG) $(INTRO)
@@ -358,6 +385,7 @@ $(D64FREE): $(PRG) $(INTRO)
 	@$(VICE_RUN) c1541 -format "c64llm free,01" d64 $(D64FREE) \
 	       -write $(INTRO) "c64 llm" \
 	       -write $(PRG) "c64llm" \
+	       -write $(INTRODATA) "c64 llm.d" \
 	       -write $(MOD1) "c64llm.1" \
 	       -write $(MOD2) "c64llm.2" \
 	       -write $(MOD3) "c64llm.3" \
@@ -391,8 +419,10 @@ user checks it.
   `#ifdef` in resident code. Zero resident bytes is the design.
 - Do not touch `$01` in the intro; do not touch the ACIA.
 - Do not keep music playing across the chain LOAD (§3c5 warble).
-- Do not load the intro's assets as separate disk files — one PRG, one
-  LOAD, fewer directory entries to confuse `LOAD"*"`.
+- Do not scatter assets across per-asset disk files — exactly one data
+  blob (`c64 llm.d`), loaded once. And do not fold the assets into the
+  code PRG either: their file bytes would sit on top of the $0C00/$2000
+  copy destinations (§4).
 - Do not use a raw HVSC .sid (§5.2).
 - Do not put anything the stub needs above $0801 — the LOAD overwrites
   the entire intro image; the stub at $0334 must be self-contained
@@ -406,18 +436,22 @@ user checks it.
 1. **Emulator, free disk**: `make -C c64_client clean && make -C
    c64_client CONNECT=direct MODE80=1 && make -C c64_client disk-free`
    then `./emu/vice-run.sh x64sc c64_client/build/c64llm-free.d64`.
-   Expect: picture + music + text; countdown counts; early keypresses
+   Expect: `LOADING...` for ~40s (emulated stock 1541, no JiffyDOS),
+   then picture + music + text; countdown counts; early keypresses
    ignored; after 10s the prompt swaps; any key → screen blanks to the
-   LOAD, client boots to the config editor (fresh disk, no cfg).
+   LOAD, client boots. Which screen it boots to depends on the build:
+   `main.c` gates `config_load()` on `#ifndef CONNECT_DIRECT`, so a
+   `CONNECT=direct` client goes straight to "Contacting server..." and
+   only a hayes build meets the config editor on a fresh disk.
 2. **Emulator, registered disk**: `make -C c64_client disk` still boots
    the client directly. (This is the no-regression check.)
-3. **Automated (optional but cheap)**: a `test_intro.py` in `emu/`
-   patterned on `test_e2e.py`'s autostart machinery: boot the free d64,
-   `wait_for_screen` on `patreon`, assert it is still there after 3s
-   with a key injected (nag not skippable), wait 8 more seconds, inject
-   a key, `wait_for_screen` on the config editor's title. Keep it off
-   `test-all` until it has proven flake-free in VICE (autostart
-   keystroke leftovers are the known flake source).
+3. **Automated**: `emu/test_intro.py` — boots the free d64, waits for
+   `patreon` in the panel, injects a key and asserts the countdown is
+   still up (nag not skippable), waits for the prompt swap, injects a
+   key, and waits for the client's title bar. Runs headless via
+   `x64sc -console`, ~40s. Deliberately off `test-all` until it has
+   proven flake-free in VICE (autostart keystroke leftovers are the
+   known flake source).
 4. **Hardware**: `make deploy-c64u-disk-80-free` (commit first). The
    Ultimate's Run Disk must boot the intro; JiffyDOS chain-load must
    land in the client. Leave this step to the user unless told
@@ -434,7 +468,7 @@ user checks it.
   make -C c64_client MODE80=1` links with unchanged headroom.
 - `make test-all` untouched and passing.
 - Committed: intro source, cfg, Makefiles, generator script, source
-  PNG, both `.bin` assets, preview PNG, this doc updated with any
+  PNG, `intro_data.bin`, `intro_gen.inc`, preview PNG, this doc updated with any
   deviations discovered during implementation (update the doc, don't
   silently diverge).
 
@@ -451,3 +485,76 @@ user checks it.
   costs disk space and load time; probably not worth it.
 - Fade the SID volume over ~0.5s before the chain LOAD instead of a
   hard cut ($D418 15→0 across frames) — small, tasteful.
+
+## 11. Implementation notes (what actually happened)
+
+Built and green in VICE. The shape in §1–§4 survived contact; these are
+the corrections and the things worth knowing next time.
+
+**Two spec claims were wrong and are fixed inline above.**
+
+1. *Filename case* (§3). `ca65 -t c64` applies the C64 charmap to string
+   literals, so uppercase source produces `$C1-DA`, not `$41-5A`. The
+   disk names c1541 writes are `$43 $36 $34 ...`, so the source strings
+   must be **lowercase**. Verified by assembling both and dumping the
+   linked bytes — do that again rather than trusting either version of
+   this paragraph.
+2. *Banking* (§3, §7). `$01` must be `$36` while the intro runs, or the
+   `$B000` tune is BASIC ROM. `$37` is restored before the chain LOAD.
+   The "never touch `$01`" rule was the one thing in the spec that would
+   have silently produced a crash instead of music.
+
+**Other deviations, all deliberate:**
+
+- **Seconds come from a frame counter**, not the jiffy clock — see §4.3.
+  The intro owns the only IRQ source, so the jiffy clock is no longer
+  wall-clock accurate.
+- **The KERNAL cursor blink is switched off** (`$CC = 1`) before the
+  picture goes up. `$0400` is the bitmap's color data by then, and a
+  blinking cursor would corrupt one cell of it twice a second.
+- **The exit stub is a linker segment**, `STUBCODE`, with `load = MAIN,
+  run = STUBMEM($0334)`. Its bytes ship inside the PRG, every label in it
+  resolves to $0334, and `__STUBCODE_LOAD__/_RUN__/_SIZE__` drive the
+  copy loop. That is what makes "self-contained at $0334" structural
+  rather than a thing to remember.
+- **`intro.cfg` enforces the $0C00 ceiling**: `MAIN` is sized `$03FF`
+  from $0801, so outgrowing the text screen is a link error, not a
+  mystery. Current build ends at $0BD0 — 48 bytes spare.
+- **The generator crops the source to 16:10 before conversion.** The
+  adventure pipeline's `_letterbox` pads to 320x200 preserving aspect,
+  so feeding it a square image would put black bars down both sides and
+  waste half the screen. Compose art with the bottom fifth expendable:
+  `intro_preview.png` dims it so this is visible at review time.
+- **Panel text says LLM64**, matching the logo in the artwork; the app
+  rename from C64 LLM was in flight when this shipped. Disk filenames
+  (`c64llm`, `c64 llm`, `c64 llm.d`) are unchanged and are a contract
+  with the registered disk — renaming them means touching `disk:`.
+
+**Shipped assets:** picture generated with the adventure image backend
+(nano-banana), source PNG committed as `assets/intro_art.png`. Tune is
+`We Are Mature (tune 3)` by Alexander Wiklund / FairLight, from the
+relocated `b000_full` library — 3989 bytes at $B000-$BF95. **The §5.2
+licensing note still stands**: an HVSC tune is baked into a disk that
+asks for money, and long-term this wants a commissioned or explicitly
+licensed track.
+
+**Testing.** `emu/test_intro.py` boots the free disk and asserts the
+whole chain: panel painted, a key during the countdown ignored, prompt
+swap, key, client up at the config editor. It is not in `test-all`
+(§8.3) — it runs unwarped because the nag is a wall-clock claim, ~40s.
+
+Two VICE facts that saved time and will again:
+
+- **`x64sc -console` runs headless** — no X display needed, and the
+  binary monitor works normally. That is how `test_intro.py` runs.
+- **`-exitscreenshot` produces an all-black PNG in console mode.** For a
+  visual check of the raster split you need a real display
+  (`DISPLAY=:0`), and you need to wait out the load: a 14K blob off an
+  emulated stock 1541 takes ~40s, which is exactly why `LOADING...`
+  prints first.
+
+One bug worth naming, because it is a 6502 evergreen: rendering the
+panel with `ldx #199 / ... / dex / bpl` writes exactly one byte. 199 has
+bit 7 set, so the first `dex` already leaves N set. Count up and `cpx`,
+or split the loop. The prompt row's `ldx #39` loop was correct, which
+made the failure look like a memory-map problem for a while.

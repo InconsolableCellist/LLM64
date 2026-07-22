@@ -164,10 +164,39 @@ $(D64): $(PRG)
 	       -write $(MOD5) "c64llm.5" >/dev/null
 	@echo "Disk image: $(D64)"
 
+# Free (shareware) distribution disk: the shareware intro as the first
+# file, then exactly the registered disk's contents. The intro is a
+# standalone PRG that chain-loads "c64llm" and is overwritten by it, so
+# the client carries no free/paid logic and costs no resident bytes.
+# $(D64) and everything in src/ are untouched.
+D64FREE = $(TARGETDIR)/c64llm-free.d64
+INTRO = $(TARGETDIR)/intro.prg
+INTRODATA = $(TARGETDIR)/intro_data.bin
+
+# intro/ has its own self-contained Makefile (ca65 + a committed asset
+# blob); phony so the disk always carries a current intro.
+intro:
+	$(MAKE) -C intro
+
+disk-free: $(D64FREE)
+$(D64FREE): $(PRG) intro
+	@test -f $(MOD1) || { echo "No $(MOD1) - build with MODE80=1"; exit 1; }
+	@$(VICE_RUN) c1541 -format "c64llm free,01" d64 $(D64FREE) \
+	       -write $(INTRO) "c64 llm" \
+	       -write $(PRG) "c64llm" \
+	       -write $(INTRODATA) "c64 llm.d" \
+	       -write $(MOD1) "c64llm.1" \
+	       -write $(MOD2) "c64llm.2" \
+	       -write $(MOD3) "c64llm.3" \
+	       -write $(MOD4) "c64llm.4" \
+	       -write $(MOD5) "c64llm.5" >/dev/null
+	@echo "Free disk image: $(D64FREE)"
+
 # Clean
 clean:
 	@echo "Cleaning..."
 	rm -f $(TARGETDIR)/*.o $(TARGETDIR)/*.map $(PRG) $(MOD1) $(MOD2) $(MOD3) $(MOD4) $(MOD5) $(D64)
+	rm -f $(D64FREE) $(INTRO) $(INTRODATA)
 	@echo "Clean complete"
 
 # Run in VICE emulator (if available)
@@ -202,4 +231,4 @@ info:
 	@echo "Objects: $(OBJECTS)"
 	@echo "C64 FTP: ftp://$(C64_IP)$(C64_PATH)/"
 
-.PHONY: all clean run upload deploy info disk
+.PHONY: all clean run upload deploy info disk disk-free intro
