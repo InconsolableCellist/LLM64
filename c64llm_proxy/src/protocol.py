@@ -469,7 +469,7 @@ class ProtocolHandler:
                 "/assist - talk to the AI assistant\n"
                 "/models - list models, /model <name> - switch\n"
                 "/music <mood> - play a tune (/music for moods)\n"
-                "/auto - let the story choose the music again\n"
+                "/auto - let the narrator choose the music again\n"
                 "[roll:1d20] in a message - roll dice for real\n"
                 "/pic [desc|n] - illustrate scene / re-show pic n\n"
                 "/pics - list this conversation's pictures\n"
@@ -631,31 +631,48 @@ class ProtocolHandler:
             elif not arg:
                 await self._send_canned(
                     "Moods: " + ", ".join(self.music.moods)
-                    + "\nUse: /music <mood>  (S key stops)")
+                    + "\nUse: /music <mood>, /music next for another of "
+                      "the same,\n/auto to give the soundtrack back to "
+                      "the narrator.")
             else:
-                tune = self.music.pick(arg.lower())
+                # 'next' is a skip, not a takeover: it keeps whatever
+                # mood is playing and does NOT claim manual control, so
+                # the narrator still gets the soundtrack at the next
+                # scene change. (The jukebox panel's 'n' key sends
+                # exactly this shape of command.)
+                mood = arg.lower()
+                if mood == 'next':
+                    mood = (self.conv_manager.get_meta('music')
+                            or {}).get('mood', '')
+                    if not mood:
+                        await self._send_canned(
+                            "Nothing is playing. /music <mood> starts "
+                            "something.")
+                        return
+                tune = self.music.pick(mood)
                 if tune:
-                    self._music_manual = True
-                    self._manual_notice_sent = False
+                    if arg.lower() != 'next':
+                        self._music_manual = True
+                        self._manual_notice_sent = False
                     await self._send_canned(
                         f"Playing: {tune['title']} ({tune['author']})")
                     self._spawn_media(self.send_sid(tune))
                     self.conv_manager.set_meta('music', {
-                        'mood': arg.lower(), 'tune': tune['id']})
+                        'mood': mood, 'tune': tune['id']})
                     self.conv_manager.save()
                 else:
                     await self._send_canned(
-                        f"No tune fits '{arg}'. /music lists moods.")
+                        f"No tune fits '{arg[:20]}'. /music lists moods.")
 
         elif cmd == 'auto':
             if self._music_manual:
                 self._music_manual = False
                 self._manual_notice_sent = False
                 await self._send_canned(
-                    "The story picks the music again.")
+                    "The narrator picks the music again.")
             else:
                 await self._send_canned(
-                    "The story is already choosing the music.")
+                    "The narrator is already choosing the music.")
 
         elif cmd == 'models':
             try:
@@ -1335,8 +1352,15 @@ class ProtocolHandler:
                             + len(piece) * self.CHUNK_PACE_PER_BYTE)
         return (seq + 1) % 256
 
+    # Heartbeats keep the client's ~43s response watchdog fed during a
+    # long silence. The cap must OUTLIVE the API's own read timeout
+    # (api_client, 600s) or the C64 gives up first and the real error -
+    # the one that would say what went wrong - never arrives. A slow GPU
+    # doing a cold prompt-eval on a long conversation is minutes.
+    HEARTBEAT_BEATS = 63
+
     async def _heartbeat(self, label: str, interval: float = 10.0,
-                         beats: int = 18):
+                         beats: int = HEARTBEAT_BEATS):
         """Keep the client's response watchdog fed during long silent
         waits (cold prompt-eval of a big conversation, model load, image
         generation). Capped: if the wait outlives the cap, the silence
@@ -1356,6 +1380,15 @@ class ProtocolHandler:
         pics = len(self.conv_manager.get_meta('images', []) or [])
         await self.send_message(MessageType.HINT,
                                 bytes([pending & 1, min(pics, 255)]))
+
+    async def _send_notice(self, text: str):
+        """An out-of-band system line in the scrollback (the dice path's
+        message type). Unlike _send_canned it sends no CHAT_DONE, so it
+        cannot disturb the reply state machine - but the client IGNORES
+        it while streaming, so only send it once a reply has finished."""
+        await self._send_bulk(
+            MessageType.NOTICE,
+            text.encode('ascii', errors='replace')[:400] + b'\x00')
 
     async def _send_canned(self, text: str):
         """Stream local text to the C64 as a normal reply (no API call)."""
@@ -1666,13 +1699,22 @@ class ProtocolHandler:
                         await self._send_canned(
                             "(The scene calls for different music, but "
                             "you have chosen your own. /auto gives the "
-                            "soundtrack back to the story.)")
+                            "soundtrack back to the narrator.)")
                 elif self.music.rate_limited():
                     self.logger.info(
                         f"Music directive rate-limited: {mfilter.moods}")
                 else:
                     tune = self.music.pick(mfilter.moods[0])
                     if tune:
+                        # Say WHY the music changed. Until now a tune
+                        # simply appeared, with the title flashing past
+                        # in the status row; the scrollback keeps this.
+                        await self._send_notice(
+                            f"The narrator chose \"{tune['title']}\" by "
+                            f"{tune['author']} to fit the mood: "
+                            f"{mfilter.moods[0]}.\n"
+                            "(/music next for another, /music <mood> to "
+                            "choose your own.)")
                         await self.send_sid(tune)
                         self.music.mark_changed()
                         # Remember what's playing: loading this
@@ -1978,6 +2020,15 @@ class ProtocolHandler:
                 self.conv_manager.set_meta('adv_map', seeded)
                 self.logger.info("map: seeded %d places from the prep "
                                  "notes", n)
+        # How to play, once, before the first scene. Everything here is
+        # otherwise only discoverable through /help, which a player in
+        # the middle of a story has no reason to type.
+        await self._send_notice(
+            "How to play: say what you want to do, in your own words -"
+            " LOOK, TAKE THE LAMP, or just \"ask her about the gate\"."
+            "\n/map draws the map as you explore it (/map <n> routes you"
+            " back). /pic illustrates this scene, /pics lists the ones"
+            " you have. /save makes a checkpoint. F1 is the menu.")
         await self.send_status("Generating your adventure...")
         self.stream_task = asyncio.create_task(
             self._stream_response(hidden_user_msg=self.mode.kickoff()))

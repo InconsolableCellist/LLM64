@@ -87,8 +87,99 @@ s2 = to_race(fresh())
 s2.feed('dwarf')
 check("race by name, any case", s2.answers['race'], 'Dwarf')
 s3 = to_race(fresh())
-reply, act = s3.feed('banana')
-check("a bad choice is refused", 'race' in s3.answers, False)
+reply, act = s3.feed('99')
+check("a bad number is refused", 'race' in s3.answers, False)
+
+# --- your own race and class ------------------------------------------
+# The rules cannot list every race anyone will want to be, so anything
+# that is not a number is taken as the player's own answer. A bad NUMBER
+# is still refused (above): silently recording "99" as a race would be
+# worse than saying no.
+s = to_race(fresh())
+n_custom = len(s.options()) + 1
+reply, _ = s.feed(str(n_custom))
+check("the custom line asks for words", 'race' in s.answers, False)
+if 'your own race' not in reply.lower():
+    failures.append(f"custom prompt does not ask for the race: {reply!r}")
+reply, _ = s.feed('Automaton, a clockwork person of brass')
+check("free text becomes the race",
+      s.answers['race'], 'Automaton, a clockwork person of brass')
+if 'no rule modifiers' not in reply.lower():
+    failures.append("a custom race must say no modifiers were applied")
+check("...and it survives into the character block",
+      'Automaton' in s.character_block(), True)
+check("...without racial modifiers",
+      chargen.final_scores(RULES, {'CON': 10}, 'Automaton')['CON'], 10)
+
+# A custom CLASS has no skill list, so that stage must not appear at all
+s.feed('Vault Technician')
+check("a custom class skips skills, having none",
+      STAGES[s.stage]['key'], 'gear')
+
+# Listed choices come with a line of flavour, and choosing one says it
+s = to_race(fresh())
+screen = s.stage_screen()
+for want in ('Catfolk', 'Lizardfolk', 'Birdfolk', 'Kobold'):
+    if want not in screen:
+        failures.append(f"race list missing {want}")
+reply, _ = s.feed('Dwarf')
+if chargen.blurb(RULES, 'race', 'Dwarf') not in reply:
+    failures.append(f"choosing a race does not describe it: {reply!r}")
+
+# --- gear --------------------------------------------------------------
+GEAR = RULES['equipment']
+s = to_race(fresh())
+s.answers['scores'] = {a: 15 for a in RULES['abilities']}
+s.feed('1'); s.feed('Fighter'); s.feed('1 2')
+check("gear comes after skills", STAGES[s.stage]['key'], 'gear')
+opts = s.options()
+if not opts:
+    failures.append("no gear offered to a Fighter")
+reply, _ = s.feed('1 2 3 4 5 6 7 8 9')
+check("an unaffordable kit is refused", 'gear' in s.answers, False)
+if 'points' not in reply:
+    failures.append("the refusal does not say what it cost")
+reply, _ = s.feed('99')
+check("gear off the list is refused", 'gear' in s.answers, False)
+s.feed('1 + my mothers locket')
+check("numbers and a custom item both land",
+      s.answers['gear'], [opts[0], 'my mothers locket'])
+check("the custom item is priced",
+      chargen.gear_cost(RULES, s.answers['gear']),
+      GEAR['items'][0]['cost'] + GEAR['custom_cost'])
+check("gear reaches the character block",
+      'carrying' in s.character_block(), True)
+
+# Travelling light is a legal answer - and it must be TYPEABLE, since
+# the client drops an empty message
+s2 = to_race(fresh())
+s2.answers['scores'] = {a: 15 for a in RULES['abilities']}
+s2.feed('1'); s2.feed('Fighter'); s2.feed('1 2'); s2.feed('0')
+check("0 means no gear", s2.answers['gear'], [])
+
+# Every class must be able to kit itself out inside the budget
+for c in RULES['classes']:
+    items = chargen.gear_options(RULES, c['name'])
+    if len(items) < 6:
+        failures.append(f"{c['name']} sees only {len(items)} items")
+    if min(i['cost'] for i in items) > GEAR['points']:
+        failures.append(f"{c['name']} cannot afford anything")
+
+# --- the step counter must not skip -----------------------------------
+# Field complaint: a non-caster went "step 6" then "step 8", which reads
+# as a setup that lost its place.
+for cls, feeds in (('Wizard', ['1 2', '1 2 3']), ('Fighter', ['1 2'])):
+    s = to_race(fresh())
+    s.answers['scores'] = {a: 15 for a in RULES['abilities']}
+    s.feed('1')
+    seen = []
+    for text in ['Fighter' if cls == 'Fighter' else 'Wizard'] + feeds + ['1']:
+        reply, _ = s.feed(text)
+        for line in reply.splitlines():
+            if line.startswith('[step '):
+                seen.append(int(line.split()[1]))
+    if seen != sorted(seen) or any(b - a != 1 for a, b in zip(seen, seen[1:])):
+        failures.append(f"{cls} step numbers jump: {seen}")
 
 # Only eligible classes are offered
 s = to_race(fresh())
@@ -121,13 +212,13 @@ s.answers['scores'] = {a: 15 for a in RULES['abilities']}
 s.feed('1')
 s.feed('Fighter')
 s.feed('1 2')
-check("fighter skips spells", STAGES[s.stage]['key'], 'name')
+check("fighter skips spells", STAGES[s.stage]['key'], 'gear')
 
 # --- the cascade ------------------------------------------------------
 s = to_race(fresh())
 s.answers['scores'] = {a: 15 for a in RULES['abilities']}
 s.feed('1'); s.feed('Wizard'); s.feed('1 2'); s.feed('1 2 3')
-s.feed('Bruni'); s.feed('the flooded nave')
+s.feed('1'); s.feed('Bruni'); s.feed('the flooded nave')
 check("all stages answered lands on review", s.state, 'review')
 
 vis = [st['label'] for st in STAGES if s._applies(st)]
@@ -156,7 +247,8 @@ check("...and the spell line vanishes from the review",
 # --- surprise answers never reach the prep pass -----------------------
 s = fresh(); s.feed('3')
 s.feed('?'); s.feed('?'); s.feed('')
-s.feed('1'); s.feed('Wanderer'); s.feed('1 2'); s.feed('?'); s.feed('?')
+s.feed('1'); s.feed('Wanderer'); s.feed('1 2'); s.feed('1')
+s.feed('?'); s.feed('?')
 b = s.bundle()
 check("'?' answers are dropped from the bundle",
       [k for k in ('world', 'tone', 'name', 'opening') if k in b], [])
@@ -166,7 +258,8 @@ check("...but real answers survive", 'race' in b and 'scores' in b, True)
 s = to_race(fresh())
 s.answers['scores'] = {a: 14 for a in RULES['abilities']}
 s.feed('3')                                   # Dwarf
-s.feed('Cleric'); s.feed('1 2'); s.feed('1 2'); s.feed('Bruni Ashvein')
+s.feed('Cleric'); s.feed('1 2'); s.feed('1 2'); s.feed('1')
+s.feed('Bruni Ashvein')
 block = s.character_block()
 for bit in ('Dwarf', 'Cleric', 'Bruni Ashvein', 'CON'):
     if bit not in block:
@@ -227,7 +320,8 @@ saved = {'bundle': {'world': 'The Sunken Sanctum', 'tone': 'grim',
 s.start_reroll(saved)
 check("re-roll starts at the dice", STAGES[s.stage]['key'], 'scores')
 check("...with the world kept", s.answers['world'], 'The Sunken Sanctum')
-s.feed('k'); s.feed('Dwarf'); s.feed('Wanderer'); s.feed('1 2'); s.feed('Bruni')
+s.feed('k'); s.feed('Dwarf'); s.feed('Wanderer'); s.feed('1 2')
+s.feed('1'); s.feed('Bruni')
 check("...and does not re-ask the kept world", s.state, 'review')
 check("the kept world is still on the review",
       'Sunken Sanctum' in s.review_screen(), True)

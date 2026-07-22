@@ -193,6 +193,23 @@ log = move(m, "Crypt", "dir=n")
 check("first n edge untouched", m['edges'][0]['dir'], 'n')
 check("second n edge has no dir", m['edges'][1]['dir'], None)
 check("collision made no extra edge", len(m['edges']), 2)
+
+# ...and the same claim arriving from the FAR end must collide too.
+# Field case (conversation 1784706552, 2026-07-22): the model put the
+# Iron Corridor west of the Great Hall, was refused the Iron Gateway in
+# the same direction, then said "east" while walking back FROM the
+# gateway - which is the identical claim seen from the other side. It
+# was stored, and the Great Hall ended up with two rooms to its west.
+m = advmap.new_map()
+move(m, "The Iron Corridor")
+move(m, "The Great Hall", "dir=e")            # corridor is w of the hall
+move(m, "The Iron Gateway")                   # dir unknown, no conflict
+log = move(m, "The Great Hall", "dir=e")      # ...says the gateway is w too
+west = [e for e in m['edges']
+        if advmap.dir_from(m, e, 'great-hall') == 'w']
+check("only one room lies west of the hall", len(west), 1)
+ok("the far-end collision is logged",
+   any('already lies' in x for x in log), log)
 ok("collision is logged", any('already lies' in x for x in log), log)
 
 # An existing edge is upgraded in place, never duplicated, and a known

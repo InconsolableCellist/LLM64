@@ -19,9 +19,15 @@ class APIClient:
         self.logger = logging.getLogger(__name__)
 
         # Generous read timeout: local servers (llama.cpp) may load the
-        # model on the first request, which can take minutes.
+        # model on the first request, and a slow GPU can take minutes
+        # for a cold prompt-eval on a long conversation. Ten minutes is
+        # not a wait anyone will sit through happily, but it beats
+        # failing a request that WOULD have answered.
+        # ProtocolHandler.HEARTBEAT_BEATS is tied to this: the client
+        # must stay fed until the API itself gives up, or the C64
+        # aborts first and the real error is never seen.
         self.client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=15.0, read=300.0,
+            timeout=httpx.Timeout(connect=15.0, read=600.0,
                                   write=30.0, pool=30.0),
             headers={'Authorization': f'Bearer {self.api_key}'}
         )

@@ -460,7 +460,8 @@ def main():
                     print('  PASS: manual music declines LLM directives')
 
                     monitor.keyboard_feed('/auto\r')
-                    wait_for_screen(monitor, r'story picks the music again',
+                    wait_for_screen(monitor,
+                                    r'narrator picks the music again',
                                     20, artifacts, f'{tag}-auto-restore')
                     wait_ready(monitor, 20, artifacts, f'{tag}-auto-ready')
 
@@ -1003,19 +1004,23 @@ def main():
                                     artifacts, f'{tag}-adv-menu')
                     wait_ready(monitor, 30, artifacts, f'{tag}-adv-w0')
                     monitor.keyboard_feed('3\r')
-                    wait_for_screen(monitor, r'step 1 of 9', 20,
+                    wait_for_screen(monitor, r'step 1 of 10', 20,
                                     artifacts, f'{tag}-adv-s1')
                     # Choices are made BY NAME, not by number: the class
                     # list is filtered by rolled dice, so numbering is
                     # not deterministic. Wanderer has no requirements and
-                    # no spells, which also exercises the skip.
+                    # no spells, which also exercises the skip - and the
+                    # TOTAL drops from 10 to 9 at that moment rather than
+                    # the step number jumping 6 -> 8, which is the whole
+                    # point of counting only the stages that still apply.
                     script = [
-                        ('a drowned temple city', 'step 2 of 9'),
-                        ('grim and wet',          'step 3 of 9'),
-                        ('k',                     'step 4 of 9'),
-                        ('Dwarf',                 'step 5 of 9'),
+                        ('a drowned temple city', 'step 2 of 10'),
+                        ('grim and wet',          'step 3 of 10'),
+                        ('k',                     'step 4 of 10'),
+                        ('Dwarf',                 'step 5 of 10'),
                         ('Wanderer',              'step 6 of 9'),
-                        ('1 2',                   'step 8 of 9'),
+                        ('1 2',                   'step 7 of 9'),
+                        ('1',                     'step 8 of 9'),
                         ('Bruni Ashvein',         'step 9 of 9'),
                     ]
                     for answer, expect in script:

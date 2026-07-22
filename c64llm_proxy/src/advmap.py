@@ -190,10 +190,27 @@ def dir_from(m, e, s: str):
     return d if e['a'] == s else OPPOSITE.get(d)
 
 
+def _conflict(m, a, b, d):
+    """The room that already occupies direction `d` between a and b, or
+    None. BOTH ends are checked, because a direction is a claim about
+    both: "the gateway is west of the hall" also says "the hall is east
+    of the gateway", and a claim that arrives from the far end is the
+    same claim. Checking only the near end let a second room be filed
+    west of the Great Hall on the very first real playthrough.
+    """
+    other = _room_in_dir(m, a, d)
+    if other and other != b:
+        return other
+    back = _room_in_dir(m, b, OPPOSITE[d])
+    if back and back != a:
+        return back
+    return None
+
+
 def _add_edge(m, a, b, d, via, oneway, log):
     if d:
-        other = _room_in_dir(m, a, d)
-        if other and other != b:
+        other = _conflict(m, a, b, d)
+        if other:
             # Keep the first, drop the new direction. Do NOT correct the
             # model: next turn's injected block restates the truth, and a
             # nag every turn buys nothing.
@@ -209,8 +226,12 @@ def _add_edge(m, a, b, d, via, oneway, log):
         return
     # Upgrade in place: fill a null field, never overwrite a known one.
     if d and not e.get('dir'):
+        # Stored from e['a']'s point of view, which is not necessarily
+        # the end this claim arrived from - log what was STORED, or the
+        # log says 'e' while the map correctly holds 'w'.
         e['dir'] = d if e['a'] == a else OPPOSITE.get(d)
-        log.append("edge %s-%s learned direction %s" % (e['a'], e['b'], d))
+        log.append("edge %s-%s learned direction %s"
+                   % (e['a'], e['b'], e['dir']))
     if via and not e.get('via'):
         e['via'] = via
     if oneway:
