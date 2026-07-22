@@ -117,11 +117,16 @@ deploy-c64u-80:
 # The canonical deploy: one d64 with the client + overlay module,
 # mounted on the Ultimate's 1541 (JiffyDOS fastload applies, config
 # saves persist inside the image, burnable to a real floppy).
+#
+# INJECT_CFG=0 ships it cfg-free instead, i.e. the real first-run
+# experience: the config editor on boot, exactly what a buyer sees.
+deploy-c64u-disk-80: INJECT_CFG ?= 1
 deploy-c64u-disk-80:
 	$(MAKE) -C c64_client clean
 	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
 	$(MAKE) -C c64_client disk
-	$(MAKE) inject-cfg
+	@if [ "$(INJECT_CFG)" = "1" ]; then $(MAKE) inject-cfg; \
+	 else echo "INJECT_CFG=0: cfg-free, first boot opens the config editor"; fi
 	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm.d64
 
 # Write the maintainer's NetConfig into the freshly built disk. NOT for
@@ -157,13 +162,14 @@ inject-cfg:
 # (HANDOFF.md, open bug). Injecting a cfg would hide the one bug that
 # every free-disk user is guaranteed to hit. `INJECT_CFG=1` opts in when
 # you just don't want to retype the address.
+deploy-c64u-disk-80-free: INJECT_CFG ?= 0
 deploy-c64u-disk-80-free:
 	$(MAKE) -C c64_client clean
 	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
 	$(MAKE) -C c64_client disk-free
-ifdef INJECT_CFG
-	$(MAKE) inject-cfg CFG_DISK=c64_client/build/c64llm-free.d64
-endif
+	@if [ "$(INJECT_CFG)" = "1" ]; then \
+	   $(MAKE) inject-cfg CFG_DISK=c64_client/build/c64llm-free.d64; \
+	 else echo "cfg-free: first boot opens the config editor (the new-user path)"; fi
 	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm-free.d64
 
 # Same disk, built DIAG=1 (crash post-mortem block at $02A7, see
