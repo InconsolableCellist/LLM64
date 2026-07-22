@@ -141,29 +141,13 @@ void ui_blit_row(uint8_t row, const uint8_t* cells, uint8_t color) {
    can be caught by that granularity are the marker-spaces themselves.
    Markers are rewritten to spaces in place - rowbuf is scratch that
    every caller rebuilds, and soft80.s then sees pure ASCII. */
-static uint8_t matbuf[40];
+/* Non-static: the asm colorize_row (colorize.s) fills it. */
+uint8_t matbuf[40];
 
-static uint8_t colorize_row(uint8_t* buf, uint8_t carry, uint8_t base) {
-    uint8_t i;
-    uint8_t run = carry;
-    uint8_t any = carry ? 1 : 0;
-    for (i = 0; i < 40; ++i) matbuf[i] = base;
-    for (i = 0; i < TEXT_COLS; ++i) {
-        uint8_t c = buf[i] & 0x7F;      /* bit 7 is reverse, not colour */
-        if (c == MK_CLOSE) {
-            run = 0;
-            buf[i] = 0x20;
-            any = 1;
-        } else if (c >= MK_COLOR_LO && c <= MK_COLOR_HI) {
-            run = c & 0x0F;
-            buf[i] = 0x20;
-            any = 1;
-        } else if (run) {
-            matbuf[i >> 1] = run;
-        }
-    }
-    return any;
-}
+/* The 80-cell scan + 40-byte fill, per coloured chat row, lives in
+   colorize.s as a bit-exact port of the old C loop (marker cells -> run
+   colour + rewrite to space; matbuf[i>>1] holds the run). */
+uint8_t __fastcall__ colorize_row(uint8_t* buf, uint8_t carry, uint8_t base);
 
 /* Chat rows only: chrome (status, title, editor) never carries markers
    and must not pay for the scan. `color` is the encoded line_color -
