@@ -1080,12 +1080,16 @@ def main():
                     # TOTAL drops from 10 to 9 at that moment rather than
                     # the step number jumping 6 -> 8, which is the whole
                     # point of counting only the stages that still apply.
+                    # Race and class now gate on a "(Y/n)" confirm that
+                    # shows the blurb (it is off the list); answer 'y'.
                     script = [
                         ('a drowned temple city', 'step 2 of 10'),
                         ('grim and wet',          'step 3 of 10'),
                         ('k',                     'step 4 of 10'),
-                        ('Dwarf',                 'step 5 of 10'),
-                        ('Wanderer',              'step 6 of 9'),
+                        ('Dwarf',                 'be a dwarf'),
+                        ('y',                     'step 5 of 10'),
+                        ('Wanderer',              'be a wanderer'),
+                        ('y',                     'step 6 of 9'),
                         ('1 2',                   'step 7 of 9'),
                         ('1',                     'step 8 of 9'),
                         ('Bruni Ashvein',         'step 9 of 9'),

@@ -38,6 +38,15 @@ def to_race(s):
     return s
 
 
+def pick(s, text):
+    """Choose a listed race/class and clear the (Y/n) gate it now shows.
+    A custom (typed) answer sets no gate, so the extra 'y' is skipped."""
+    reply, act = s.feed(text)
+    if s.confirm is not None:
+        reply, act = s.feed('y')
+    return reply, act
+
+
 # --- dice are the proxy's job, and they are real ----------------------
 rng = random.Random(1)
 vals = [v for _ in range(2000) for v in chargen.roll_scores(RULES, rng).values()]
@@ -81,10 +90,10 @@ check("...and moves on", s.stage, STAGE_KEYS.index('race'))
 
 # --- choices are by number or by name ---------------------------------
 s = to_race(fresh())
-s.feed('3')
+pick(s, '3')
 check("race by number", s.answers['race'], 'Dwarf')
 s2 = to_race(fresh())
-s2.feed('dwarf')
+pick(s2, 'dwarf')
 check("race by name, any case", s2.answers['race'], 'Dwarf')
 s3 = to_race(fresh())
 reply, act = s3.feed('99')
@@ -130,7 +139,7 @@ if chargen.blurb(RULES, 'race', 'Dwarf') not in reply:
 GEAR = RULES['equipment']
 s = to_race(fresh())
 s.answers['scores'] = {a: 15 for a in RULES['abilities']}
-s.feed('1'); s.feed('Fighter'); s.feed('1 2')
+pick(s, '1'); pick(s, 'Fighter'); s.feed('1 2')
 check("gear comes after skills", STAGES[s.stage]['key'], 'gear')
 opts = s.options()
 if not opts:
@@ -153,7 +162,7 @@ check("the custom item is priced",
 # charged once and truncated at 40 characters - wrong, and silently so.
 s3 = to_race(fresh())
 s3.answers['scores'] = {a: 15 for a in RULES['abilities']}
-s3.feed('1'); s3.feed('Fighter'); s3.feed('1 2')
+pick(s3, '1'); pick(s3, 'Fighter'); s3.feed('1 2')
 s3.feed('+ a lucky coin + my fathers ring + a stolen key')
 check("each + is its own item", s3.answers['gear'],
       ['a lucky coin', 'my fathers ring', 'a stolen key'])
@@ -164,7 +173,7 @@ check("...each priced separately",
 # ...and the budget still binds: a fourth would be 8 points of 6
 s4 = to_race(fresh())
 s4.answers['scores'] = {a: 15 for a in RULES['abilities']}
-s4.feed('1'); s4.feed('Fighter'); s4.feed('1 2')
+pick(s4, '1'); pick(s4, 'Fighter'); s4.feed('1 2')
 reply, _ = s4.feed('+ one + two + three + four')
 check("too many custom items are refused", 'gear' in s4.answers, False)
 if '8 points' not in reply:
@@ -179,7 +188,7 @@ check("gear reaches the character block",
 # the client drops an empty message
 s2 = to_race(fresh())
 s2.answers['scores'] = {a: 15 for a in RULES['abilities']}
-s2.feed('1'); s2.feed('Fighter'); s2.feed('1 2'); s2.feed('0')
+pick(s2, '1'); pick(s2, 'Fighter'); s2.feed('1 2'); s2.feed('0')
 check("0 means no gear", s2.answers['gear'], [])
 
 # Every class must be able to kit itself out inside the budget
@@ -196,10 +205,12 @@ for c in RULES['classes']:
 for cls, feeds in (('Wizard', ['1 2', '1 2 3']), ('Fighter', ['1 2'])):
     s = to_race(fresh())
     s.answers['scores'] = {a: 15 for a in RULES['abilities']}
-    s.feed('1')
+    pick(s, '1')                              # race (Human), confirmed
     seen = []
-    for text in ['Fighter' if cls == 'Fighter' else 'Wizard'] + feeds + ['1']:
+    for text in [cls] + feeds + ['1']:
         reply, _ = s.feed(text)
+        if s.confirm is not None:             # a class pick hits the Y/n gate
+            reply, _ = s.feed('y')
         for line in reply.splitlines():
             if line.startswith('[step '):
                 seen.append(int(line.split()[1]))
@@ -209,15 +220,15 @@ for cls, feeds in (('Wizard', ['1 2', '1 2 3']), ('Fighter', ['1 2'])):
 # Only eligible classes are offered
 s = to_race(fresh())
 s.answers['scores'] = {a: 3 for a in RULES['abilities']}
-s.feed('1')                                   # Human
+pick(s, '1')                                  # Human
 check("class list respects the scores",
       s.options(), ['Wanderer'])
 
 # --- multi-pick enforces the count ------------------------------------
 s = to_race(fresh())
 s.answers['scores'] = {a: 15 for a in RULES['abilities']}
-s.feed('1')                                   # Human
-s.feed('Wizard')
+pick(s, '1')                                  # Human
+pick(s, 'Wizard')
 want = s.picks_allowed()
 reply, _ = s.feed('1')
 check("too few picks is refused", 'skills' in s.answers, False)
@@ -234,15 +245,15 @@ check("spells recorded", len(s.answers['spells']), 3)
 # ...and a non-caster skips it entirely
 s = to_race(fresh())
 s.answers['scores'] = {a: 15 for a in RULES['abilities']}
-s.feed('1')
-s.feed('Fighter')
+pick(s, '1')
+pick(s, 'Fighter')
 s.feed('1 2')
 check("fighter skips spells", STAGES[s.stage]['key'], 'gear')
 
 # --- the cascade ------------------------------------------------------
 s = to_race(fresh())
 s.answers['scores'] = {a: 15 for a in RULES['abilities']}
-s.feed('1'); s.feed('Wizard'); s.feed('1 2'); s.feed('1 2 3')
+pick(s, '1'); pick(s, 'Wizard'); s.feed('1 2'); s.feed('1 2 3')
 s.feed('1'); s.feed('Bruni'); s.feed('the flooded nave')
 check("all stages answered lands on review", s.state, 'review')
 
@@ -256,14 +267,14 @@ for label in vis:
 n_race = vis.index('Race') + 1
 s.feed(str(n_race))
 check("picking a number edits that line", STAGES[s.stage]['key'], 'race')
-s.feed('Elf')
+pick(s, 'Elf')
 check("an edit returns to the review", s.state, 'review')
 check("class is flagged", 'class' in s.invalid, True)
 check("begin is refused while flagged", s.feed('y')[1], ACT_NONE)
 
 # Changing to a class with no spells must not leave a stale spell list
 n_class = vis.index('Class') + 1
-s.feed(str(n_class)); s.feed('Wanderer')
+s.feed(str(n_class)); pick(s, 'Wanderer')
 check("stale spells are dropped with the class",
       'spells' in s.answers, False)
 check("...and the spell line vanishes from the review",
@@ -272,7 +283,7 @@ check("...and the spell line vanishes from the review",
 # --- surprise answers never reach the prep pass -----------------------
 s = fresh(); s.feed('3')
 s.feed('?'); s.feed('?'); s.feed('')
-s.feed('1'); s.feed('Wanderer'); s.feed('1 2'); s.feed('1')
+pick(s, '1'); pick(s, 'Wanderer'); s.feed('1 2'); s.feed('1')
 s.feed('?'); s.feed('?')
 b = s.bundle()
 check("'?' answers are dropped from the bundle",
@@ -282,8 +293,8 @@ check("...but real answers survive", 'race' in b and 'scores' in b, True)
 # The character block is prose for the prompt, not JSON
 s = to_race(fresh())
 s.answers['scores'] = {a: 14 for a in RULES['abilities']}
-s.feed('3')                                   # Dwarf
-s.feed('Cleric'); s.feed('1 2'); s.feed('1 2'); s.feed('1')
+pick(s, '3')                                  # Dwarf
+pick(s, 'Cleric'); s.feed('1 2'); s.feed('1 2'); s.feed('1')
 s.feed('Bruni Ashvein')
 block = s.character_block()
 for bit in ('Dwarf', 'Cleric', 'Bruni Ashvein', 'CON'):

@@ -57,18 +57,19 @@ STAGES = [
          q='How should it feel? (grim, hopeful, funny, dangerous...) '
            'Or "?" to let the narrator decide.'),
     dict(key='scores', label='Scores', kind='roll', needs=(),
-         intro='That is the world. Now for the person who lives in it -'
-               ' six steps to build your character, starting with the '
-               'dice that decide what you are good at.',
+         intro='Now for your character. First you\'ll roll for your '
+               'stats, then, when you\'re happy, choose or define a race.',
          q='Rolling 4d6 for each ability, dropping the lowest die.'),
     dict(key='race', label='Race', kind='choice', needs=(),
          q='What are you?'),
     dict(key='class', label='Class', kind='choice', needs=('scores', 'race'),
          q='What do you do? (only what your scores allow)'),
     dict(key='skills', label='Skills', kind='multi', needs=('class',),
-         q='Pick your trained skills.', applies=_has_skills),
+         q='First pick your trained skills '
+           '(which you\'ve learned from your background).',
+         applies=_has_skills),
     dict(key='spells', label='Spells', kind='multi', needs=('class',),
-         q='Pick what you know.', applies=_has_spells),
+         q='What spells have you learned?', applies=_has_spells),
     dict(key='gear', label='Gear', kind='spend', needs=('class',),
          q='What are you carrying?'),
     dict(key='name', label='Name', kind='text', needs=('race', 'class'),
@@ -97,6 +98,9 @@ class AdventureSetup:
         self.stage = 0
         self.theme = ''
         self.editing = False
+        # A listed race/class the player picked but has not yet confirmed
+        # (the "be a Kobold? (Y/n)" gate). None = no pick awaiting a yes.
+        self.confirm = None
         self.invalid = set()
         # Stages already answered by a loaded template. They still appear
         # on the review (and can still be edited) but are not asked again
@@ -221,9 +225,9 @@ class AdventureSetup:
                     extra = "  " + " ".join(f"{k}{v:+d}"
                                             for k, v in mods.items())
                 body.append(f"  {i:2}  {o:11}{extra}".rstrip())
-                blurb = chargen.blurb(self.rules, st['key'], o)
-                if blurb:
-                    body.append(f"      {blurb}")
+                # The blurb is NOT listed here - the race/class lists ran
+                # long enough to scroll the connect text off. It is shown
+                # when you pick one, on the confirm screen (_confirm_screen).
             if st['key'] in CUSTOM_OK:
                 body.append(f"  {len(opts) + 1:2}  Something else - "
                             "your own idea")
@@ -363,6 +367,8 @@ class AdventureSetup:
             self.invalid.discard('spells')
 
     def _answer(self, text):
+        if self.confirm is not None:
+            return self._answer_confirm(text)
         st = self._stage()
         key, kind = st['key'], st['kind']
 
@@ -392,8 +398,14 @@ class AdventureSetup:
                     return (f"Your own {st['label'].lower()}, then: a "
                             "name, and a few words about what it is."), \
                         ACT_NONE
-                chosen = custom
-            self._record(key, chosen)
+                # A typed custom answer is its own confirmation - the
+                # player wrote it out, so there is nothing to double-check.
+                self._record(key, custom)
+            else:
+                # A listed race/class waits for a yes: show what it is and
+                # gate on "(Y/n)" so a misfired number is easy to undo.
+                self.confirm = chosen
+                return self._confirm_screen(key, chosen), ACT_NONE
         elif kind == 'multi':
             opts = self.options(st)
             want = self.picks_allowed(st)
@@ -420,6 +432,36 @@ class AdventureSetup:
     @staticmethod
     def _with(note, screen):
         return f"{note}\n\n{screen}" if note else screen
+
+    def _confirm_screen(self, key, name) -> str:
+        """The 'be a Kobold? (Y/n)' gate. This is the ONE place the blurb
+        is shown (it is off the list now), so colour the name to make the
+        choice pop."""
+        blurb = chargen.blurb(self.rules, key, name)
+        art = 'an' if name[:1].lower() in 'aeiou' else 'a'
+        head = f"[color=yellow]{name}[/color]"
+        line = f"{head}: {blurb}" if blurb else head
+        return f"{line}\n\nDo you want to be {art} {name}? (Y/n)"
+
+    def _answer_confirm(self, text):
+        """Resolve the (Y/n) gate. 'n' drops the pick and re-shows the
+        list; anything else commits - Y is the default (it is capital in
+        the prompt) and the client cannot send a bare Return, so there is
+        no empty answer to treat as yes."""
+        key = self._stage()['key']
+        if (text or '').strip().lower() in ('n', 'no'):
+            self.confirm = None
+            return self.stage_screen(), ACT_NONE
+        chosen = self.confirm
+        self.confirm = None
+        self._record(key, chosen)
+        note = f"[color=yellow]{chosen}[/color] it is."
+        if self.editing:
+            self.editing = False
+            self.state = 'review'
+            return self._with(note, self.review_screen()), ACT_NONE
+        reply, act = self._advance()
+        return self._with(note, reply), act
 
     def _flavour(self, key) -> str:
         """One line confirming a choice, in the manual's voice."""
