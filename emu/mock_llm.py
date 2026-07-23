@@ -66,7 +66,16 @@ class MockHandler(BaseHTTPRequestHandler):
             import time as _t
             _t.sleep(120)
             return
-        if 'LONGTEST' in upper:
+        if 'CURRENT SCENE FOR AN ILLUSTRATOR' in upper:
+            # Scene composition (docs/13): /pic now asks the model to WRITE
+            # the image prompt from game state instead of sending a
+            # directive verbatim, so the derive step lands here. Return a
+            # clean, deterministic scene so the stored prompt (and /pics)
+            # stays stable. Must precede PICTEST - the transcript embedded
+            # in this question contains 'pictest'.
+            text = ('a vast crystal cavern, stalactites glinting above a '
+                    'black lake')
+        elif 'LONGTEST' in upper:
             text = LONG_RESPONSE
         elif 'PARAMTEST' in upper:
             # Echo the sampling parameters so tests can assert they arrived
