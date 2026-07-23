@@ -118,9 +118,12 @@ deploy-c64u-80:
 # mounted on the Ultimate's 1541 (JiffyDOS fastload applies, config
 # saves persist inside the image, burnable to a real floppy).
 #
-# INJECT_CFG=0 ships it cfg-free instead, i.e. the real first-run
-# experience: the config editor on boot, exactly what a buyer sees.
-deploy-c64u-disk-80: INJECT_CFG ?= 1
+# Ships cfg-free by default: first boot opens the config editor, which is
+# the real first-run experience every new user gets (address + wire
+# speed), so the distributed disk and what a buyer sees are identical.
+# INJECT_CFG=1 bakes the maintainer's NetConfig instead - a convenience
+# for iterating on your own hardware without retyping the address.
+deploy-c64u-disk-80: INJECT_CFG ?= 0
 deploy-c64u-disk-80:
 	$(MAKE) -C c64_client clean
 	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
