@@ -49,13 +49,15 @@ void build_dial_string(void);
 #define BAUD_IDX_38400  2
 #ifdef BAUD38400
 #define BAUD_IDX_DEFAULT BAUD_IDX_38400
-#define BAUD_IDX_MAX     BAUD_IDX_38400
 #else
 #define BAUD_IDX_DEFAULT BAUD_IDX_19200
-/* 38400 stays out of the runtime cycle until the NMI fix soaks on
-   hardware (HANDOFF Task 5/6): only a BAUD38400 build exposes it. */
-#define BAUD_IDX_MAX     BAUD_IDX_19200
 #endif
+/* 38400 is field-proven on the C64U in NMI mode, so it is ALWAYS offered
+   in the F1->E Speed cycle regardless of build; BAUD38400 now only picks
+   the boot DEFAULT. A distribution disk can therefore ship the safe
+   19200 default (build without BAUD38400) and still let a user opt up to
+   38400 - so every rate is reachable in every build. */
+#define BAUD_IDX_MAX     BAUD_IDX_38400
 
 extern uint8_t g_baud_idx;
 

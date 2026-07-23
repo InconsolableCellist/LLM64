@@ -67,6 +67,7 @@ BLOCKED_TUNE_IDS = {
     'MUSICIANS__S__Scan__Afrikaan_Beat',
     # Corrupt-sounding on real hardware (field verdict 2026-07-23).
     'MUSICIANS__A__Astovel__Strenth_Energy',
+    'MUSICIANS__J__Jammer__Blast_em_All',
 }
 
 
