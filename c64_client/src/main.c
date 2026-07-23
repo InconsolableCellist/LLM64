@@ -1074,6 +1074,21 @@ static void config_open(void) {
     chat_redraw();
 }
 
+/* Open the config editor from the pre-connection dial/ping retry loops.
+   The editor is the c64llm.1 overlay: loaded from DISK and run entirely
+   locally - no server, no serial traffic - so unlike the server-fed F1
+   MENU it works precisely when the link is down. This is the escape
+   hatch for a saved cfg whose baud the hardware can't do, or a wrong
+   proxy address: without it, the retry loops can only retry forever.
+   mod_open handles the RX pause around the IEC load; the caller re-inits
+   the ACIA afterwards to apply any new baud, then redials. */
+static void reconfig_editor(void) {
+    mod_open("c64llm.1", mod_config_run);
+    build_dial_string();   /* host/port may have changed */
+    ui_redraw_all();
+    editor_redraw();
+}
+
 static void diskcopy_open(void) {
     /* Disk copy: RX stays paused for the WHOLE run - the copy is one
        long IEC conversation and serial NMIs would corrupt it (proxy
@@ -1230,7 +1245,19 @@ static void handle_key(uint8_t k) {
 
 /* --------------------------------------------------------------------- */
 
+/* Retry-loop hint text: F1 reconfigures only where the config module
+   exists (SOFT80); the 40-column build just retries on any key. */
+#ifdef SOFT80
+#define RETRY_HINT_CONNECT "Connect failed - F1 = set address/speed"
+#define RETRY_HINT_PING    "No reply - F1 = set address/speed"
+#else
+#define RETRY_HINT_CONNECT "Connect failed - any key retries."
+#define RETRY_HINT_PING    "No server response - any key retries."
+#endif
+
 int main(void) {
+    uint8_t k = 0;             /* retry-loop keypress */
+    uint8_t reconfigured;      /* F1 opened the editor -> redial */
     boot_device_init();  /* first: $BA still holds the LOADing drive */
     diag_init();         /* lay the canary before anything runs deep */
     diag_crumb(DC_BOOT);
@@ -1255,24 +1282,39 @@ int main(void) {
 #endif
 
     ui_status("Initializing ACIA...");
-    acia_init_hw();
+    /* Retry loop with an escape hatch: F1 opens the config editor
+       (disk-loaded, fully local) so a saved cfg with an unusable baud or
+       a wrong address is always recoverable. A reconfigure re-inits the
+       ACIA at the new rate (top of the loop) and redials. SOFT80 only -
+       the 40-column build has no config module and just retries. */
+    do {
+        reconfigured = 0;
+        acia_init_hw();
 
 #ifndef CONNECT_DIRECT
-    while (!modem_connect()) {
-        ui_status("Connect failed - any key retries.");
-        while (!kbhit());
-        cgetc();
-    }
+        while (!modem_connect()) {
+            ui_status(RETRY_HINT_CONNECT);
+            while (!kbhit());
+            k = cgetc();
+#ifdef SOFT80
+            if (k == KEY_F1) { reconfig_editor(); reconfigured = 1; break; }
+#endif
+        }
+        if (reconfigured) continue;   /* redial at the new settings */
 #endif
 
-    for (;;) {
-        ui_status("Contacting server...");
-        proto_send_ping();
-        if (wait_for_ack(8000)) break;
-        ui_status("No server response - any key retries.");
-        while (!kbhit());
-        cgetc();
-    }
+        for (;;) {
+            ui_status("Contacting server...");
+            proto_send_ping();
+            if (wait_for_ack(8000)) break;
+            ui_status(RETRY_HINT_PING);
+            while (!kbhit());
+            k = cgetc();
+#ifdef SOFT80
+            if (k == KEY_F1) { reconfig_editor(); reconfigured = 1; break; }
+#endif
+        }
+    } while (reconfigured);
 
     /* Server is reachable: tell it our wire rate so bulk pacing tracks
        the ACIA divisor (no reply expected, so send and move on). */
