@@ -1364,6 +1364,7 @@ int main(void) {
     welcome_line(COLOR_CYAN,       "patreon.com/c/foxipso");
     welcome_line(COLOR_GRAY2,      "");
     welcome_line(COLOR_YELLOW,     "Recommended Shareware Price: $7");
+    welcome_line(COLOR_LIGHTGREEN, "Have fun!");
     chat_finish();
 
     /* Drop any autostart leftovers before accepting input; the harness
