@@ -41,6 +41,11 @@ void ui_status(const char* msg);
 /* Begin a new message; sets color and optional prefix by role */
 void chat_start(uint8_t role);
 
+/* Override the base colour of lines committed from here on (until the next
+   chat_start/chat_color). Lets one block paint successive lines in
+   different colours - used by the client-side welcome banner. */
+void chat_color(uint8_t color);
+
 /* Append incoming ASCII text to the current message (word-wrapped) */
 void chat_append_ascii(const char* s);
 void chat_append_ascii_char(uint8_t c);

@@ -260,6 +260,16 @@ void chat_start(uint8_t role) {
     view_scroll = 0;
 }
 
+/* Recolour the lines that follow. Closes the current line at the old
+   colour first, so each call cleanly begins a new run of same-coloured
+   lines within one chat block. Works in both builds: the 40-col path
+   stores cur_color per line, the soft-80 path encodes it as the base. */
+void chat_color(uint8_t color) {
+    flush_word();
+    if (cur_len) commit_line();
+    cur_color = color;
+}
+
 /* Reverse video is per-CHARACTER (cell bit 7) with no pair-granularity
    limit, so bold is consumed at append time and stored in the cell
    itself - zero columns, zero extra RAM. Non-static under SOFT80 so the

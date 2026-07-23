@@ -1255,6 +1255,16 @@ static void handle_key(uint8_t k) {
 #define RETRY_HINT_PING    "No server response - any key retries."
 #endif
 
+/* One coloured line of the shareware banner. The break is emitted as a
+   raw 0x0A rather than a '\n' literal: cc65's C64 charmap folds '\n' to
+   CR, which chat_append_ascii_char ignores. Passing s=="" just breaks a
+   blank line at the current colour. */
+static void welcome_line(uint8_t color, const char* s) {
+    chat_color(color);
+    chat_append_petscii(s);
+    chat_append_ascii_char(0x0A);
+}
+
 int main(void) {
     uint8_t k = 0;             /* retry-loop keypress */
     uint8_t reconfigured;      /* F1 opened the editor -> redial */
@@ -1336,6 +1346,24 @@ int main(void) {
        at an empty screen with no idea what to type. */
     chat_start(2);
     chat_append_petscii("Type /help for more help, or F1 for the main menu");
+    chat_finish();
+
+    /* Shareware banner. Client-side and unconditional so it greets every
+       fresh connect regardless of proxy version. Colours are per line
+       (soft-80 renders them; the 40-col build shows one base colour). */
+    chat_start(2);
+    welcome_line(COLOR_YELLOW,     "Welcome to C64LLM");
+    welcome_line(COLOR_GRAY2,      "(C) Foxipso 2026");
+    welcome_line(COLOR_LIGHTBLUE,  "foxipso.com");
+    welcome_line(COLOR_GRAY2,      "");
+    welcome_line(COLOR_WHITE,      "C64LLM is Shareware, however...");
+    welcome_line(COLOR_LIGHTGREEN, "I'd greatly appreciate it if you'd");
+    welcome_line(COLOR_LIGHTGREEN, "support my work!");
+    welcome_line(COLOR_GRAY2,      "");
+    welcome_line(COLOR_CYAN,       "ko-fi.com/foxipso");
+    welcome_line(COLOR_CYAN,       "patreon.com/c/foxipso");
+    welcome_line(COLOR_GRAY2,      "");
+    welcome_line(COLOR_YELLOW,     "Recommended Shareware Price: $7");
     chat_finish();
 
     /* Drop any autostart leftovers before accepting input; the harness
