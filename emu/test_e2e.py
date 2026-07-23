@@ -1385,25 +1385,27 @@ def main():
             # Dice: the model must have been handed the ROLLED result,
             # never the macro. The client's own echo still shows what was
             # typed, so the stored conversation is the only place this
-            # contract is visible.
-            rolled = False
-            for fp in (artifacts / 'data' / 'conversations').glob('*.json'):
-                try:
-                    msgs = _json.load(open(fp))['chat']['messages']
-                except Exception:
-                    continue
-                for m in msgs:
-                    if m.get('role') != 'user':
+            # contract is visible. Only the cols80 pass types a [roll:]
+            # macro, so only assert the contract there.
+            if args.cols80:
+                rolled = False
+                for fp in (artifacts / 'data' / 'conversations').glob('*.json'):
+                    try:
+                        msgs = _json.load(open(fp))['chat']['messages']
+                    except Exception:
                         continue
-                    if '[roll:' in m['content']:
-                        raise AssertionError(
-                            f"unexpanded macro reached the model: "
-                            f"{m['content']!r}")
-                    if re.search(r'you rolled 1d20: \d+', m['content']):
-                        rolled = True
-            if not rolled:
-                raise AssertionError('no expanded roll in any user message')
-            print('  PASS: model received the rolled result, not the macro')
+                    for m in msgs:
+                        if m.get('role') != 'user':
+                            continue
+                        if '[roll:' in m['content']:
+                            raise AssertionError(
+                                f"unexpanded macro reached the model: "
+                                f"{m['content']!r}")
+                        if re.search(r'you rolled 1d20: \d+', m['content']):
+                            rolled = True
+                if not rolled:
+                    raise AssertionError('no expanded roll in any user message')
+                print('  PASS: model received the rolled result, not the macro')
 
         print(f"\nE2E {args.mode} mode: PASS")
         status = 0
