@@ -433,6 +433,72 @@ def test_make_backend():
           not FixtureBackend(str(Path(TMP) / "gone.png")).available())
 
 
+def test_sidecars():
+    print("image sidecars (docs/13)")
+    from types import SimpleNamespace
+    from src.images import ImageService, build_sidecar, _backend_label
+
+    # backend labelling: model appended when the backend carries one.
+    check("fixture labelled by bare name",
+          _backend_label(SimpleNamespace(name="fixture")) == "fixture")
+    check("model appended when present",
+          _backend_label(SimpleNamespace(name="gemini", model="g-2.5"))
+          == "gemini/g-2.5")
+
+    # build_sidecar merges the trigger meta with the service-only fields.
+    sc = build_sidecar({"instructions": "the door", "directive": "",
+                        "caption": "A cold hall", "conv_id": "99",
+                        "at_msg": 4},
+                       "PREFIX a cold hall", "a cold hall", "fixture", 1234)
+    check("final_prompt carried", sc["final_prompt"] == "PREFIX a cold hall")
+    check("scene (pre-prefix) carried", sc["scene"] == "a cold hall")
+    check("backend recorded", sc["backend"] == "fixture")
+    check("time recorded", sc["time"] == 1234)
+    check("trigger meta preserved",
+          sc["instructions"] == "the door" and sc["at_msg"] == 4)
+    check("meta omitted still fills service fields",
+          build_sidecar(None, "FP", "s", "fixture", 7)["final_prompt"] == "FP")
+
+    # _write_sidecar writes <stem>.json beside where the image lands, and
+    # final_prompt is exactly style_prefix + scene (composed in _generate_sync).
+    fixture = Path(TMP) / "scene.png"
+    fixture.write_bytes(PNG)
+    svc = ImageService(TMP, backend=FixtureBackend(str(fixture)),
+                       style_prefix="STYLE ")
+    check("style prefix wired", svc.style_prefix == "STYLE ")
+    (svc.dir / "conv1").mkdir(parents=True, exist_ok=True)
+    scene = "footprints in the sand"
+    svc._write_sidecar("conv1/1000", {"instructions": "the footprints"},
+                       svc.style_prefix + scene, scene, 1000)
+    path = svc.dir / "conv1" / "1000.json"
+    check("sidecar file written", path.exists())
+    data = json.loads(path.read_text())
+    check("final_prompt equals style_prefix + scene",
+          data["final_prompt"] == "STYLE footprints in the sand")
+    check("backend names the fixture", data["backend"] == "fixture")
+    check("json stem matches the image stem", path.stem == "1000")
+    check("instructions reached the sidecar",
+          data["instructions"] == "the footprints")
+
+    # Best-effort: an OSError writing the json must not raise (an image
+    # already paid for must survive a bad sidecar write).
+    orig = Path.write_text
+
+    def boom(self, *a, **k):
+        if str(self).endswith(".json"):
+            raise OSError("read-only")
+        return orig(self, *a, **k)
+
+    Path.write_text = boom
+    try:
+        svc._write_sidecar("conv1/2000", None,
+                           "STYLE x", "x", 2000)   # must not raise
+        check("OSError on sidecar swallowed",
+              not (svc.dir / "conv1" / "2000.json").exists())
+    finally:
+        Path.write_text = orig
+
+
 def test_usage_log():
     print("usage accounting")
     imagegen._log_usage(TMP, "comfyui", "adventure")
@@ -463,6 +529,7 @@ if __name__ == "__main__":
         test_gemini_protocol()
         test_safety()
         test_make_backend()
+        test_sidecars()
         test_usage_log()
 
     print()

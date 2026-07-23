@@ -16,11 +16,36 @@ can re-stream one without paying for it twice.
 """
 
 import asyncio
+import json
 import logging
 import time
 from pathlib import Path
 
 AUTO_INTERVAL_S = 240.0
+
+
+def _backend_label(backend) -> str:
+    """How the sidecar names the generator: 'gemini/gemini-2.5-flash-image'
+    where the backend carries a model, otherwise the bare name."""
+    name = getattr(backend, 'name', '?')
+    model = getattr(backend, 'model', None)
+    return f"{name}/{model}" if model else name
+
+
+def build_sidecar(meta: dict, final_prompt: str, scene: str,
+                  backend_label: str, when: int) -> dict:
+    """The record written beside every generated image (docs/13). Caller
+    supplies the trigger context in `meta` (instructions, directive,
+    caption, conv_id, at_msg); this fills in what only the service knows.
+    Kept pure so it is testable without PIL or a backend."""
+    out = dict(meta or {})
+    out.update({
+        'final_prompt': final_prompt,   # exactly what the backend received
+        'scene': scene,                 # composed sentence, pre-prefix
+        'backend': backend_label,
+        'time': when,
+    })
+    return out
 
 # Style guidance matters as much as the converter: art made of flat
 # shapes and high contrast survives 16 colors nearly untouched, and image
@@ -72,7 +97,9 @@ class ImageService:
             "moments only, never two scenes in a row. Describe characters "
             "and places with their established appearance (clothing, hair, "
             "architecture, lighting) so successive illustrations stay "
-            "consistent. Most replies should have no image directive."
+            "consistent. Treat the directive as a SUGGESTION for the shot: "
+            "name only who and what is actually present in the scene, no "
+            "one else. Most replies should have no image directive."
         )
 
     def auto_ok(self) -> bool:
@@ -83,29 +110,34 @@ class ImageService:
         self._last_auto = time.monotonic()
 
     async def generate_blob(self, prompt: str, conv_id,
-                            caption: str = None) -> tuple:
+                            caption: str = None, meta: dict = None) -> tuple:
         """Generate + convert. Returns (blob bytes, stem, bg color).
         The blob is multicolor: bitmap(8000) + screen(1000) + colram(1000);
         bg travels in the IMG_BEGIN frame. A caption is burned into the
-        bottom of the frame. Blocking work (API call, PIL) runs off the
+        bottom of the frame. `meta` is the trigger context saved in the
+        JSON sidecar (docs/13). Blocking work (API call, PIL) runs off the
         event loop."""
         return await asyncio.to_thread(self._generate_sync, prompt,
-                                       conv_id, caption)
+                                       conv_id, caption, meta)
 
-    def _generate_sync(self, prompt: str, conv_id, caption=None):
+    def _generate_sync(self, prompt: str, conv_id, caption=None, meta=None):
         from .imaging import convert_to_c64_mc
         from .imagegen import ImageGenError
         from PIL import Image
         import io
 
-        raw = self.backend.generate(self.style_prefix + prompt,
-                                    purpose="adventure")
+        final_prompt = self.style_prefix + prompt
+        raw = self.backend.generate(final_prompt, purpose="adventure")
 
         # One folder per conversation, matching conversations/<id>.json.
         folder = self.dir / str(conv_id).replace("/", "_")
         folder.mkdir(parents=True, exist_ok=True)
-        stem = f"{folder.name}/{int(time.time())}"
+        now = int(time.time())
+        stem = f"{folder.name}/{now}"
         (self.dir / f"{stem}.png").write_bytes(raw)
+
+        # Save what produced this image beside it (docs/13).
+        self._write_sidecar(stem, meta, final_prompt, prompt, now)
 
         try:
             img = Image.open(io.BytesIO(raw))
@@ -116,3 +148,15 @@ class ImageService:
         blob = bitmap + screen + colram
         (self.dir / f"{stem}.blob").write_bytes(blob + bytes([bg]))
         return blob, stem, bg
+
+    def _write_sidecar(self, stem, meta, final_prompt, scene, when):
+        """Write <stem>.json beside the image (docs/13). Best-effort: a
+        failed sidecar must never lose an image already paid for - the
+        same policy _log_usage follows."""
+        sidecar = build_sidecar(meta, final_prompt, scene,
+                                _backend_label(self.backend), when)
+        try:
+            (self.dir / f"{stem}.json").write_text(
+                json.dumps(sidecar, indent=2))
+        except OSError as e:
+            self.logger.warning("sidecar write failed for %s: %s", stem, e)

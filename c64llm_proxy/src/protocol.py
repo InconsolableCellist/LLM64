@@ -18,6 +18,7 @@ from .advsetup import (AdventureSetup, STAGES, ACT_QUICK,
                        ACT_THEME, ACT_BEGIN, ACT_LOAD)
 from .advtemplates import TemplateStore
 from . import advmap
+from .scenecomp import compose_question
 from .markup import colorize_for_wire, split_safe
 from .markup import prompt_snippet as color_prompt_snippet
 from .images import ImageService
@@ -495,7 +496,7 @@ class ProtocolHandler:
                 "/music <mood> - play a tune (/music for moods)\n"
                 "/auto - let the narrator choose the music again\n"
                 "[roll:1d20] in a message - roll dice for real\n"
-                "/pic [desc|n] - illustrate scene / re-show pic n\n"
+                "/pic [request|n] - illustrate scene / re-show pic n\n"
                 "/pics - list this conversation's pictures\n"
                 "/map [n|name] - the map / how to get there\n"
                 "/save [name] - checkpoint this conversation\n"
@@ -570,10 +571,14 @@ class ProtocolHandler:
             else:
                 # Everything (including the derive LLM call) runs off
                 # the reader task: a stalled model must not deafen the
-                # proxy to CANCEL/ACK/NAK for minutes
-                prompt = arg or self.images.pending_prompt
+                # proxy to CANCEL/ACK/NAK for minutes. Typed text is a
+                # request TO the illustrator; a parked suggestion is the
+                # narrator's directive - the composition step treats them
+                # differently (docs/13).
+                directive = '' if arg else (self.images.pending_prompt or '')
                 self.images.pending_prompt = None
-                self._spawn_media(self._illustrate(prompt))
+                self._spawn_media(self._illustrate(instructions=arg,
+                                                   directive=directive))
 
         elif cmd == 'map':
             await self._show_map(arg)
@@ -1096,46 +1101,35 @@ class ProtocolHandler:
             return ''
         return out.strip()[:limit]
 
-    async def _derive_scene_prompt(self) -> str:
-        """Ask the chat model for a visual description of the current
-        scene (bare /pic with nothing pending). Reads well back into the
-        transcript and at the prompts of earlier illustrations so
-        recurring characters and places keep their established look."""
+    async def _derive_scene_prompt(self, instructions: str = '',
+                                   directive: str = '') -> str:
+        """Compose the illustrator's prompt for the current scene. Every
+        /pic and every [[IMAGE:]] directive comes through here so the
+        prompt is anchored to game state rather than taken verbatim
+        (docs/13). `instructions` is the player's /pic <text>, a request
+        TO the illustrator; `directive` is the narrator's suggested shot.
+        Reads well back into the transcript, the prompts of earlier
+        illustrations, the state block, the current room, and the
+        character sheet so recurring people and places keep their look."""
         msgs = self.conv_manager.get_messages()[-12:]
         if not msgs:
             return ''
         convo = "\n".join(f"{m['role']}: {m['content'][:500]}"
                           for m in msgs)
-        prior = [p['prompt'] for p in
-                 self.conv_manager.get_meta('images', [])[-3:]]
-        consistency = ''
-        if prior:
-            consistency = (
-                "\n\nEarlier illustrations in this story showed:\n"
-                + "\n".join(f"- {p}" for p in prior)
-                + "\nKeep characters and places visually consistent "
-                  "with those.")
-        # The adventure's state block is the strongest consistency
-        # anchor: who the player character IS (stable appearance),
-        # where they are, and who is actually present - the model
-        # otherwise loves to invent dragons and crowds.
+        priors = [p['prompt'] for p in
+                  self.conv_manager.get_meta('images', [])[-3:]]
         adv_state = self.conv_manager.get_meta('adv_state')
-        if adv_state:
-            consistency += (
-                "\n\nAuthoritative game state: " + adv_state +
-                "\nDepict ONLY the player character (matching the "
-                "state's appearance phrase) plus any companions the "
-                "state lists. Do NOT add other people or creatures "
-                "unless the current scene in the transcript explicitly "
-                "names them as present.")
-        return await self._ask_model(
-            "Below is the latest part of a text adventure. Write ONE "
-            "sentence visually describing the CURRENT scene for an "
-            "illustrator. Include the established appearance of the "
-            "characters and setting (clothing, hair, architecture, "
-            "lighting) from earlier in the story. Reply with only that "
-            "sentence." + consistency + "\n\nTranscript:\n" + convo,
-            limit=400)
+        # The room the player is standing in, whose note carries props
+        # ("an iron key on a hook") the scene should include.
+        room = None
+        m = self.conv_manager.get_meta('adv_map')
+        if m and m.get('at') is not None:
+            room = m.get('rooms', {}).get(m['at'])
+        character = getattr(self.mode, 'character', '')
+        question = compose_question(
+            convo, priors, adv_state, room, character,
+            instructions=instructions, directive=directive)
+        return await self._ask_model(question, limit=400)
 
     async def _make_caption(self, prompt: str) -> str:
         """A short atmospheric caption, burned into the picture and
@@ -1283,7 +1277,7 @@ class ProtocolHandler:
         pics = self.conv_manager.get_meta('images', [])
         if not pics:
             await self._send_canned("No pictures in this conversation "
-                                    "yet. /pic <desc> makes one.")
+                                    "yet. /pic makes one.")
             return
         cur = len(self.conv_manager.get_messages())
         lines = ["Pictures (newest first):"]
@@ -1317,17 +1311,20 @@ class ProtocolHandler:
         else:                       # hires-era blob
             self._spawn_media(self.send_image_blob(data, 0, fmt=0))
 
-    async def _illustrate(self, prompt: str):
-        """Full /pic flow off the reader task: derive a scene prompt if
-        none given, announce, then generate + send. Priority: explicit
-        description > pending suggestion > model-derived scene."""
-        if not prompt:
-            await self.send_status("Studying the scene...")
-            hb = asyncio.create_task(self._heartbeat("Studying..."))
-            try:
-                prompt = await self._derive_scene_prompt()
-            finally:
-                hb.cancel()
+    async def _illustrate(self, instructions: str = '',
+                          directive: str = ''):
+        """Full /pic flow off the reader task: compose the scene prompt
+        (always - from the transcript and game state, steered by the
+        player's request or the narrator's directive, docs/13), announce
+        it, then generate + send. The heartbeat covers the compose call
+        for every trigger, not just the bare one."""
+        await self.send_status("Studying the scene...")
+        hb = asyncio.create_task(self._heartbeat("Studying..."))
+        try:
+            prompt = await self._derive_scene_prompt(
+                instructions=instructions, directive=directive)
+        finally:
+            hb.cancel()
         if not prompt:
             await self._send_canned(
                 "Couldn't picture the scene - try /pic <description>.")
@@ -1336,15 +1333,24 @@ class ProtocolHandler:
         # Complete the chat round-trip first: the client must return
         # to idle before the image transfer starts
         await self._send_canned(f"Illustrating: {prompt[:300]}")
-        await self._generate_and_send_image(prompt)
+        await self._generate_and_send_image(prompt, instructions=instructions,
+                                            directive=directive)
 
-    async def _generate_and_send_image(self, prompt: str):
+    async def _generate_and_send_image(self, prompt: str,
+                                       instructions: str = '',
+                                       directive: str = ''):
         await self.send_status("Illustrating... (10-20s)")
         hb = asyncio.create_task(self._heartbeat("Illustrating..."))
         try:
             caption = await self._make_caption(prompt)
+            # The trigger context rides along into the JSON sidecar so a
+            # later playtest can compare request against composed scene.
+            meta = {'instructions': instructions, 'directive': directive,
+                    'caption': caption[:100],
+                    'conv_id': str(self.conv_manager.current_id),
+                    'at_msg': len(self.conv_manager.get_messages())}
             blob, stem, bg = await self.images.generate_blob(
-                prompt, self.conv_manager.current_id, caption)
+                prompt, self.conv_manager.current_id, caption, meta=meta)
         except Exception as e:
             self.logger.error(f"Image generation failed: {e}")
             await self.send_status("Illustration failed.")
@@ -1762,12 +1768,15 @@ class ProtocolHandler:
             # Model requested a scene illustration: generate now (auto,
             # rate-limited) or park it as a /pic suggestion (ask)
             if mfilter and mfilter.images and self.images.available:
-                prompt = mfilter.images[0]
+                directive = mfilter.images[0]
                 if self.images.auto_ok():
                     self.images.mark_auto()
-                    await self._generate_and_send_image(prompt)
+                    # Compose from state rather than firing the directive
+                    # verbatim - the narrator's text is a suggestion for
+                    # the shot (docs/13).
+                    await self._illustrate(directive=directive)
                 elif self.images.mode == 'ask':
-                    self.images.pending_prompt = prompt
+                    self.images.pending_prompt = directive
                     await self.send_status(
                         "Scene available - /pic to illustrate")
                     await self._send_hint(1)
@@ -2094,11 +2103,15 @@ class ProtocolHandler:
             ("Your prep notes for this adventure:\n" + bible)
             if bible else '', character) if x)
 
-    async def _start_adventure(self, theme: str, background: str = ''):
+    async def _start_adventure(self, theme: str, background: str = '',
+                               character: str = ''):
         """Shared by /adventure <theme> and the setup flow, so both take
         exactly the same path into play."""
         mode = AdventureMode(self.config, theme=theme)
         mode.background = background
+        # The character sheet is a slice of `background`; keep it whole so
+        # the illustrator gets the player's visual identity (docs/13).
+        mode.character = character
         self._attach_snippets(mode)
         self._switch_mode(mode)
         # Seed the map from the prep notes' MAP: section, so the first
@@ -2177,7 +2190,8 @@ class ProtocolHandler:
             await self._start_adventure(
                 self._theme_from(saved.get('bundle') or {}),
                 background=self._background(saved.get('bible') or '',
-                                           saved.get('character') or ''))
+                                           saved.get('character') or ''),
+                character=saved.get('character') or '')
             return
         if act in (ACT_QUICK, ACT_THEME, ACT_BEGIN):
             self._adv_setup = None
@@ -2208,7 +2222,8 @@ class ProtocolHandler:
                 self._templates.save(bundle, bible, character,
                                      model=self.model_override or '')
             await self._start_adventure(
-                theme, background=self._background(bible, character))
+                theme, background=self._background(bible, character),
+                character=character)
             return
         if reply:
             await self._send_canned(reply)

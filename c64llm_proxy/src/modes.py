@@ -169,6 +169,10 @@ class AdventureMode(Mode):
         # they cost effectively nothing per turn, while anything that
         # changes must be appended after (docs/09-adventure-setup.md 4b).
         self.background = ''
+        # The character sheet alone (a subset of `background`), kept
+        # separately so the illustrator can be handed the player's fixed
+        # visual identity without re-parsing the joined blob (docs/13).
+        self.character = ''
 
     def system_prompt(self) -> str:
         prompt = ADVENTURE_PROMPT
