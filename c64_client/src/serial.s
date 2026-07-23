@@ -375,6 +375,8 @@ raw_nmi_entry:
         pha
         txa
         pha
+        lda rx_masked           ; RX deliberately off: do not touch the
+        bne @out                ; ACIA (see acia_nmi_entry)
         lda ACIA_STATUS
         bmi @drain              ; bit7: the ACIA raised this one
         and #ACIA_SR_RDRF       ; bit7 clear but a byte is waiting? then a
@@ -402,10 +404,23 @@ raw_nmi_entry:
 ; interrupt when RDRF says a byte is waiting; the cost is that a
 ; RESTORE keypress arriving in the same microseconds as a byte is
 ; swallowed instead of chained (press it again when the line is idle).
+;
+; BUT only when RX is actually live. serial_rx_pause masks the ACIA RX
+; interrupt (bit1 of the command register) around a JiffyDOS IEC LOAD
+; and while the ring is full; masked, bit 7 reads clear for a normal RX,
+; so the RDRF fallback below would DRAIN a byte in the middle of the
+; cycle-exact disk transfer - corrupting it (the module load fails and
+; falls back to the resident text menu) and defeating the pause. So bail
+; to the chain first when rx_masked is set: the byte waits for
+; serial_rx_resume / the drain-path unmask to pick it up, exactly as the
+; pause intends.
 acia_nmi_entry:
         pha
         txa
         pha
+        lda rx_masked
+        bne @chain              ; RX deliberately masked: leave the ACIA
+                                ; alone (IEC load / ring full)
         lda ACIA_STATUS
         bmi @drain              ; ours: the interrupt flag is still set
         and #ACIA_SR_RDRF       ; flag eaten by a foreground read?
