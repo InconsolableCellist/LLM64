@@ -255,6 +255,97 @@ $B000 window → LLM mood-tagging → loudness normalization → `sid_makedb`);
 `data/` is not in git, so from a clean clone you run the pipeline (needs an
 HVSC snapshot, `sidreloc`, and for loudness py65 + pyresidfp).
 
+### Printing
+
+`/print` composes the document on the proxy and puts it on paper. Where the
+paper is depends on `[printer] backend`:
+
+- **`c64`** (default) — the C64 prints it itself, through a printer on IEC
+  device 4: a real MPS-803, the Ultimate's built-in virtual printer, or
+  VICE's device-4 emulation. Nothing to install; on a C64 Ultimate the
+  virtual printer is **off by default** (F2 → Software IEC Settings → IEC
+  Drive and Printer = Enabled, see [docs/05](docs/05-ultimate-setup.md)).
+  Soft-80 client builds only.
+- **`cups`** — the proxy spools the document to a CUPS queue with `lp`
+  instead, and the C64 never touches a printer. This is also the way to
+  get `/print` with no C64 printer hardware at all.
+- **`both`** — one document, delivered to both.
+
+```toml
+[printer]
+width = 78         # the PRINTER's columns, not the screen's
+formfeed = true    # eject the page at end of job (C64U buffers otherwise)
+max_tokens = 2000  # generation budget for the document itself
+backend = "both"                     # c64 | cups | both
+cups_queue = "n80"                   # required for cups/both
+cups_server = "printpi.local:631"    # "" = a queue on this same host
+cups_options = "cpi=12 lpi=8"        # 78 columns needs 12 cpi to fit A4
+```
+
+Env overrides: `LLM64_PRINTER_BACKEND`, `LLM64_PRINTER_QUEUE`. A `cups`
+or `both` backend with no `cups_queue`, or an unknown backend name, logs a
+warning and falls back to `c64`.
+
+#### Getting CUPS going (Raspberry Pi print bridge, or the proxy host itself)
+
+The printer hangs off whichever machine runs `cupsd` — a Pi tucked behind
+the C64, or the proxy box. The network hop is IPP from the proxy to that
+machine, never to the printer.
+
+**On the machine with the printer.** `tools/setup-printer-pi.sh` does the
+whole sequence — packages, driver, queue, sharing — with the printer
+plugged in and switched on. Copy it over (it needs only bash); `--dry-run`
+prints every command and runs none:
+
+```bash
+./setup-printer-pi.sh --driver ~/n80-driver --queue n80 --test
+./setup-printer-pi.sh --queue laser --no-share        # printer on the proxy host
+```
+
+`--driver` is an extracted vendor CUPS driver, needed only for printers
+that aren't driverless — e.g. the NDYIN/ZHJY N80 thermal, whose PPD +
+`rastertoN80` filter ship for armv7l/aarch64 too. For an ordinary
+network/USB laser or inkjet, leave `--driver` off and CUPS picks an
+`everywhere` profile. What the script does, if you'd rather do it by hand:
+
+```bash
+cd ~/n80-driver && sudo ./install       # PPD + filter into CUPS, restart cupsd
+sudo lpinfo -v                          # note the usb://... URI that appears
+sudo lpadmin -p n80 -E -v '<that URI>' -P ~/n80-driver/ppd/ZHJY-N80.ppd
+echo "hello" | lp -d n80                # a page should come out
+sudo cupsctl --share-printers           # skip if the proxy runs on this box
+sudo lpadmin -p n80 -o printer-is-shared=true
+```
+
+**On the proxy host** (nothing but `lp` — no driver, no cupsd):
+
+```bash
+sudo apt install cups-client
+echo "hello from the proxy" | lp -h printpi.local:631 -d n80
+```
+
+Then set `backend`/`cups_queue`/`cups_server` as above and restart the
+proxy. `/print` from the C64 should produce a page (and, on `both`, the
+IEC one as well). When it doesn't:
+
+- **`lpinfo -v` lists nothing** — the printer has to be ON and awake
+  (battery models enumerate as nothing when asleep), on a data USB-C cable
+  rather than a charge-only one. `dmesg | tail` shows the enumeration.
+- **`printpi.local` doesn't resolve** — install `avahi-daemon` on the Pi,
+  or put the IP in `cups_server`. Different subnets also want
+  `sudo cupsctl --remote-any`.
+- **The C64 says "Paper print failed: …"** — the short reason is on the
+  C64, the full `lp` error is in the proxy log. `lp not installed` = no
+  cups-client on the proxy host; `no cups server` = wrong host/port, or
+  cupsd isn't sharing; `no such queue` = `cups_queue` isn't the queue's
+  name; `timed out` = cupsd took over 20 s to accept the job.
+- **The job says it printed but no page appeared** — a spooled job
+  completes cleanly into a sleeping printer. Poke its power button, then
+  check `lpstat -o` and `journalctl -u cups` on the print host.
+
+Full design, the N80 investigation, and the deltas from the original plan:
+[docs/14](docs/14-printer-hardcopy.md) §13.
+
 ## Trying it out
 
 Some prompts to test with once the proxy is up:
@@ -275,7 +366,11 @@ Some prompts to test with once the proxy is up:
   inventory` the character sheet, `/print the complete recipe`
   whatever you ask for - composed on the proxy and printed through a
   printer on IEC device 4 (a real MPS-803, the C64 Ultimate's virtual
-  printer, or VICE's). Soft-80 builds only.
+  printer, or VICE's). Soft-80 builds only. `[printer] backend` in
+  config.toml can send the same document to a CUPS queue instead
+  ("cups") or as well ("both") - a printer on the proxy host or shared
+  by a Pi behind the C64, which also gives you /print with no C64
+  printer at all (docs/14-printer-hardcopy.md).
 - **Claude Code:** `/code` (or `/code sonnet`) drives a coding-agent session
   from the C64, tool approvals answered at the prompt.
 - **Housekeeping:** `/save`, `/restore`, `/history`, `/find <text>`,

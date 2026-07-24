@@ -108,6 +108,21 @@ test-emu-print-fail: client-tui-direct-80
 	$(PYTHON) emu/test_e2e.py --mode direct --tui --cols80 --no-printer \
 		--proxy-port $(TESTPORT)
 
+# And again with [printer] backend = "cups" (docs/14 §13): the proxy
+# spools the composed document to a stubbed lp, device 4 stays OFF the
+# bus, and /print still works - the no-C64-printer path. Same reason as
+# above for staying out of test-all.
+test-emu-print-cups: client-tui-direct-80
+	$(PYTHON) emu/test_e2e.py --mode direct --tui --cols80 --cups \
+		--proxy-port $(TESTPORT)
+
+# backend = "both": one composed document, delivered to the stubbed CUPS
+# queue AND printed on device 4, one leg after the other. This is the
+# configuration a Pi print bridge behind a real C64U runs (docs/14 §13.6).
+test-emu-print-both: client-tui-direct-80
+	$(PYTHON) emu/test_e2e.py --mode direct --tui --cols80 --cups both \
+		--proxy-port $(TESTPORT)
+
 # Same run against a DIAG=1 client, then read the crash post-mortem
 # block back out: proves the instrumentation records what the user will
 # PEEK after a drop to BASIC, and reports the C-stack high-water mark

@@ -1,9 +1,14 @@
 """Configuration management for LLM64 Proxy"""
 
+import logging
 import os
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
+
+from . import printcups
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -109,6 +114,39 @@ class Config:
         # one deliberate command, not every turn, so the latency is the
         # player's to spend.
         self.printer_max_tokens = int(printer.get('max_tokens', 2000))
+        # Where paper comes out (docs/14 13). 'c64' streams PRINT frames
+        # to the IEC printer on device 4 - the shipped default, so a
+        # fresh install needs no CUPS anywhere. 'cups' sends the composed
+        # document to a CUPS queue with lp instead and no frames at all
+        # (this is also the works-without-any-C64-printer path). 'both'
+        # composes once and delivers twice, independently.
+        # The env overrides are how the e2e harness pins the backend (it
+        # runs against the operator's own config.toml) and the quickest
+        # way to try a queue without editing the file.
+        self.printer_backend = str(os.getenv(
+            'LLM64_PRINTER_BACKEND',
+            printer.get('backend', 'c64'))).strip().lower()
+        # cups_server '' = the local cupsd; else host[:port] for a print
+        # bridge - prefer its mDNS name over a hardcoded IP.
+        self.printer_cups_queue = str(os.getenv(
+            'LLM64_PRINTER_QUEUE',
+            printer.get('cups_queue', ''))).strip()
+        self.printer_cups_server = str(printer.get('cups_server', '')).strip()
+        self.printer_cups_options = str(
+            printer.get('cups_options', printcups.OPTIONS))
+        # Misconfiguration falls back to the default backend rather than
+        # failing at /print time: the C64 user is not the one who can fix
+        # config.toml, and 'c64' is the one backend that needs no setup.
+        if self.printer_backend not in ('c64', 'cups', 'both'):
+            logger.warning(
+                "[printer] backend %r is not c64/cups/both - using 'c64'",
+                self.printer_backend)
+            self.printer_backend = 'c64'
+        elif self.printer_backend != 'c64' and not self.printer_cups_queue:
+            logger.warning(
+                "[printer] backend %r needs cups_queue - using 'c64'",
+                self.printer_backend)
+            self.printer_backend = 'c64'
 
         # --- interaction modes -----------------------------------------
         modes = config.get('modes', {})

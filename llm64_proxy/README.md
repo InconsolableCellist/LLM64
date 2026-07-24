@@ -27,6 +27,31 @@ Or use environment variables:
 - `OPENAI_API_KEY` - API key (required)
 - `OPENAI_API_BASE` - API endpoint (optional)
 - `OPENAI_MODEL` - Model name (optional)
+- `LLM64_PRINTER_BACKEND` / `LLM64_PRINTER_QUEUE` - `/print` routing
+  (see below)
+
+### Printing to a real printer (`/print`)
+
+By default `/print` sends the document to the C64, which prints it on IEC
+device 4 - the proxy host needs nothing installed. Set
+`[printer] backend = "cups"` (or `"both"`) and it spools to a CUPS queue
+here instead, which is also how `/print` works with no C64 printer at all:
+
+```toml
+[printer]
+backend = "cups"
+cups_queue = "n80"                   # required; else it falls back to c64
+cups_server = "printpi.local:631"    # "" = cupsd on this host
+cups_options = "cpi=12 lpi=8"        # 78 columns needs 12 cpi to fit A4
+```
+
+Requirements on THIS host: just `lp` (`apt install cups-client`, Arch
+`pacman -S cups`) - no printer driver, even when the printer is a
+driverless-unfriendly model, because the driver lives wherever `cupsd`
+and the printer are. Setup steps for that machine (a Raspberry Pi bridge
+or this box) are in the top-level README's "Printing" section, automated
+in `tools/setup-printer-pi.sh`, and specified in
+`docs/14-printer-hardcopy.md` §13.
 
 ## Usage
 

@@ -97,3 +97,19 @@ formfeed = true
 # mid-sentence with no error; 2000 covers a full page with headroom.
 # Costs a longer wait, but only on the one command that asked for paper.
 max_tokens = 2000
+# Where paper comes out: "c64" = the IEC printer on device 4 (default;
+# no CUPS involved), "cups" = a CUPS queue on the proxy side instead
+# (works with no C64 printer at all), "both" = one document, two
+# deliveries, each reporting its own status on the C64.
+backend = "c64"
+# CUPS queue name - required for "cups"/"both", else the backend falls
+# back to "c64" with a warning in the proxy log. Setup runbook:
+# tools/setup-printer-pi.sh and docs/14-printer-hardcopy.md 13.
+cups_queue = ""
+# Empty = the local cupsd. For a print bridge (e.g. a Raspberry Pi with
+# the printer on its USB, sharing the queue over IPP) put host[:port]
+# here - prefer its mDNS name over an IP: "printpi.local:631".
+cups_server = ""
+# Passed to lp as -o. 78 columns doesn't fit an A4 page at CUPS's 10 cpi
+# default; 12 cpi holds 87. Empty = whatever the queue defaults to.
+cups_options = "cpi=12 lpi=8"

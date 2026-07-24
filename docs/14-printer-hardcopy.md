@@ -4,10 +4,23 @@ Status: **IMPLEMENTED 2026-07-23** and green through the emulator e2e:
 `make test-emu-tui-80` prints two documents to VICE's device 4 and
 asserts the captured page, `make test-emu-print-fail` proves the
 no-printer refusal, `make test-all` is green, and
-`tests/test_printdoc.py` pins the page layout. NOT yet run against real
-hardware — §8 is the remaining checklist, and both the form-feed
-question (§10.1) and the READST refusal branch (§12) stay open until it
-runs there.
+`tests/test_printdoc.py` pins the page layout.
+
+**Confirmed working on real hardware 2026-07-24**: a live C64U session
+printed through the firmware's virtual printer. The one thing that had
+to change was on the Ultimate, not in the code — the Software IEC
+printer ships **disabled**, and until it was enabled `/print` refused
+the job (correctly). That step is now in the setup checklist
+(docs/05, §8.1 here). The rest of §8 is still owed: the form-feed
+question (§10.1), ASCII output mode, F1/SID coexistence, and the READST
+refusal branch (§12) have not been exercised on hardware yet.
+
+**§13 (multi-backend `[printer] backend`) IMPLEMENTED 2026-07-24** —
+`cups`/`both` route the composed document to a CUPS queue via `lp`
+alongside (or instead of) the IEC bus. `make test-emu-print-cups` proves
+it end to end with device 4 off the bus, `tests/test_printcups.py` pins
+the command line and every failure path against a stubbed `lp`.
+§13.8 records where it differs from the plan.
 
 The design below is as built. Where implementation answered an open
 question or diverged from the plan, the section says so inline; §12
@@ -689,11 +702,17 @@ assertion. Run it whenever the print path changes.
 Deploy with `make deploy-c64u-80` (top Makefile; pushes via
 `emu/u64_telnet.py`, checklist in `docs/05-ultimate-setup.md`).
 
-1. F2 → Software IEC Settings → IEC Drive and Printer = Enabled;
-   printer output = PNG first, USB stick present.
-2. `/print the recipe` in chat mode → expect "Printing..." →
-   "Printed." → `printer-001.png` in `/Usb0/printer` (PNG composition
-   takes ~15 s — wait before judging).
+1. **DONE 2026-07-24.** F2 → Software IEC Settings → IEC Drive and
+   Printer = Enabled; printer output = PNG first, USB stick present.
+   **This is disabled out of the box**, and it is the first thing to
+   check when a live session refuses to print: the client's refusal is
+   indistinguishable from a broken feature, and it took a config
+   investigation to find that nothing was wrong with the code. Now
+   documented in `docs/05-ultimate-setup.md` too.
+2. **DONE 2026-07-24** — printed from a live session. `/print the
+   recipe` in chat mode → expect "Printing..." → "Printed." →
+   `printer-001.png` in `/Usb0/printer` (PNG composition takes ~15 s —
+   wait before judging).
 3. **Form-feed question (§10.1)**: with `formfeed=true`, does the page
    eject without the F5 "Flush/Eject" menu action? Try `formfeed=false`
    + manual flush for comparison. Set the config default to whichever
@@ -828,7 +847,7 @@ walked into, found by the tests:
   protocol changes — it turns a 10-minute emulator round trip into a
   2-second one.
 
-## 13. Multi-backend routing: `[printer] backend` (designed 2026-07-23, NOT yet implemented)
+## 13. Multi-backend routing: `[printer] backend` (designed 2026-07-23, IMPLEMENTED 2026-07-24)
 
 The owner's coming setup: a Raspberry Pi hidden behind the real C64,
 the N80 (§2.4) on its USB, thermal pages emerging next to the machine —
@@ -860,12 +879,18 @@ backend = "c64"      # "c64" | "cups" | "both"
 cups_queue = ""       # e.g. "n80"; required for cups/both
 cups_server = ""      # "" = local cupsd; else "printpi.local:631"
                       # (prefer the mDNS hostname over a hardcoded IP)
+cups_options = "cpi=12 lpi=8"   # AS BUILT, not in the original plan:
+                      # 78 columns does NOT fit A4 at CUPS's 10 cpi
+                      # default (§13.8). Empty = the queue's defaults.
 ```
 
 `config.py` grows `printer_backend` (validated against the three
 values, warn + fall back to `c64` on junk), `printer_cups_queue`,
 `printer_cups_server`. Default stays `c64`: a fresh install behaves
-exactly as shipped, no CUPS anywhere.
+exactly as shipped, no CUPS anywhere. As built, `backend` and
+`cups_queue` also take env overrides (`LLM64_PRINTER_BACKEND`,
+`LLM64_PRINTER_QUEUE`) — the e2e harness runs the proxy against the
+operator's real `config.toml`, so it has to pin them (§13.8).
 
 **4. Delivery semantics** (`_print_command` after compose):
 
@@ -873,18 +898,21 @@ exactly as shipped, no CUPS anywhere.
 - `cups` — **no PRINT frames at all**: the composed ASCII doc is piped
   to `lp [-h <cups_server>] -d <cups_queue> -` (CUPS's own text→raster
   chain renders it; Courier at the default 12 cpi holds the 78-col
-  wrap on A4). Run off the reader task (`asyncio.to_thread` or a
-  `_spawn_media` task) with a ~20 s timeout; success STATUS "Sent to
-  the paper printer.", failure STATUS "Paper print failed: <reason>"
-  (lp missing / nonzero exit / timeout — short on the C64, full detail
-  in the log). This mode is also the zero-C64-hardware path: /print
-  works with no IEC printer and no VICE flags.
+  wrap on A4 — **wrong, see §13.8**: 10 cpi is the default and 78
+  columns does not fit, hence `cups_options`). Run off the reader task
+  (`asyncio.to_thread` or a `_spawn_media` task) with a ~20 s timeout;
+  success "Sent to the paper printer.", failure "Paper print failed:
+  <reason>" (lp missing / nonzero exit / timeout — short on the C64,
+  full detail in the log; sent as a REPLY rather than a STATUS, §13.8).
+  This mode is also the zero-C64-hardware path: /print works with no
+  IEC printer and no VICE flags.
 - `both` — compose once, deliver twice, **independently**: the IEC job
-  runs as shipped; the cups job runs as a parallel task. Each reports
-  its own STATUS, cups first so the IEC path's final "Printed NN
-  lines." lands last; a refusal or failure on either side never
-  aborts the other. The existing `/print`-re-entry guard (§12) stays
-  global — one composed job at a time covers both deliveries.
+  runs as shipped; the cups job runs first (**sequentially, not as a
+  parallel task — §13.8**). Each reports its own outcome, cups first so
+  the IEC path's final "Printed NN lines." lands last; a refusal or
+  failure on either side never aborts the other. The existing
+  `/print`-re-entry guard (§12) stays global — one composed job at a
+  time covers both deliveries.
 
 **5. The use-case matrix** (what each end user sets):
 
@@ -949,8 +977,24 @@ after a long gap may need a power-button poke — if pages silently
 vanish while `lpstat` shows the job done, check that first, then the
 Pi's `journalctl -u cups`.
 
+Steps 1–6 of the above ship as **`tools/setup-printer-pi.sh`** (as
+built): `--driver <extracted vendor dir>` runs the vendor installer,
+`lpinfo -v` picks the `usb://` URI unless `--uri` overrides it, the
+queue is created/reconfigured idempotently, `--test` prints a page
+(opt-in — it costs paper), `--dry-run` shows every command and runs
+none. apt/pacman/dnf are all handled; the script never touches the C64
+side of anything.
+
 Tests for the proxy side stub `lp` on PATH (the §12 stub-harness
-lesson) — no hardware in CI.
+lesson) — no hardware in CI. As built that is three layers:
+`tests/test_printcups.py` (command line, document byte-for-byte on
+stdin, every failure mapped to a short reason, plus the config
+fallbacks), `make test-emu-print-cups` (the whole chain with device 4
+off the bus — the no-C64-printer path), and `make test-emu-print-both`
+(both legs, the configuration a Pi bridge behind a real C64U runs:
+the same two documents reach lp *and* device 4). Neither e2e target is
+in `test-all`, for the same reason as `test-emu-print-fail` — each is
+the full 80-column suite again.
 
 **7. Deferred from this design** (beyond the §11 list):
 
@@ -964,3 +1008,46 @@ lesson) — no hardware in CI.
   wanted.
 - **Prettier text rendering** (`paps`/`enscript` → PDF for font
   control) if CUPS's stock Courier ever grates.
+
+**8. As built (2026-07-24) — where §13 differs from the plan above.**
+Four deltas, two of them bugs the plan walked into:
+
+- **Delivery is a new module, `src/printcups.py`** — `argv()` builds the
+  command line, `send()` spawns it and maps every failure to a
+  `Result(ok, reason, detail)`. Same reasoning as `printdoc.py` (§12):
+  the tests need it importable with no event loop and no protocol stack,
+  and `protocol.py` should not grow subprocess handling. `send()` never
+  raises: an exception out of the delivery leg would land in a
+  `_spawn_media` task, where nothing but the done-callback logger sees
+  it.
+- **The two legs run sequentially, not as parallel tasks.** §13.4 said
+  the cups job runs alongside the IEC one, which contradicts §3: while
+  the client prints, it masks serial RX for every `cbm_write`, so the
+  proxy must keep the wire silent. A concurrent leg's status frame would
+  be dropped at best and land mid-`PRINT_DATA` at worst. Running cups
+  first also makes "cups reports first" exact rather than a race, and
+  costs almost nothing — `lp` returns as soon as the job is spooled,
+  measured at ~1 s per document in the `both` e2e against a stub.
+- **The cups outcome is a canned REPLY, not a STATUS** (the plan said
+  STATUS). `/print` is the answer to a line the user typed, so the
+  client sits in ST_WAITING (the same trap as §12's ST_LOADING bug); the
+  IEC leg leaves that state by taking ST_LOADING for the job, but this
+  leg sends no frames at all. With a bare STATUS the page spooled
+  correctly and the client then waited out its timeout and printed "(no
+  response - message may be lost; try again)" — found by
+  `make test-emu-print-cups` on its first run. `_send_canned` carries
+  CHAT_DONE, which ends the turn, and leaves the outcome in the
+  transcript rather than a status row that scrolls away.
+- **`cups_options` (default `cpi=12 lpi=8`) exists because §13.4's cpi
+  claim was wrong.** CUPS's text filter defaults to **10** cpi, not 12,
+  and an A4 page at 10 cpi with default margins holds ~72 columns — the
+  78-column document would have wrapped a second time on every long
+  line. Explicit `-o` options make the page deterministic instead of
+  dependent on the filter's defaults. Empty = the queue's own settings.
+- Plus: `backend`/`cups_queue` take `LLM64_PRINTER_BACKEND` /
+  `LLM64_PRINTER_QUEUE` env overrides. The e2e runs the proxy with
+  `cwd=llm64_proxy/`, i.e. against the operator's real `config.toml`, so
+  the harness has to pin the backend — otherwise a live
+  `backend = "both"` would spool every test run's pages to real paper.
+  `make test-emu-print-cups` uses them with a stub `lp` and device 4 off
+  the bus; the other e2e targets pin `c64`.

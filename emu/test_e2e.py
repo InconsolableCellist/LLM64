@@ -228,6 +228,12 @@ def main():
     parser.add_argument('--no-printer', action='store_true',
                         help='Leave device 4 off the IEC bus: /print must be '
                              'refused cleanly instead of printing (docs/14)')
+    parser.add_argument('--cups', nargs='?', const='cups',
+                        choices=('cups', 'both'), metavar='BACKEND',
+                        help='Send /print to a CUPS queue (docs/14 13) with '
+                             'lp stubbed on PATH: "cups" instead of the IEC '
+                             'bus (device 4 taken off it, proving the '
+                             'no-C64-printer path), "both" as well as it')
     args = parser.parse_args()
 
     artifacts = REPO / 'emu' / 'artifacts'
@@ -278,6 +284,27 @@ def main():
             env['LLM64_CLAUDE_CMD'] = (
                 f"{sys.executable} {REPO / 'emu' / 'mock_claude.py'}")
             print(f"mock LLM on :{mock_port}")
+
+        # Where /print sends paper (docs/14 13). Pinned rather than
+        # inherited: the proxy runs in llm64_proxy/ and reads the
+        # operator's own config.toml, so a live [printer] backend =
+        # "both" would otherwise spool this test's pages to their real
+        # printer. --cups routes to a stub lp instead; --cups cups also
+        # takes device 4 off the bus, which is the no-C64-printer path.
+        if args.cups:
+            stub = artifacts / 'cups'
+            stub.mkdir(exist_ok=True)
+            cups_page = artifacts / 'cups-page.txt'
+            cups_page.unlink(missing_ok=True)
+            lp = stub / 'lp'
+            lp.write_text('#!/bin/sh\n'
+                          f'{{ echo "ARGS $*"; cat; }} >> "{cups_page}"\n')
+            lp.chmod(0o755)
+            env['PATH'] = f"{stub}{os.pathsep}{env.get('PATH', '')}"
+            env['LLM64_PRINTER_BACKEND'] = args.cups
+            env['LLM64_PRINTER_QUEUE'] = 'e2e'
+        else:
+            env['LLM64_PRINTER_BACKEND'] = 'c64'
 
         # 2. Proxy
         stack.start('proxy', [
@@ -343,7 +370,7 @@ def main():
             # Nothing answering on device 4: the KERNAL OPEN fails with
             # 'device not present' and the client must NAK the job
             ['-devicebackend4', '0', '+busdevice4', '+trapdevice4']
-            if args.no_printer else
+            if (args.no_printer or args.cups == 'cups') else
             ['-devicebackend4', '1', '-busdevice4',
              '-pr4drv', 'ascii', '-pr4output', 'text',
              '-pr4txtdev', '0', '-prtxtdev1',
@@ -485,7 +512,61 @@ def main():
                         monitor.keyboard_feed('/mode\r')
                         wait_status(r'ready\.', 30, label)
 
-                    if args.no_printer:
+                    if args.cups:
+                        # The proxy-side paper backend (docs/14 13). With
+                        # backend="cups" the C64 sends the command and
+                        # nothing else happens on the wire - device 4 is
+                        # off the bus here, which is the whole point.
+                        # With "both" the same composed document goes to
+                        # lp AND down the IEC path, cups first, one leg
+                        # after the other.
+                        monitor.keyboard_feed('/print the recipe\r')
+                        # The paper leg's outcome comes back as a REPLY,
+                        # not a status line: with no PRINT frames, that
+                        # CHAT_DONE is the only thing that ends the turn
+                        # the user started by typing /print (_print_cups).
+                        wait_for_screen(monitor, r'sent to the paper printer',
+                                        90, artifacts, f'{tag}-print-cups')
+                        if args.cups == 'both':
+                            # ...and the IEC leg still runs to completion
+                            # behind it, with its own closing status, and
+                            # still hands the editor back. Second document
+                            # too, so the printed page is identical to the
+                            # c64-only run's (asserted after teardown).
+                            wait_status(r'printed \d+ lines', 60,
+                                        f'{tag}-print-both')
+                            assert_usable(f'{tag}-print-both-idle')
+                            monitor.keyboard_feed('/print my inventory\r')
+                            wait_status(r'printed \d+ lines', 60,
+                                        f'{tag}-print-both-sheet')
+                            assert_usable(f'{tag}-print-both-sheet-idle')
+                        else:
+                            # The turn really did end: /mode answers only
+                            # if the client accepted a fresh line.
+                            # assert_usable is no good here - it reads
+                            # "Ready." off the status row, which this path
+                            # never made Busy, so it would pass on stale
+                            # text before the keys even land.
+                            monitor.keyboard_feed('/mode\r')
+                            wait_for_screen(monitor, r'current mode:', 30,
+                                            artifacts,
+                                            f'{tag}-print-cups-idle')
+                        page = (cups_page.read_text(errors='replace')
+                                if cups_page.exists() else '')
+                        low = page.lower()
+                        for want in ('-d e2e',                 # the queue
+                                     "grandma's fire stew",    # the title
+                                     'brown the salted pork'):  # the body
+                            if want not in low:
+                                raise AssertionError(
+                                    f'{want!r} never reached lp:\n'
+                                    f'{page[:800]}')
+                        print(f'  PASS: /print spooled to lp with '
+                              f'backend={args.cups}'
+                              + (' (both legs, IEC too)'
+                                 if args.cups == 'both'
+                                 else ' and no printer on the IEC bus'))
+                    elif args.no_printer:
                         # No printer to print on. TWO refusals are
                         # correct and which one you get depends on the
                         # bus: a genuinely absent device fails the OPEN
@@ -1469,7 +1550,11 @@ def main():
         # device 4. This is the only end-to-end proof of the whole
         # chain - composer, ack-paced blocks, KERNAL write, PETSCII
         # mapping - since nothing about a printed page shows on screen.
-        if args.tui and args.cols80 and not args.live and not args.no_printer:
+        # backend="both" prints the same two documents to device 4 (after
+        # spooling each to lp), so it is asserted here exactly like the
+        # c64-only run; backend="cups" has no printer on the bus at all.
+        if (args.tui and args.cols80 and not args.live
+                and not args.no_printer and args.cups != 'cups'):
             cap = artifacts / 'printer4.txt'
             page = cap.read_text(errors='replace') if cap.exists() else ''
             low = page.lower()

@@ -19,6 +19,7 @@ from .advsetup import (AdventureSetup, STAGES, ACT_QUICK,
 from .advtemplates import TemplateStore
 from . import advmap
 from . import printdoc
+from . import printcups
 from .scenecomp import compose_question
 from .markup import colorize_for_wire, split_safe, UNICODE_TO_ASCII
 from .markup import prompt_snippet as color_prompt_snippet
@@ -113,10 +114,14 @@ class ProtocolHandler:
         self._begin_ack = None
         # Window flow-control event (see _send_bulk_stream)
         self._flow_ack = None
-        # A print job is in flight: routes NAKs to the job (which aborts
-        # it) instead of into the image/SID retry logic
+        # An IEC print job owns the wire: routes NAKs to the job (which
+        # aborts it) instead of into the image/SID retry logic
         self._print_active = False
         self._print_refused = False
+        # A composed /print is being delivered to SOME backend - the
+        # re-entry guard, a superset of _print_active (docs/14 13): the
+        # cups backend sends no frames, so it has no wire to own
+        self._print_busy = False
         # Media sends triggered from the reader task must run as
         # background tasks: _send_begin waits for an ACK that only the
         # reader can dispatch, so awaiting it inline would deadlock
@@ -1176,7 +1181,7 @@ class ProtocolHandler:
         renders it from stored state, anything else asks the model to
         extract the document from the conversation."""
         arg = (arg or '').strip()
-        if self._print_active:
+        if self._print_busy:
             await self._send_canned("A print job is already running.")
             return
 
@@ -1211,7 +1216,64 @@ class ProtocolHandler:
             return
         # Off the reader task: the job waits on ACKs only the reader can
         # dispatch (see _media_tasks)
-        self._spawn_media(self._send_print(doc))
+        self._spawn_media(self._print_job(doc))
+
+    async def _print_job(self, doc: str):
+        """Deliver one composed document to every configured backend
+        (docs/14 13): the C64's IEC printer, a CUPS queue on the proxy
+        side, or both.
+
+        The two deliveries run one after the other rather than as
+        parallel tasks. While the IEC job runs the client masks its
+        serial RX for every write, so the wire has to stay silent (13 3)
+        - a STATUS from a concurrent cups task would be dropped, or
+        worse, land inside a PRINT_DATA frame. Going first also makes
+        "cups status before the IEC one" exact instead of a race, and lp
+        only spools (sub-second), so the paper leg barely delays the C64
+        leg. Neither leg's failure stops the other: _print_cups reports
+        its own outcome and returns.
+
+        _print_busy (this whole job, either backend) is deliberately not
+        _print_active (an IEC job owns the wire, which is what routes a
+        NAK into the print path)."""
+        backend = self.config.printer_backend
+        self._print_busy = True
+        try:
+            if backend in ('cups', 'both'):
+                await self._print_cups(doc)
+            if backend in ('c64', 'both'):
+                await self._send_print(doc)
+        finally:
+            self._print_busy = False
+
+    async def _print_cups(self, doc: str):
+        """The paper-printer leg (docs/14 13): the composed document into
+        lp, no PRINT frames, the C64 uninvolved. Short line on the C64,
+        the full reason in the log - the person who can fix a CUPS queue
+        is at the proxy, not at the C64.
+
+        The outcome goes out as a canned REPLY, not a STATUS. /print is
+        an answer to something the user typed, so the client is sitting
+        in ST_WAITING; the IEC leg leaves that state by taking
+        ST_LOADING for the job (12), but this leg sends no frames at all
+        and a STATUS is not an end-of-reply - the client waited out its
+        timeout and reported the message lost while the page was already
+        spooled (caught by make test-emu-print-cups). A canned reply
+        carries CHAT_DONE, which ends the turn, and leaves the outcome in
+        the transcript instead of a status row that scrolls away."""
+        queue = self.config.printer_cups_queue
+        res = await printcups.send(
+            doc, queue,
+            server=self.config.printer_cups_server,
+            options=self.config.printer_cups_options)
+        if res.ok:
+            await self._send_canned("Sent to the paper printer.")
+            self.logger.info(
+                f"Spooled {len(doc)} chars to CUPS queue {queue!r}"
+                + (f": {res.detail}" if res.detail else ''))
+        else:
+            await self._send_canned(f"Paper print failed: {res.reason}")
+            self.logger.error(f"CUPS print to {queue!r} failed: {res.detail}")
 
     async def _send_print(self, doc: str):
         """Drive one print job: BEGIN, a block at a time, END. Strictly

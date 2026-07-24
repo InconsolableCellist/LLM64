@@ -42,6 +42,18 @@ built-in modem provides over WiFi.
 3. **Modem emulation**: enable the modem on the ACIA (this is what
    answers the AT commands). Command echo on/off doesn't matter — the
    client sends `ATE0` and also skips echoed characters.
+4. **Printer (only if you want `/print`)**: F2 → Software IEC Settings →
+   **IEC Drive and Printer = Enabled**. This is **off by default**, and
+   without it `/print` refuses the job ("No printer on device 4.") — the
+   client is right, there is nothing on the bus. The firmware's virtual
+   printer is IEC device 4 and writes to `/Usb0/printer` (a USB stick has
+   to be in), either `printer-NNN.png` page images or appended ASCII;
+   PNG composition takes ~15 s, so give it a moment before deciding
+   nothing happened. Partial pages sit in a 256-byte buffer until F5 →
+   Flush Printer/Eject Page. A real MPS-803 on the IEC bus works the
+   same way with nothing to configure. Paper on the *proxy* side instead
+   (a USB printer via CUPS) is `[printer] backend` —
+   `docs/14-printer-hardcopy.md` §13.
 
 ## Build and deploy the client
 
