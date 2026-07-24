@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - TUI display implementation
+ * LLM64 Client - TUI display implementation
  *
  * The chat scrollback stores pre-wrapped TEXT_COLS-wide lines of "cells".
  * A cell is a screen code in the 40-column build, or ASCII in the SOFT80
@@ -719,13 +719,13 @@ static void draw_frame(void) {
 #ifdef SOFT80
     /* Return=send is self-evident once you have typed anything; the
        scroll keys are not discoverable at all, so they get the space. */
-    ui_draw_row(0, " C64 LLM " GIT_HASH "  F1=menu  F5=convs  F4/F6=scroll",
+    ui_draw_row(0, " LLM64 " GIT_HASH "  F1=menu  F5=convs  F4/F6=scroll",
                 COLOR_WHITE, 1);
 #else
     /* 40 columns: F5 hint doesn't fit; the F1 menu lists it. Single
        spaces here - with a dirty hash the row is otherwise exactly 40
        and one more character would be truncated. */
-    ui_draw_row(0, " C64 LLM " GIT_HASH " F1=menu F4/F6=scroll", COLOR_WHITE, 1);
+    ui_draw_row(0, " LLM64 " GIT_HASH " F1=menu F4/F6=scroll", COLOR_WHITE, 1);
 #endif
     for (i = 0; i < TEXT_COLS; ++i) {
 #ifdef SOFT80

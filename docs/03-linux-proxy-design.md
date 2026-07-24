@@ -43,7 +43,7 @@ A Python-based TCP server that bridges connections from the C64 Ultimate client 
 
 ### Project Structure
 ```
-c64llm_proxy/
+llm64_proxy/
 ├── src/
 │   ├── __init__.py
 │   ├── main.py              - Entry point, event loop
@@ -917,15 +917,15 @@ python -m src.main --host 192.168.1.100 --port 6400
 ### Systemd Service (Optional)
 ```ini
 [Unit]
-Description=C64 LLM Proxy
+Description=LLM64 Proxy
 After=network.target
 
 [Service]
 Type=simple
 User=your-user
-WorkingDirectory=/home/your-user/c64llm_proxy
+WorkingDirectory=/home/your-user/llm64_proxy
 Environment="OPENAI_API_KEY=sk-..."
-ExecStart=/home/your-user/c64llm_proxy/venv/bin/python -m src.main
+ExecStart=/home/your-user/llm64_proxy/venv/bin/python -m src.main
 Restart=always
 
 [Install]

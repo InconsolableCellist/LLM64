@@ -1,12 +1,12 @@
 /**
- * C64 LLM Client - config editor (overlay module #1)
+ * LLM64 Client - config editor (overlay module #1)
  *
- * Edits the proxy address and saves it to c64llm.cfg on device 8.
+ * Edits the proxy address and saves it to llm64.cfg on device 8.
  * Runs at boot when no valid config exists, and from the F1 menu (E).
  *
  * All code here lives in segment OVERLAY1: it is NOT part of the
  * resident PRG but loaded into the module slot on demand by
- * module_load("c64llm.1"). It calls resident helpers (ui_*, cfg)
+ * module_load("llm64.1"). It calls resident helpers (ui_*, cfg)
  * directly - the single link resolves them. Its statics land in
  * resident BSS/RODATA, so keep them lean.
  */
@@ -38,7 +38,7 @@ static const char S_H1[] = "  return: next field / save";
 static const char S_H2[] = "  stop:   keep current, no save";
 static const char S_HB[] = "  crsr up/down picks a field;";
 static const char S_HB2[] = "  a key cycles Speed";
-static const char S_H3[] = "  (c64llm.cfg on drive 8)";
+static const char S_H3[] = "  (llm64.cfg on drive 8)";
 static const char S_EDIT[] = "Edit the proxy address.";
 static const char S_UNCHANGED[] = "Config unchanged.";
 static const char S_EMPTY[] = "Empty field - config unchanged.";

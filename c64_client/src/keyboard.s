@@ -1,5 +1,5 @@
 ;
-; C64 LLM Client - custom keyboard matrix scanner
+; LLM64 Client - custom keyboard matrix scanner
 ;
 ; Replaces the KERNAL's SCNKEY: scans the full 8x8 matrix each tick,
 ; detects EVERY newly pressed key in the frame (the KERNAL registers only

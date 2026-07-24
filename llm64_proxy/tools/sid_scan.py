@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan an HVSC tree for SIDs that can run inside the c64llm client.
+"""Scan an HVSC tree for SIDs that can run inside the llm64 client.
 
 Stage 1 of the SID pipeline: parse PSID headers and keep tunes that could
 fit the client's reserved window (4 KB at $A800) before spending CPU on

@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - Serial/ACIA Interface
+ * LLM64 Client - Serial/ACIA Interface
  */
 
 #ifndef SERIAL_H

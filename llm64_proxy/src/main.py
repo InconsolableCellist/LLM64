@@ -1,4 +1,4 @@
-"""C64 LLM Proxy Server - Main Entry Point"""
+"""LLM64 Proxy Server - Main Entry Point"""
 
 import asyncio
 import argparse
@@ -25,7 +25,7 @@ def setup_logging(verbose: bool = False):
 async def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
-        description='C64 LLM Proxy Server - Bridge C64 to OpenAI APIs'
+        description='LLM64 Proxy Server - Bridge C64 to OpenAI APIs'
     )
     parser.add_argument(
         '--host',
@@ -55,7 +55,7 @@ async def main():
     logger = logging.getLogger(__name__)
 
     logger.info("=" * 60)
-    logger.info("C64 LLM Proxy Server v0.1.0")
+    logger.info("LLM64 Proxy Server v0.1.0")
     logger.info("=" * 60)
 
     # Load configuration

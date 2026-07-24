@@ -1,4 +1,4 @@
-# C64 LLM Client Makefile
+# LLM64 Client Makefile
 
 # Tools
 CC = cl65
@@ -13,7 +13,7 @@ CC65_HOME = /usr/share/cc65
 VICE_RUN ?= ../emu/vice-run.sh
 
 # Target
-TARGET = c64llm
+TARGET = llm64
 TARGETDIR = build
 PRG = $(TARGETDIR)/$(TARGET).prg
 
@@ -147,7 +147,7 @@ MOD2 = $(PRG).2
 MOD3 = $(PRG).3
 MOD4 = $(PRG).4
 MOD5 = $(PRG).5
-D64 = $(TARGETDIR)/c64llm.d64
+D64 = $(TARGETDIR)/llm64.d64
 
 # Bootable distribution disk: client PRG first (LOAD"*",8,1 / the
 # Ultimate's Run Disk boots it), then the overlay module. No config
@@ -157,21 +157,21 @@ D64 = $(TARGETDIR)/c64llm.d64
 disk: $(D64)
 $(D64): $(PRG)
 	@test -f $(MOD1) || { echo "No $(MOD1) - build with MODE80=1"; exit 1; }
-	@$(VICE_RUN) c1541 -format "c64llm,01" d64 $(D64) \
-	       -write $(PRG) "c64llm" \
-	       -write $(MOD1) "c64llm.1" \
-	       -write $(MOD2) "c64llm.2" \
-	       -write $(MOD3) "c64llm.3" \
-	       -write $(MOD4) "c64llm.4" \
-	       -write $(MOD5) "c64llm.5" >/dev/null
+	@$(VICE_RUN) c1541 -format "llm64,01" d64 $(D64) \
+	       -write $(PRG) "llm64" \
+	       -write $(MOD1) "llm64.1" \
+	       -write $(MOD2) "llm64.2" \
+	       -write $(MOD3) "llm64.3" \
+	       -write $(MOD4) "llm64.4" \
+	       -write $(MOD5) "llm64.5" >/dev/null
 	@echo "Disk image: $(D64)"
 
 # Free (shareware) distribution disk: the shareware intro as the first
 # file, then exactly the registered disk's contents. The intro is a
-# standalone PRG that chain-loads "c64llm" and is overwritten by it, so
+# standalone PRG that chain-loads "llm64" and is overwritten by it, so
 # the client carries no free/paid logic and costs no resident bytes.
 # $(D64) and everything in src/ are untouched.
-D64FREE = $(TARGETDIR)/c64llm-free.d64
+D64FREE = $(TARGETDIR)/llm64-free.d64
 INTRO = $(TARGETDIR)/intro.prg
 INTRODATA = $(TARGETDIR)/intro_data.bin
 
@@ -183,15 +183,15 @@ intro:
 disk-free: $(D64FREE)
 $(D64FREE): $(PRG) intro
 	@test -f $(MOD1) || { echo "No $(MOD1) - build with MODE80=1"; exit 1; }
-	@$(VICE_RUN) c1541 -format "c64llm free,01" d64 $(D64FREE) \
-	       -write $(INTRO) "c64 llm" \
-	       -write $(PRG) "c64llm" \
-	       -write $(INTRODATA) "c64 llm.d" \
-	       -write $(MOD1) "c64llm.1" \
-	       -write $(MOD2) "c64llm.2" \
-	       -write $(MOD3) "c64llm.3" \
-	       -write $(MOD4) "c64llm.4" \
-	       -write $(MOD5) "c64llm.5" >/dev/null
+	@$(VICE_RUN) c1541 -format "llm64 free,01" d64 $(D64FREE) \
+	       -write $(INTRO) "llm64 free" \
+	       -write $(PRG) "llm64" \
+	       -write $(INTRODATA) "llm64.d" \
+	       -write $(MOD1) "llm64.1" \
+	       -write $(MOD2) "llm64.2" \
+	       -write $(MOD3) "llm64.3" \
+	       -write $(MOD4) "llm64.4" \
+	       -write $(MOD5) "llm64.5" >/dev/null
 	@echo "Free disk image: $(D64FREE)"
 
 # Clean
@@ -216,8 +216,8 @@ upload: $(PRG)
 	@for m in $(MOD1) $(MOD2) $(MOD3) $(MOD4) $(MOD5); do \
 		[ -f $$m ] || continue; \
 		ext=$${m##*.}; \
-		curl -T $$m ftp://$(C64_IP)$(C64_PATH)/C64LLM.$$ext --user anonymous: && \
-		echo "Module uploaded: C64LLM.$$ext"; \
+		curl -T $$m ftp://$(C64_IP)$(C64_PATH)/LLM64.$$ext --user anonymous: && \
+		echo "Module uploaded: LLM64.$$ext"; \
 	done
 	@echo "Upload complete: ftp://$(C64_IP)$(C64_PATH)/$(TARGET).prg"
 

@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - resident API for overlay modules (SOFT80)
+ * LLM64 Client - resident API for overlay modules (SOFT80)
  *
  * Module-modal framework: a loaded overlay can take over the screen,
  * keyboard and selected protocol messages while the resident main

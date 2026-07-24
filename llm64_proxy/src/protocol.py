@@ -170,7 +170,7 @@ class ProtocolHandler:
                 f"Music library: {len(self.music.tunes)} tunes")
 
         # Scene illustrations (optional: needs Pillow + a configured
-        # backend, or the C64LLM_IMG_FIXTURE test hook)
+        # backend, or the LLM64_IMG_FIXTURE test hook)
         images_cfg = getattr(self.config, 'images_cfg', {})
         self.images = ImageService(
             Path(self.config.data_dir),

@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - interactive TUI
+ * LLM64 Client - interactive TUI
  *
  * Full-screen chat interface: scrollable chat area (rows 1-19), 3-row
  * input editor (21-23), status bar (24). Keys: F1/Return send, F2 new
@@ -540,7 +540,7 @@ static void conv_load_selected(void) {
    while a tune plays. Held rather than stopped so the song survives. */
 static uint8_t mod_open(const char* name, void (*run)(void)) {
     uint8_t ok;
-    diag_note_mod(name[7]);   /* "c64llm.N" -> N */
+    diag_note_mod(name[6]);   /* "llm64.N" -> N */
     diag_crumb(DC_MODLOAD);
     /* Already in the slot (the usual case for F1 - open, close, open):
        skip the load entirely. Nothing else writes the slot, so the
@@ -579,18 +579,18 @@ static uint8_t mod_open(const char* name, void (*run)(void)) {
 
 /* Open the conversation manager module (F5 / menu C) */
 static void convmgr_open(void) {
-    mod_open("c64llm.2", mod_convmgr_run);
+    mod_open("llm64.2", mod_convmgr_run);
 }
 
 /* Open the jukebox / sound window (menu J) */
 static void sound_open(void) {
-    mod_open("c64llm.5", mod_sound_run);
+    mod_open("llm64.5", mod_sound_run);
 }
 
 /* Open the server-fed menu module (F1). Falls back to the resident
    text menu if the boot disk is missing. */
 static void menu_module_open(void) {
-    if (!mod_open("c64llm.4", mod_menu_run)) menu_open();
+    if (!mod_open("llm64.4", mod_menu_run)) menu_open();
 }
 
 /* End a print job: close the IEC channel, let the wire and the music go
@@ -1185,14 +1185,14 @@ static void music_stop_local(void) {
 
 #ifdef SOFT80
 static void config_open(void) {
-    if (mod_open("c64llm.1", mod_config_run)) {
+    if (mod_open("llm64.1", mod_config_run)) {
         build_dial_string();  /* used on next boot/redial */
     }
     chat_redraw();
 }
 
 /* Open the config editor from the pre-connection dial/ping retry loops.
-   The editor is the c64llm.1 overlay: loaded from DISK and run entirely
+   The editor is the llm64.1 overlay: loaded from DISK and run entirely
    locally - no server, no serial traffic - so unlike the server-fed F1
    MENU it works precisely when the link is down. This is the escape
    hatch for a saved cfg whose baud the hardware can't do, or a wrong
@@ -1200,7 +1200,7 @@ static void config_open(void) {
    mod_open handles the RX pause around the IEC load; the caller re-inits
    the ACIA afterwards to apply any new baud, then redials. */
 static void reconfig_editor(void) {
-    mod_open("c64llm.1", mod_config_run);
+    mod_open("llm64.1", mod_config_run);
     build_dial_string();   /* host/port may have changed */
     ui_redraw_all();
     editor_redraw();
@@ -1211,7 +1211,7 @@ static void diskcopy_open(void) {
        long IEC conversation and serial NMIs would corrupt it (proxy
        is idle; nothing arrives) */
     serial_rx_pause();
-    if (module_load("c64llm.3")) {
+    if (module_load("llm64.3")) {
         mod_diskcopy_run();
         serial_rx_resume();
         ui_status("Ready.");
@@ -1395,10 +1395,10 @@ int main(void) {
 #ifndef CONNECT_DIRECT
     /* Disk config before the ACIA wakes: the KERNAL still owns the
        interrupt vectors, so the (JiffyDOS) LOAD runs undisturbed.
-       No valid c64llm.cfg -> pull in the config editor module. */
+       No valid llm64.cfg -> pull in the config editor module. */
     if (!config_load()) {
 #ifdef SOFT80
-        if (module_load("c64llm.1")) {
+        if (module_load("llm64.1")) {
             mod_config_run();
             ui_redraw_all();
             editor_redraw();
@@ -1469,11 +1469,11 @@ int main(void) {
        fresh connect regardless of proxy version. Colours are per line
        (soft-80 renders them; the 40-col build shows one base colour). */
     chat_start(2);
-    welcome_line(COLOR_YELLOW,     "Welcome to C64LLM");
+    welcome_line(COLOR_YELLOW,     "Welcome to LLM64");
     welcome_line(COLOR_GRAY2,      "(C) Foxipso 2026");
     welcome_line(COLOR_LIGHTBLUE,  "foxipso.com");
     welcome_line(COLOR_GRAY2,      "");
-    welcome_line(COLOR_WHITE,      "C64LLM is Shareware, however...");
+    welcome_line(COLOR_WHITE,      "LLM64 is Shareware, however...");
     welcome_line(COLOR_LIGHTGREEN, "I'd greatly appreciate it if you'd");
     welcome_line(COLOR_LIGHTGREEN, "support my work!");
     welcome_line(COLOR_GRAY2,      "");

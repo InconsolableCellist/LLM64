@@ -1,4 +1,4 @@
-# C64 LLM Interface - System Architecture & Communication Protocol
+# LLM64 - System Architecture & Communication Protocol
 
 ## Overview
 A Commodore 64 client application communicates over TCP/IP (via the C64 Ultimate's WiFi-enabled emulated ACIA modem) with a Linux host that proxies requests to an OpenAI-compatible API. The system enables interactive LLM chat sessions with full conversation history.

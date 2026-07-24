@@ -1,4 +1,4 @@
-# C64 LLM Proxy Server
+# LLM64 Proxy Server
 
 TCP server that bridges C64 Ultimate clients to OpenAI-compatible APIs.
 
@@ -66,7 +66,7 @@ Or use the included test script (coming soon).
 ## Directory Structure
 
 ```
-c64llm_proxy/
+llm64_proxy/
 ├── src/
 │   ├── main.py              # Entry point
 │   ├── tcp_server.py        # TCP server

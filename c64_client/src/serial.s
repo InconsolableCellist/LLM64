@@ -1,5 +1,5 @@
 ;
-; C64 LLM Client - ACIA Driver (Assembly)
+; LLM64 Client - ACIA Driver (Assembly)
 ; 6551 ACIA at $DE00 (SwiftLink compatible)
 ;
 ; RX is interrupt-driven: the ACIA raises an IRQ per received byte and the
@@ -66,7 +66,7 @@ ACIA_SR_TDRE = $10      ; Transmit Data Register Empty
 ; below, which exists because a play routine already outran one byte
 ; time at 9600.
 ; Compile-time DEFAULT only. The live value is the _acia_ctrl DATA byte
-; below, which cfg.c overwrites from c64llm.cfg's baud setting before
+; below, which cfg.c overwrites from llm64.cfg's baud setting before
 ; acia_init_hw runs. BAUD38400 just seeds a faster default.
 .ifdef BAUD38400
 ACIA_CTRL_VALUE = $1F

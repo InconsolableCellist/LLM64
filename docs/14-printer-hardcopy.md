@@ -51,7 +51,7 @@ The shape (each piece specified fully below):
 
 ## 1. Current code — verified, with line references
 
-Client paths `c64_client/`, proxy paths `c64llm_proxy/src/`.
+Client paths `c64_client/`, proxy paths `llm64_proxy/src/`.
 
 - **KERNAL is banked in; `cbm_*` is already used.** `loader.c:26`
   (`cbm_load`), `mod_diskcopy.c:96-129` (`cbm_open/cbm_read/cbm_write/
@@ -101,7 +101,7 @@ Client paths `c64_client/`, proxy paths `c64llm_proxy/src/`.
 - **Resident headroom**: the Makefile DIAG comment (~819 bytes,
   `c64_client/Makefile:62-65`) is STALE — the 2026-07-21 OVLnBSS/RODATA
   retrofit raised it to ~1,467 bytes (DIAG ~1,277). Verify against
-  `build/c64llm.map` after building; the print path budget is §9.
+  `build/llm64.map` after building; the print path budget is §9.
 - Nothing anywhere in the repo mentions printing — greenfield.
 
 ## 2. Printer backends
@@ -429,7 +429,7 @@ control cells (composer guarantees, §6.2). Client maps per byte:
 conversion happens in place in `payload_buffer` — the frame is
 consumed immediately, nothing else reads it afterwards.
 
-## 6. Proxy implementation (`c64llm_proxy/`)
+## 6. Proxy implementation (`llm64_proxy/`)
 
 ### 6.1 `MessageType` + command dispatch (`src/protocol.py`)
 
@@ -636,7 +636,7 @@ returns to Ready. This proves the abort path never wedges the client.
 (An always-on flag set means the main suite won't exercise it; a
 follow-up `--no-printer` harness switch is acceptable scope.)
 
-### 7.4 Proxy unit tests (`c64llm_proxy/tests/test_printdoc.py`)
+### 7.4 Proxy unit tests (`llm64_proxy/tests/test_printdoc.py`)
 
 Pure-Python, joining the existing suite (see `tests/test_dice.py` for
 conventions): sheet rendering from a fixture `adv_state` (exact
@@ -680,7 +680,7 @@ Deploy with `make deploy-c64u-80` (top Makefile; pushes via
 
 ## 9. Budgets
 
-MEASURED, not estimated (`build/c64llm.map`, MODE80, after the build):
+MEASURED, not estimated (`build/llm64.map`, MODE80, after the build):
 
 | Piece | Estimate | Actual |
 |---|---|---|

@@ -16,8 +16,8 @@ outlive this batch.
 
 ## Orientation (unchanged)
 
-- Build: `make -C c64_client disk MODE80=1` → `c64_client/build/c64llm.d64`
-  (main PRG + overlay modules `c64llm.prg.1..5`, one linked set — never
+- Build: `make -C c64_client disk MODE80=1` → `c64_client/build/llm64.d64`
+  (main PRG + overlay modules `llm64.prg.1..5`, one linked set — never
   mix builds on a disk).
 - Tests: `make test-all` (VICE e2e). Run before AND after every change.
   The suite is real-time in places; an occasional single-test timeout
@@ -69,7 +69,7 @@ a stock build's Speed field only offers 9600 / 19200 (BAUD_IDX_MAX in
 
 ## What Task 6 shipped, and the one thing to eyeball on hardware
 
-Runtime baud lives in `c64llm.cfg` (now v2: a `baud_idx` byte appended;
+Runtime baud lives in `llm64.cfg` (now v2: a `baud_idx` byte appended;
 `config_load` still accepts v1 blobs, so every existing disk and the
 inline `.cfg` generators keep working). F1 → E has a third field,
 **Speed**; cursor to it, any key cycles the hardware rate. On connect the
@@ -81,7 +81,7 @@ the proxy paces bulk transfers to it (`_wire_baud` per session, with
   brings the link up at the shown rate, and that a changed rate actually
   re-paces the proxy (its log line). Changing baud takes effect on the
   next `acia_init_hw` (reboot / reconnect), not live — by design.
-- First-boot flow: delete `c64llm.cfg` from the disk, boot, confirm the
+- First-boot flow: delete `llm64.cfg` from the disk, boot, confirm the
   editor prompts and the saved blob is v2 (magic `C6 02`, 41 bytes).
 
 ---
@@ -93,7 +93,7 @@ the proxy paces bulk transfers to it (`_wire_baud` per session, with
   as corrupt code. With the race fixed the pressure is off, but
   Fletcher-16 is the belt-and-braces: order-sensitive, still a tight
   `adc` loop. It is a **wire change** — `crc.s` (client) and
-  `_calculate_crc` (`c64llm_proxy/src/protocol.py`) must deploy together,
+  `_calculate_crc` (`llm64_proxy/src/protocol.py`) must deploy together,
   d64 redeploy included. Fold it into `crc.s` if you take it; otherwise
   leave XOR bit-exact (it is, today).
 - **Chunked module loader.** `mod_open` still HOLDS music across an IEC
@@ -119,6 +119,6 @@ the proxy paces bulk transfers to it (`_wire_baud` per session, with
   short-circuits a warm slot.
 - `cfg.c/.h` — v2 blob, `g_baud_idx`, `baud_apply`, `baud_nominal_div100`.
 - `mod_config.c` — Speed field. `common.h`/`protocol.[ch]` —
-  `MSG_SET_BAUD`, `proto_send_set_baud`. `c64llm_proxy/src/protocol.py` —
+  `MSG_SET_BAUD`, `proto_send_set_baud`. `llm64_proxy/src/protocol.py` —
   `SET_BAUD` handler + per-session `_wire_baud`. `emu/test_e2e.py` — cfg
   readback now expects the v2 blob.

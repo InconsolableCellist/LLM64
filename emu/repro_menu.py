@@ -27,7 +27,7 @@ back to a resident text menu):
                            SERVER_PORT=6464 MODE80=1
 
 The overlay-module d64 is attached to unit 8 in both modes: the F1 menu
-is module c64llm.4, LOADED FROM DISK. Without the disk the client falls
+is module llm64.4, LOADED FROM DISK. Without the disk the client falls
 back to the resident menu and nothing is being tested.
 
 Exit 0 = the menu rendered.  Exit 1 = it did not.
@@ -57,7 +57,7 @@ from test_e2e import (
 TESTPORT = 6464
 
 # What the menu module puts on screen (mod_menu.c)
-TITLE = 'c64 llm menu'                 # panel title, drawn immediately
+TITLE = 'llm64 menu'                 # panel title, drawn immediately
 FETCHING = 'fetching from server'      # placeholder until MENU_LIST lands
 ENTRY = 'copy client disk'             # a menu entry present in every mode
 
@@ -128,7 +128,7 @@ def tail(path, n=40):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--mode', choices=['direct', 'hayes'], default='direct')
-    ap.add_argument('--prg', default=str(REPO / 'c64_client/build/c64llm.prg'))
+    ap.add_argument('--prg', default=str(REPO / 'c64_client/build/llm64.prg'))
     ap.add_argument('--proxy-port', type=int, default=TESTPORT)
     ap.add_argument('--baud', type=int, default=9600)
     ap.add_argument('--acia-mode', type=int, default=0)
@@ -171,10 +171,10 @@ def main():
             'OPENAI_API_KEY': 'mock-key',
             'OPENAI_API_BASE': f'http://127.0.0.1:{mock_port}/v1',
             'OPENAI_MODEL': 'mock',
-            'C64LLM_CARDS_DIR': str(REPO / 'emu' / 'fixtures'),
-            'C64LLM_DATA_DIR': str(artifacts / 'repro-data'),
-            'C64LLM_IMG_FIXTURE': str(REPO / 'emu' / 'fixtures' / 'scene.png'),
-            'C64LLM_CLAUDE_CMD':
+            'LLM64_CARDS_DIR': str(REPO / 'emu' / 'fixtures'),
+            'LLM64_DATA_DIR': str(artifacts / 'repro-data'),
+            'LLM64_IMG_FIXTURE': str(REPO / 'emu' / 'fixtures' / 'scene.png'),
+            'LLM64_CLAUDE_CMD':
                 f"{sys.executable} {REPO / 'emu' / 'mock_claude.py'}",
         })
         # Music library: 'Jukebox' is a menu entry only when music is
@@ -204,22 +204,22 @@ def main():
         else:
             rsdev = ['-rsdev1', f'127.0.0.1:{proxy_port}', '+rsdev1ip232']
 
-        # 4. Overlay-module disk on unit 8: the F1 menu is c64llm.4 and
+        # 4. Overlay-module disk on unit 8: the F1 menu is llm64.4 and
         #    is loaded from here. Hayes additionally boots from the disk
         #    config so it dials 127.0.0.1:<proxy_port>.
         d64_path = artifacts / 'repro-modules.d64'
-        cmd = [*vice_tool('c1541'), '-format', 'c64llm,01', 'd64',
+        cmd = [*vice_tool('c1541'), '-format', 'llm64,01', 'd64',
                str(d64_path)]
         for ext in ('1', '2', '3', '4', '5'):
             mod = Path(f'{args.prg}.{ext}')
             if mod.exists():
-                cmd += ['-write', str(mod), f'c64llm.{ext}']
+                cmd += ['-write', str(mod), f'llm64.{ext}']
         if args.mode == 'hayes':
             cfg = artifacts / 'repro.cfg'
             cfg.write_bytes(b'\x00\x10\xc6\x01'
                             + b'127.0.0.1'.ljust(32, b'\x00')
                             + str(proxy_port).encode().ljust(6, b'\x00'))
-            cmd += ['-write', str(cfg), 'c64llm.cfg']
+            cmd += ['-write', str(cfg), 'llm64.cfg']
         subprocess.run(cmd, check=True, capture_output=True)
         print(f'module disk: {d64_path.name}')
 

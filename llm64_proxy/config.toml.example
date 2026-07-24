@@ -1,4 +1,4 @@
-# C64 LLM Proxy Configuration
+# LLM64 Proxy Configuration
 # Copy to config.toml and edit as needed
 
 [api]
@@ -47,7 +47,7 @@ model = "gemini-2.5-flash-image"
 # key = "..."
 
 # --- backend: openai (anything serving POST /v1/images/generations:
-# OpenAI, Together, LocalAI, ...). Key here or in C64LLM_IMAGES_KEY.
+# OpenAI, Together, LocalAI, ...). Key here or in LLM64_IMAGES_KEY.
 # [images.openai]
 # base_url = "https://api.openai.com/v1"
 # model = "dall-e-3"

@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - Protocol Implementation
+ * LLM64 Client - Protocol Implementation
  */
 
 #include "protocol.h"

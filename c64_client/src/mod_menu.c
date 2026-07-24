@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - server-fed menu (overlay module #4)
+ * LLM64 Client - server-fed menu (overlay module #4)
  *
  * F1 opens a floating dialog whose entries come from the PROXY as
  * [key][label][command] triples - /help and the menu share one
@@ -46,7 +46,7 @@ void mod_menu_run(void);
 /* cc65 emits anonymous string literals into "RODATA" regardless of
    the pragma; named const arrays honor it, so the module's strings
    are declared explicitly to stay in the overlay */
-static const char S_TITLE[] = " c64 llm menu ";
+static const char S_TITLE[] = " llm64 menu ";
 static const char S_FETCH[] = "   fetching from server...";
 static const char S_EMPTY[] = "   (no entries - /help still works)";
 static const char S_FOOT[]  = " key or return = run    f1 = close";

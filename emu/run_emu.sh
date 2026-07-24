@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launch x64sc wired up for the C64 LLM client, for interactive use.
+# Launch x64sc wired up for the LLM64 client, for interactive use.
 #
 #   ./run_emu.sh direct [host:port]   ACIA pipe straight to the proxy
 #                                     (build client with CONNECT=direct)
@@ -18,7 +18,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 MODE="${1:-direct}"
-PRG="c64_client/build/c64llm.prg"
+PRG="c64_client/build/llm64.prg"
 
 [ -f "$PRG" ] || { echo "Build the client first: make client-direct (or client-hayes-local)"; exit 1; }
 
@@ -38,7 +38,7 @@ esac
 
 # Overlay-module disk (make disk): mount on unit 8 if built
 DISK8=()
-[ -f c64_client/build/c64llm.d64 ] && DISK8=(-8 c64_client/build/c64llm.d64)
+[ -f c64_client/build/llm64.d64 ] && DISK8=(-8 c64_client/build/llm64.d64)
 
 # Printer on IEC device 4, so /print works here too (docs/14). The ascii
 # driver appends the text as it is printed; -pr4drv mps803 -pr4output

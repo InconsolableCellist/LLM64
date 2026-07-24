@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - Common Definitions
+ * LLM64 Client - Common Definitions
  */
 
 #ifndef COMMON_H

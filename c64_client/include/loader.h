@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - overlay module loader
+ * LLM64 Client - overlay module loader
  *
  * Modules are cc65 overlays (segment OVERLAY1) linked with the resident
  * client and emitted to a separate file that lives on device 8 next to

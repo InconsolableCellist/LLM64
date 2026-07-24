@@ -1,4 +1,4 @@
-"""Configuration management for C64 LLM Proxy"""
+"""Configuration management for LLM64 Proxy"""
 
 import os
 from pathlib import Path
@@ -79,7 +79,7 @@ class Config:
         )
 
         self.data_dir = os.getenv(
-            'C64LLM_DATA_DIR',
+            'LLM64_DATA_DIR',
             config.get('storage', {}).get('data_dir', './data')
         )
 
@@ -89,7 +89,7 @@ class Config:
         # on for months; raise it in lockstep with the client's
         # BAUD38400 build flag, never on its own.
         self.wire_baud = int(os.getenv(
-            'C64LLM_WIRE_BAUD',
+            'LLM64_WIRE_BAUD',
             config.get('serial', {}).get('wire_baud', 9600)))
 
         # Hardcopy (/print, docs/14). `width` is the column the composed
@@ -105,7 +105,7 @@ class Config:
         # --- interaction modes -----------------------------------------
         modes = config.get('modes', {})
         self.user_name = modes.get('user_name', 'You')
-        self.cards_dir = os.getenv('C64LLM_CARDS_DIR',
+        self.cards_dir = os.getenv('LLM64_CARDS_DIR',
                                    modes.get('cards_dir', './cards'))
         # Cards that ship with the proxy, so a fresh install has at least
         # one character to talk to. Lives inside the package: resolved
@@ -144,7 +144,7 @@ class Config:
         # CLI on the proxy host; 'workdir' is the default project dir.
         cc = config.get('claude', {})
         self.claude_command = os.environ.get(
-            'C64LLM_CLAUDE_CMD', cc.get('command', 'claude'))
+            'LLM64_CLAUDE_CMD', cc.get('command', 'claude'))
         # ~ won't expand under create_subprocess_exec; do it here
         self.claude_workdir = os.path.expanduser(
             cc.get('workdir', str(Path.home())))

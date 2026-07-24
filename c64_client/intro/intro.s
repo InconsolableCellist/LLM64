@@ -1,7 +1,7 @@
 ; ---------------------------------------------------------------------
-; C64 LLM / LLM64 - shareware intro (free disk only)
+; LLM64 - shareware intro (free disk only)
 ;
-; The first file on build/c64llm-free.d64. Run Disk / LOAD"*",8,1 boots
+; The first file on build/llm64-free.d64. Run Disk / LOAD"*",8,1 boots
 ; it; it shows the LLM64 logo over a cycling Commodore rainbow with a
 ; five-row text panel under it (raster split at row 20), plays a SID,
 ; enforces a short nag countdown, and on any key chain-loads
@@ -511,18 +511,18 @@ stub:
         iny
         bne     @next
 @halt:  jmp     @halt
-; The client PRG is written to disk by c1541 as "c64llm", i.e. the bytes
-; $43 $36 $34 $4C $4C $4D. DEVIATION from docs/11 section 3, which says
+; The client PRG is written to disk by c1541 as "llm64", i.e. the bytes
+; $4C $4C $4D $36 $34. DEVIATION from docs/11 section 3, which says
 ; to spell it uppercase in the source: under `ca65 -t c64` uppercase
-; assembles to $C3 $36 $34 $CC $CC $CD and the LOAD would fail. Lowercase
+; assembles to $CC $CC $CD $36 $34 and the LOAD would fail. Lowercase
 ; source is what produces the bytes on the disk. Verified with ca65.
-stub_name:      .byte   "c64llm"
+stub_name:      .byte   "llm64"
 stub_name_len = * - stub_name
 stub_msg:       .byte   "load error", 0
 
 ; ---------------------------------------------------------------------
 .segment "RODATA"
-name_d:         .byte   "c64 llm.d"     ; lowercase: see stub_name above
+name_d:         .byte   "llm64.d"     ; lowercase: see stub_name above
 name_d_len = * - name_d
 
 ; Unpacking the blob. Every destination is clear of both this program and

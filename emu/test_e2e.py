@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from vice_monitor import ViceMonitor, ViceMonitorError
 
 REPO = Path(__file__).resolve().parent.parent
-PROXY_DIR = REPO / 'c64llm_proxy'
+PROXY_DIR = REPO / 'llm64_proxy'
 PROXY_PORT = 6400  # default; override with --proxy-port
 TCPSER_PORT = 25232
 
@@ -196,7 +196,7 @@ def wait_ready(monitor, timeout, artifacts, label):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['direct', 'hayes'], default='direct')
-    parser.add_argument('--prg', default=str(REPO / 'c64_client/build/c64llm.prg'))
+    parser.add_argument('--prg', default=str(REPO / 'c64_client/build/llm64.prg'))
     parser.add_argument('--timeout', type=float, default=90.0)
     parser.add_argument('--baud', type=int, default=9600)
     parser.add_argument('--acia-mode', type=int, default=0,
@@ -261,9 +261,9 @@ def main():
                 'OPENAI_API_BASE': f'http://127.0.0.1:{mock_port}/v1',
                 'OPENAI_MODEL': 'mock',
                 # deterministic card set regardless of the user's cards/
-                'C64LLM_CARDS_DIR': str(REPO / 'emu' / 'fixtures'),
+                'LLM64_CARDS_DIR': str(REPO / 'emu' / 'fixtures'),
                 # keep test conversations out of the user's data dir
-                'C64LLM_DATA_DIR': str(artifacts / 'data'),
+                'LLM64_DATA_DIR': str(artifacts / 'data'),
             })
             # Deterministic 2-tune music library (urgent -> Pac-Man,
             # festive -> Astro Chase)
@@ -272,10 +272,10 @@ def main():
                             dirs_exist_ok=True)
             # Image generation without the real API: every "generation"
             # returns this fixture
-            env['C64LLM_IMG_FIXTURE'] = str(
+            env['LLM64_IMG_FIXTURE'] = str(
                 REPO / 'emu' / 'fixtures' / 'scene.png')
             # Claude Code mode drives a mock CLI (no real agent/API)
-            env['C64LLM_CLAUDE_CMD'] = (
+            env['LLM64_CLAUDE_CMD'] = (
                 f"{sys.executable} {REPO / 'emu' / 'mock_claude.py'}")
             print(f"mock LLM on :{mock_port}")
 
@@ -303,7 +303,7 @@ def main():
             rsdev = ['-rsdev1', f'127.0.0.1:{proxy_port}', '+rsdev1ip232']
 
         # 3.5 Overlay-module disk: direct mode mounts a d64 on unit 8
-        # carrying the config-editor module (c64llm.1), so the F1->E
+        # carrying the config-editor module (llm64.1), so the F1->E
         # module test exercises the real disk-load path. Built fresh in
         # artifacts per run - the editor's save writes into it.
         d64_path = None
@@ -311,12 +311,12 @@ def main():
         mod1 = Path(args.prg + '.1')
         if mod1.exists() and have_vice_tool('c1541'):
             d64_path = artifacts / 'modules.d64'
-            cmd = [*vice_tool('c1541'), '-format', 'c64llm,01', 'd64',
-                   str(d64_path), '-write', str(mod1), 'c64llm.1']
+            cmd = [*vice_tool('c1541'), '-format', 'llm64,01', 'd64',
+                   str(d64_path), '-write', str(mod1), 'llm64.1']
             for ext in ('2', '3', '4', '5'):
                 mod = Path(f'{args.prg}.{ext}')
                 if mod.exists():
-                    cmd += ['-write', str(mod), f'c64llm.{ext}']
+                    cmd += ['-write', str(mod), f'llm64.{ext}']
             if args.mode == 'hayes':
                 # hayes boots from the DISK config (the real-hardware
                 # path): blob = PRG header, magic, version, host[32],
@@ -325,7 +325,7 @@ def main():
                 cfg.write_bytes(b'\x00\x10\xc6\x01'
                                 + b'127.0.0.1'.ljust(32, b'\x00')
                                 + str(proxy_port).encode().ljust(6, b'\x00'))
-                cmd += ['-write', str(cfg), 'c64llm.cfg']
+                cmd += ['-write', str(cfg), 'llm64.cfg']
             subprocess.run(cmd, check=True, capture_output=True)
             print(f"module disk: {d64_path.name}")
             if args.mode == 'direct':
@@ -868,7 +868,7 @@ def main():
                     monitor.keyboard_feed_petscii(b'\x85')
                     scr = wait_for_screen(monitor, r'copy client disk', 20,
                                           artifacts, shot)
-                    if 'c64 llm menu' not in scr.lower():
+                    if 'llm64 menu' not in scr.lower():
                         raise AssertionError('menu panel title missing')
                     return scr
 
@@ -1079,7 +1079,7 @@ def main():
                     if 'jukebox' not in scr.lower():
                         raise AssertionError('jukebox entry missing from menu')
                     monitor.keyboard_feed('j')
-                    wait_for_screen(monitor, r'c64 llm jukebox', 25,
+                    wait_for_screen(monitor, r'llm64 jukebox', 25,
                                     artifacts, f'{tag}-jb-panel')
                     # Poll for the CONTENT, not the frame: the panel is
                     # drawn immediately and only fills in when NOWPLAYING
@@ -1444,14 +1444,14 @@ def main():
         time.sleep(2)  # let -exitscreenshot write
 
         # The config editor's save must have landed on the d64 itself:
-        # read c64llm.cfg back out and check the blob. v2 layout: magic
+        # read llm64.cfg back out and check the blob. v2 layout: magic
         # C6 02, host at +2, port at +34, baud index at +40 (all after
         # the 2-byte PRG load-address header). The editor never touches
         # baud here, so it saves the build default (idx 1 = 19200 HW).
         if d64_path and args.tui and args.cols80:
             saved = artifacts / 'saved.cfg'
             subprocess.run(
-                [*vice_tool('c1541'), str(d64_path), '-read', 'c64llm.cfg',
+                [*vice_tool('c1541'), str(d64_path), '-read', 'llm64.cfg',
                  str(saved)],
                 check=True, capture_output=True)
             blob = saved.read_bytes()[2:]  # skip the PRG load-address header
@@ -1463,7 +1463,7 @@ def main():
                 raise AssertionError(
                     f'cfg on disk wrong: magic={blob[:2].hex()} '
                     f'host={host!r} port={port!r} baud_idx={baud_idx!r}')
-            print('  PASS: c64llm.cfg on the d64 holds the edited v2 config')
+            print('  PASS: llm64.cfg on the d64 holds the edited v2 config')
 
         # Printer hardcopy (docs/14): what actually came out of IEC
         # device 4. This is the only end-to-end proof of the whole
@@ -1497,9 +1497,9 @@ def main():
             out = subprocess.run(
                 [*vice_tool('c1541'), str(copy_target), '-list'],
                 capture_output=True, text=True).stdout.lower()
-            for want in ('c64llm.1', 'c64llm.2', 'c64llm.3', 'c64llm.4',
-                         'c64llm.5',
-                         'c64llm.cfg'):
+            for want in ('llm64.1', 'llm64.2', 'llm64.3', 'llm64.4',
+                         'llm64.5',
+                         'llm64.cfg'):
                 if want not in out:
                     raise AssertionError(
                         f'{want} missing from copy target:\n{out}')

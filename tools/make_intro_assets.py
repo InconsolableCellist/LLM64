@@ -5,7 +5,7 @@
 
 Writes three files into the output directory:
 
-  intro_data.bin    the complete "c64 llm.d" disk file: a $4000 load address
+  intro_data.bin    the complete "llm64.d" disk file: a $4000 load address
                     followed by bitmap 8000 + screen 1000 + the tune's
                     memory image. Those offsets are a contract with intro.s.
   intro_gen.inc     ca65 include with the constants intro.s needs, including
@@ -34,7 +34,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "c64llm_proxy"))
+sys.path.insert(0, str(REPO / "llm64_proxy"))
 
 # Blob layout. Load address first, then the parts back to back.
 BLOB_LOAD = 0x4000

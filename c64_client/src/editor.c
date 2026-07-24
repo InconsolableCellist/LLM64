@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - input editor implementation
+ * LLM64 Client - input editor implementation
  *
  * Single logical text up to EDIT_MAX chars. The three editor rows are a
  * scrolling window over it: the view follows the cursor, so input can be

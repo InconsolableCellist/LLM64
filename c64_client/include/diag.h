@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - crash post-mortem block (see src/diag.s)
+ * LLM64 Client - crash post-mortem block (see src/diag.s)
  *
  * A breadcrumb ring plus a C-stack canary, both kept at $02A7 in page-2
  * RAM that survives a crash to BASIC. After the machine drops to READY,

@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - input editor (rows 21-23, 120 chars)
+ * LLM64 Client - input editor (rows 21-23, 120 chars)
  */
 
 #ifndef EDITOR_H

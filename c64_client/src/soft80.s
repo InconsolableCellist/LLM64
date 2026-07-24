@@ -1,5 +1,5 @@
 ;
-; C64 LLM Client - soft-80 column bitmap renderer
+; LLM64 Client - soft-80 column bitmap renderer
 ;
 ; 320x200 hires bitmap = 80 columns of 4x8 glyphs (two per bitmap byte).
 ; VIC bank 3: bitmap at $E000 (RAM under KERNAL - CPU writes land in RAM,

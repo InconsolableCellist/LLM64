@@ -122,7 +122,7 @@ def _log_usage(data_dir, backend_field, purpose):
             path.parent.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().isoformat(timespec="seconds")
         with open(path, "a") as f:
-            f.write(f"{stamp}\t{backend_field}\tc64llm/{purpose}\n")
+            f.write(f"{stamp}\t{backend_field}\tllm64/{purpose}\n")
     except OSError as e:
         logger.warning(f"usage log write failed: {e}")
 
@@ -230,7 +230,7 @@ class OpenAIImagesBackend(ImageBackend):
         self.data_dir = data_dir
 
     def _key(self):
-        return self._cfg_key or os.environ.get("C64LLM_IMAGES_KEY", "").strip()
+        return self._cfg_key or os.environ.get("LLM64_IMAGES_KEY", "").strip()
 
     def available(self):
         # Key only. A wrong base_url surfaces at generate time.
@@ -436,7 +436,7 @@ def _comfy_error(state):
 
 
 class FixtureBackend(ImageBackend):
-    """A local file, returned as-is. C64LLM_IMG_FIXTURE forces this."""
+    """A local file, returned as-is. LLM64_IMG_FIXTURE forces this."""
 
     name = "fixture"
 
@@ -473,7 +473,7 @@ def make_backend(images_cfg, data_dir, base_dir="."):
     """Build the configured backend. images_cfg is the raw [images] table;
     base_dir is config.toml's directory (relative paths resolve there)."""
     cfg = images_cfg or {}
-    fixture = os.environ.get("C64LLM_IMG_FIXTURE")
+    fixture = os.environ.get("LLM64_IMG_FIXTURE")
     if fixture:
         return FixtureBackend(fixture)
 

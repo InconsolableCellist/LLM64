@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - persistent network config (see cfg.h)
+ * LLM64 Client - persistent network config (see cfg.h)
  */
 
 #include <string.h>
@@ -75,7 +75,7 @@ static NetConfig blob;
 uint8_t config_load(void) {
     /* cbm_load returns bytes read: 41 for a v2 blob, 40 for a v1 one
        (the baud byte is simply absent). Anything shorter is corrupt. */
-    unsigned int n = cbm_load("c64llm.cfg", boot_device, &blob);
+    unsigned int n = cbm_load("llm64.cfg", boot_device, &blob);
     if (n < CFG_V1_SIZE) return 0;
     if (blob.magic != CFG_MAGIC) return 0;
     if (blob.version == 0x01 || n < sizeof(blob)) {
@@ -115,7 +115,7 @@ uint8_t config_save(void) {
        with FILE EXISTS the second time). */
     music_hold_begin();
     serial_rx_pause();
-    ok = cbm_save("@0:c64llm.cfg", boot_device, &blob,
+    ok = cbm_save("@0:llm64.cfg", boot_device, &blob,
                   sizeof(blob)) == 0;
     serial_rx_resume();
     music_hold_end();

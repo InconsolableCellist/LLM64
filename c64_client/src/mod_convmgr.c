@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - conversation manager (overlay module #2)
+ * LLM64 Client - conversation manager (overlay module #2)
  *
  * Full conversation management from the C64: paged list (16 per page,
  * starred entries first with a '*' prefix, star = yellow), load,

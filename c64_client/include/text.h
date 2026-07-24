@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - PETSCII/ASCII conversion
+ * LLM64 Client - PETSCII/ASCII conversion
  *
  * cc65 encodes C string literals as PETSCII on the c64 target, and conio
  * expects PETSCII. The wire protocol and the LLM API are ASCII. These

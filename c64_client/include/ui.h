@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - TUI display (chat area, status bar, title)
+ * LLM64 Client - TUI display (chat area, status bar, title)
  *
  * All rendering is done with direct screen/color RAM writes; the chat
  * scrollback stores pre-wrapped 40-column lines as screen codes.

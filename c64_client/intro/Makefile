@@ -9,7 +9,7 @@ BUILD = ../build
 
 # Regenerate assets/ (the drawn logo plus the tune) with:
 #   python3 ../../tools/make_intro_assets.py \
-#           ../../c64llm_proxy/data/sids/b000_full/<tune>.sid -o assets/
+#           ../../llm64_proxy/data/sids/b000_full/<tune>.sid -o assets/
 # The outputs are committed, so a plain build needs neither PIL nor the
 # SID library.
 ASSETS = assets/intro_data.bin assets/intro_gen.inc

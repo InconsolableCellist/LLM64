@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - jukebox / sound window (overlay module #5)
+ * LLM64 Client - jukebox / sound window (overlay module #5)
  *
  * A floating panel showing what the LLM put on: title, author, a
  * progress bar against the tune's real length, and a meter driven off
@@ -53,7 +53,7 @@ void mod_sound_run(void);
 
 /* cc65 emits anonymous string literals into "RODATA" whatever the
    pragma says; named const arrays honor it and stay in the overlay */
-static const char S_TITLE[] = " c64 llm jukebox ";
+static const char S_TITLE[] = " llm64 jukebox ";
 static const char S_FETCH[] = "asking the server...";
 static const char S_SILENT[] = "nothing playing";
 static const char S_HINT[]  = "type /music <mood> to start one";

@@ -157,7 +157,7 @@ def deploy_and_run(path, host='192.168.1.64'):
     /Flash only, and under the artifact's REAL name. /Temp is a RAM disk
     that is wiped on power-off and the user never boots from it, so
     mirroring there bought nothing; keeping the real name is what lets
-    c64llm.d64 and c64llm-free.d64 sit side by side and be picked from
+    llm64.d64 and llm64-free.d64 sit side by side and be picked from
     the Ultimate's own menu without a rebuild."""
     import subprocess
     import os
@@ -188,4 +188,4 @@ def deploy_and_run(path, host='192.168.1.64'):
 if __name__ == '__main__':
     import sys
     deploy_and_run(sys.argv[1] if len(sys.argv) > 1
-                   else 'c64_client/build/c64llm.prg')
+                   else 'c64_client/build/llm64.prg')

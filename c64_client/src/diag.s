@@ -1,5 +1,5 @@
 ;
-; C64 LLM Client - crash post-mortem block
+; LLM64 Client - crash post-mortem block
 ;
 ; The bug this exists for (adventure mode, streamed tune playing, an
 ; illustration recently dismissed, machine drops to READY while typing)

@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - PETSCII/ASCII conversion
+ * LLM64 Client - PETSCII/ASCII conversion
  */
 
 #include "text.h"

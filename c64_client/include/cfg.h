@@ -1,7 +1,7 @@
 /**
- * C64 LLM Client - persistent network config (device 8)
+ * LLM64 Client - persistent network config (device 8)
  *
- * "c64llm.cfg" on the boot drive stores the proxy address, so the
+ * "llm64.cfg" on the boot drive stores the proxy address, so the
  * binary no longer bakes it in. Written by the config editor module;
  * read at boot before dialing. Fixed-size binary blob - no parsing.
  */
@@ -28,11 +28,11 @@ void boot_device_init(void);
 /* "ATDT<host>:<port>" - rebuilt by build_dial_string() */
 extern char g_dial[CFG_HOST_MAX + CFG_PORT_MAX + 6];
 
-/* Read c64llm.cfg from device 8 into g_host/g_port.
+/* Read llm64.cfg from device 8 into g_host/g_port.
    Returns nonzero if a valid config was found. */
 uint8_t config_load(void);
 
-/* Write g_host/g_port to c64llm.cfg (scratch-and-replace).
+/* Write g_host/g_port to llm64.cfg (scratch-and-replace).
    Returns nonzero on success. */
 uint8_t config_save(void);
 

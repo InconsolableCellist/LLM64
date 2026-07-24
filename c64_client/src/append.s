@@ -1,5 +1,5 @@
 ;
-; C64 LLM Client - chat_append_ascii fast path (assembly, SOFT80 only)
+; LLM64 Client - chat_append_ascii fast path (assembly, SOFT80 only)
 ;
 ; Every byte of every streamed reply and every loaded conversation goes
 ; through this. The common case is a printable, non-space character with

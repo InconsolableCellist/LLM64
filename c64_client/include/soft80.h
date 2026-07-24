@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - soft-80 bitmap renderer (see soft80.s)
+ * LLM64 Client - soft-80 bitmap renderer (see soft80.s)
  */
 
 #ifndef SOFT80_H

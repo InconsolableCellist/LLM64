@@ -38,7 +38,7 @@ character generation (`AdventureMode.background`).
 
 ## 1. Current pipeline — verified, with line references
 
-All line numbers are `c64llm_proxy/src/` at commit 9a584e7.
+All line numbers are `llm64_proxy/src/` at commit 9a584e7.
 
 There are **four ways** an illustration prompt comes to exist, and only
 one of them is anchored to game state:
@@ -82,7 +82,7 @@ Flow details:
   `protocol.py:806-823`, for both adventure and roleplay). It asks for
   consistency of appearance but says nothing about *who may appear*.
 - `imagegen.py` — backends (gemini/openai/comfyui/fixture). No changes
-  needed there; `FixtureBackend` + the `C64LLM_IMG_FIXTURE` env hook is
+  needed there; `FixtureBackend` + the `LLM64_IMG_FIXTURE` env hook is
   how tests generate without a network.
 
 Prompt storage today: conversation meta only, truncated to 200 chars.
@@ -93,10 +93,10 @@ never persisted anywhere.
 ## 2. Field data
 
 `data/mlboy_snapshot/` is a full copy (2026-07-23, minus `sids/`) of
-mlboy's live `~/c64llm_proxy/data/` — conversations, images, and
+mlboy's live `~/llm64_proxy/data/` — conversations, images, and
 adventure saves from real playtesting. Refresh it any time with:
 
-    rsync -a --exclude sids mlboy:c64llm_proxy/data/ data/mlboy_snapshot/
+    rsync -a --exclude sids mlboy:llm64_proxy/data/ data/mlboy_snapshot/
 
 Useful facts found there:
 
@@ -277,7 +277,7 @@ Each step compiles and passes tests on its own; land in this order.
 
 ## 6. Tests
 
-Repo convention: script-style test files under `c64llm_proxy/tests/`,
+Repo convention: script-style test files under `llm64_proxy/tests/`,
 plain `check(name, got, want)` + failure list, run directly with
 `python3 tests/test_X.py` (see `tests/test_directives.py` header;
 Pillow-free, network-free, model-free). Follow it.
@@ -337,7 +337,7 @@ things; if it cannot be done without dragging in the wire, settle for
 ### 6.4 End-to-end and manual
 
 - `make test-all` must stay green (it exercises the image path via
-  `C64LLM_IMG_FIXTURE`, `emu/test_e2e.py:268`).
+  `LLM64_IMG_FIXTURE`, `emu/test_e2e.py:268`).
 - Manual on mlboy (deploy per HANDOFF/README rsync flow): start an
   adventure with a distinctive generated character (the Kobold save in
   `data/mlboy_snapshot/adventures/` is ideal), then:
@@ -346,7 +346,7 @@ things; if it cannot be done without dragging in the wire, settle for
   2. `/pic show me my character examining the door` → character
      matches race/class/appearance;
   3. wait for an auto/ask `[[IMAGE:]]` → cast obeys state;
-  4. confirm `~/c64llm_proxy/data/images/<conv>/<epoch>.json` sidecars
+  4. confirm `~/llm64_proxy/data/images/<conv>/<epoch>.json` sidecars
      appear and `final_prompt` matches the "Illustrating:" echo.
 
 ## 7. Out of scope / risks

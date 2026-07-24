@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end test for the shareware intro on the free disk.
 
-Boots build/c64llm-free.d64 in VICE exactly as a user's Run Disk would,
+Boots build/llm64-free.d64 in VICE exactly as a user's Run Disk would,
 and asserts the whole chain: the intro paints its panel, the nag really
 cannot be skipped, and a key afterwards chain-loads the stock client.
 
@@ -89,7 +89,7 @@ def wait_for(monitor, reader, pattern, timeout, label):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--d64', default=str(REPO / 'c64_client/build/c64llm-free.d64'))
+    ap.add_argument('--d64', default=str(REPO / 'c64_client/build/llm64-free.d64'))
     ap.add_argument('--timeout', type=float, default=60.0)
     args = ap.parse_args()
 

@@ -7,14 +7,14 @@ __pycache__/
 .venv/
 
 # Runtime data
-c64llm_proxy/data/
+llm64_proxy/data/
 emu/artifacts/
-c64llm_proxy/proxy-live.log
+llm64_proxy/proxy-live.log
 c64_client/include/buildhash.h
 
 # Live config (contains private hostnames)
-c64llm_proxy/config.toml
-c64llm_proxy/cards/
+llm64_proxy/config.toml
+llm64_proxy/cards/
 
 # Scratch working notes
 *.tmp.txt

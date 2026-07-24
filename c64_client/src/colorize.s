@@ -1,5 +1,5 @@
 ;
-; C64 LLM Client - inline-colour matrix builder (assembly, SOFT80 only)
+; LLM64 Client - inline-colour matrix builder (assembly, SOFT80 only)
 ;
 ; colorize_row scans one 80-cell chat row for inline colour markers,
 ; rewrites each marker cell to a space in place, and fills a 40-entry

@@ -1,4 +1,4 @@
-# C64 LLM Client - Technical Design Document
+# LLM64 Client - Technical Design Document
 
 ## Overview
 A TUI application for the Commodore 64 that provides an interactive LLM chat interface with text editing, scrolling, conversation management, and responsive serial communication.
@@ -661,7 +661,7 @@ LD = ld65
 
 OBJS = main.o ui.o editor.o display.o serial.o protocol.o conversation.o input.o util.o
 
-c64llm.prg: $(OBJS)
+llm64.prg: $(OBJS)
 	$(LD) -t c64 -o $@ $(OBJS) c64.lib
 
 %.o: %.c
@@ -671,7 +671,7 @@ c64llm.prg: $(OBJS)
 	$(AS) -t c64 $< -o $@
 
 clean:
-	rm -f *.o c64llm.prg
+	rm -f *.o llm64.prg
 ```
 
 ## Testing Strategy

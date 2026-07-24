@@ -1,5 +1,5 @@
 ;
-; C64 LLM Client - payload XOR checksum inner loop (assembly)
+; LLM64 Client - payload XOR checksum inner loop (assembly)
 ;
 ; proto_calc_crc stays in C for the 3 header bytes; only the per-payload
 ; XOR moves here. cc65 compiled that loop with a stack-relative counter

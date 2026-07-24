@@ -1,4 +1,4 @@
-# C64 LLM Interface - top-level targets
+# LLM64 - top-level targets
 
 PYTHON ?= python3
 # VICE tools (x64sc, c1541): native install if present, net.sf.VICE flatpak
@@ -70,7 +70,7 @@ test-emu-watchdog:
 
 test-all: test-emu test-emu-long test-emu-long-rt test-emu-hayes test-emu-tui test-emu-tui-80 test-emu-watchdog
 
-# Interactive TUI session against the real API from c64llm_proxy/config.toml
+# Interactive TUI session against the real API from llm64_proxy/config.toml
 run-live: client-tui-direct
 	./emu/run_live.sh
 
@@ -89,7 +89,7 @@ C64_PROXY_IP ?= 192.168.1.21
 deploy-c64u:
 	$(MAKE) -C c64_client clean
 	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP)
-	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm.prg
+	$(PYTHON) emu/u64_telnet.py c64_client/build/llm64.prg
 
 # Soft-80-column variants
 client-tui-direct-80:
@@ -121,7 +121,7 @@ test-emu-diag:
 deploy-c64u-80:
 	$(MAKE) -C c64_client clean
 	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
-	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm.prg
+	$(PYTHON) emu/u64_telnet.py c64_client/build/llm64.prg
 
 # The canonical deploy: one d64 with the client + overlay module,
 # mounted on the Ultimate's 1541 (JiffyDOS fastload applies, config
@@ -139,7 +139,7 @@ deploy-c64u-disk-80:
 	$(MAKE) -C c64_client disk
 	@if [ "$(INJECT_CFG)" = "1" ]; then $(MAKE) inject-cfg; \
 	 else echo "INJECT_CFG=0: cfg-free, first boot opens the config editor"; fi
-	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm.d64
+	$(PYTHON) emu/u64_telnet.py c64_client/build/llm64.d64
 
 # Write the maintainer's NetConfig into the freshly built disk. NOT for
 # distribution disks - those stay cfg-free by design so a new user meets
@@ -152,18 +152,18 @@ deploy-c64u-disk-80:
 # NetConfig blob: 2 dummy bytes for the PRG header cbm_load skips, magic
 # C6 01, then host[32] and port[6], NUL-padded. Digits and dots are
 # identical in PETSCII and ASCII, so no conversion needed.
-CFG_DISK ?= c64_client/build/c64llm.d64
+CFG_DISK ?= c64_client/build/llm64.d64
 inject-cfg:
 	$(PYTHON) -c "open('c64_client/build/user.cfg','wb').write(b'\x00\x10\xc6\x01'+b'$(C64_CFG_HOST)'.ljust(32,b'\0')+b'$(C64_CFG_PORT)'.ljust(6,b'\0'))"
-	$(VICE_RUN) c1541 $(CFG_DISK) -write c64_client/build/user.cfg c64llm.cfg
+	$(VICE_RUN) c1541 $(CFG_DISK) -write c64_client/build/user.cfg llm64.cfg
 
 # The free (shareware) disk: identical contents plus the intro PRG as the
 # first file, so Run Disk boots the intro and the intro chain-loads the
 # client. Rule 1 applies as always - commit first, then build, or the
 # title-bar hash inside the disk is a lie.
 #
-# It lands in /Flash as c64llm-free.d64, beside the registered
-# c64llm.d64, so both stay bootable from the Ultimate's menu.
+# It lands in /Flash as llm64-free.d64, beside the registered
+# llm64.d64, so both stay bootable from the Ultimate's menu.
 #
 # NO inject-cfg here, deliberately. A shareware disk ships cfg-free and
 # meets its user with the config editor, so this target IS the new-user
@@ -175,9 +175,9 @@ deploy-c64u-disk-80-free:
 	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
 	$(MAKE) -C c64_client disk-free
 	@if [ "$(INJECT_CFG)" = "1" ]; then \
-	   $(MAKE) inject-cfg CFG_DISK=c64_client/build/c64llm-free.d64; \
+	   $(MAKE) inject-cfg CFG_DISK=c64_client/build/llm64-free.d64; \
 	 else echo "cfg-free: first boot opens the config editor (the new-user path)"; fi
-	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm-free.d64
+	$(PYTHON) emu/u64_telnet.py c64_client/build/llm64-free.d64
 
 # Same disk, built DIAG=1 (crash post-mortem block at $02A7, see
 # docs/07-crash-postmortem.md) and with a config already on it, so it
@@ -193,5 +193,5 @@ deploy-c64u-disk-80-diag:
 	@# magic C6 01, then host[32] and port[6], NUL-padded. Digits and
 	@# dots are identical in PETSCII and ASCII, so no conversion needed.
 	$(PYTHON) -c "open('c64_client/build/user.cfg','wb').write(b'\x00\x10\xc6\x01'+b'$(C64_CFG_HOST)'.ljust(32,b'\0')+b'$(C64_CFG_PORT)'.ljust(6,b'\0'))"
-	$(VICE_RUN) c1541 c64_client/build/c64llm.d64 -write c64_client/build/user.cfg c64llm.cfg
-	$(PYTHON) emu/u64_telnet.py c64_client/build/c64llm.d64
+	$(VICE_RUN) c1541 c64_client/build/llm64.d64 -write c64_client/build/user.cfg llm64.cfg
+	$(PYTHON) emu/u64_telnet.py c64_client/build/llm64.d64

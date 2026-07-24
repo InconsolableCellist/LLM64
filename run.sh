@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-stop launcher for the C64 LLM stack.
+# One-stop launcher for the LLM64 stack.
 #
 #   ./run.sh proxy       start the proxy in the foreground (Ctrl-C stops)
 #   ./run.sh proxy-bg    start the proxy in the background (log: proxy-live.log)
@@ -15,7 +15,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-PY=c64llm_proxy/.venv/bin/python
+PY=llm64_proxy/.venv/bin/python
 [ -x "$PY" ] || PY=python3
 
 proxy_running() { ss -tln 2>/dev/null | grep -q ":6400 "; }
@@ -23,15 +23,15 @@ mlboy_proxy_up() { timeout 3 bash -c "exec 3<>/dev/tcp/192.168.1.21/6400" 2>/dev
 
 case "${1:-help}" in
   proxy)
-    cd c64llm_proxy && exec "${PY#c64llm_proxy/}" -m src.main --host 0.0.0.0 --port 6400
+    cd llm64_proxy && exec "${PY#llm64_proxy/}" -m src.main --host 0.0.0.0 --port 6400
     ;;
   proxy-bg)
     proxy_running && { echo "proxy already running on :6400"; exit 0; }
-    (cd c64llm_proxy && setsid nohup "${PY#c64llm_proxy/}" -m src.main \
+    (cd llm64_proxy && setsid nohup "${PY#llm64_proxy/}" -m src.main \
         --host 0.0.0.0 --port 6400 > proxy-live.log 2>&1 < /dev/null &)
     sleep 2
-    proxy_running && echo "proxy started on :6400 (log: c64llm_proxy/proxy-live.log)" \
-                  || { echo "proxy failed to start - see c64llm_proxy/proxy-live.log"; exit 1; }
+    proxy_running && echo "proxy started on :6400 (log: llm64_proxy/proxy-live.log)" \
+                  || { echo "proxy failed to start - see llm64_proxy/proxy-live.log"; exit 1; }
     ;;
   c64)
     mlboy_proxy_up || echo "warning: mlboy proxy (192.168.1.21:6400) unreachable"
@@ -44,9 +44,9 @@ case "${1:-help}" in
   install)
     make -C c64_client clean
     make -C c64_client CONNECT=hayes SERVER_IP=192.168.1.21 MODE80=1
-    curl -sS --max-time 20 -T c64_client/build/c64llm.prg \
-        "ftp://192.168.1.64/Flash/c64llm.prg" --user anonymous:
-    echo "installed to /Flash/c64llm.prg (run it from the Ultimate menu)"
+    curl -sS --max-time 20 -T c64_client/build/llm64.prg \
+        "ftp://192.168.1.64/Flash/llm64.prg" --user anonymous:
+    echo "installed to /Flash/llm64.prg (run it from the Ultimate menu)"
     ;;
   emu)
     proxy_running || "$0" proxy-bg

@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - Scripted debug session (build with DEBUG_CLIENT=1)
+ * LLM64 Client - Scripted debug session (build with DEBUG_CLIENT=1)
  *
  * Runs a fixed connect -> PING -> new conversation -> chat -> stream
  * sequence with on-screen diagnostics. The automated e2e tests drive this
@@ -83,7 +83,7 @@ void init_screen(void) {
 
     /* Title */
     gotoxy(0, 0);
-    cputs("C64 LLM CLIENT v0.1 - DEBUG MODE");
+    cputs("LLM64 CLIENT v0.1 - DEBUG MODE");
     
     /* Server info */
     gotoxy(0, 1);

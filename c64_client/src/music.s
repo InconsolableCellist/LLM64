@@ -1,5 +1,5 @@
 ;
-; C64 LLM Client - SID music player
+; LLM64 Client - SID music player
 ;
 ; Drives a streamed SID relocated server-side (sidreloc) into the
 ; $B000-$BFFF window, with zero page confined to $FB-$FE so it coexists

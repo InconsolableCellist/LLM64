@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - disk copy (overlay module #3)
+ * LLM64 Client - disk copy (overlay module #3)
  *
  * Copies this distribution's files (client, modules, config) from the
  * boot drive to another drive over the IEC bus - the machine
@@ -66,13 +66,13 @@ static const char S_ANYKEY[] = "  any key returns to chat";
 /* The names are named arrays for the same reason as the messages above:
    as anonymous literals in an initializer they land in resident RODATA,
    and only the pointer table would have moved into the overlay. */
-static const char F0[] = "c64llm";
-static const char F1[] = "c64llm.1";
-static const char F2[] = "c64llm.2";
-static const char F3[] = "c64llm.3";
-static const char F4[] = "c64llm.4";
-static const char F5[] = "c64llm.5";
-static const char FC[] = "c64llm.cfg";
+static const char F0[] = "llm64";
+static const char F1[] = "llm64.1";
+static const char F2[] = "llm64.2";
+static const char F3[] = "llm64.3";
+static const char F4[] = "llm64.4";
+static const char F5[] = "llm64.5";
+static const char FC[] = "llm64.cfg";
 static const char* const dk_files[DK_NFILES] = {
     F0, F1, F2, F3, F4, F5, FC
 };

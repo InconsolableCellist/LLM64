@@ -417,14 +417,14 @@ def test_make_backend():
     check("relative workflow resolves against config dir",
           be.workflow_path == Path(TMP) / "wf.json")
 
-    os.environ["C64LLM_IMG_FIXTURE"] = str(fixture)
+    os.environ["LLM64_IMG_FIXTURE"] = str(fixture)
     try:
         be = make_backend({"backend": "openai"}, TMP)
-        check("C64LLM_IMG_FIXTURE overrides the configured backend",
+        check("LLM64_IMG_FIXTURE overrides the configured backend",
               isinstance(be, FixtureBackend) and be.available())
         check("fixture returns the file", be.generate("x", "a") == PNG)
     finally:
-        del os.environ["C64LLM_IMG_FIXTURE"]
+        del os.environ["LLM64_IMG_FIXTURE"]
 
     be = make_backend({"backend": "fixture",
                        "fixture": {"path": str(fixture)}}, TMP)
@@ -507,7 +507,7 @@ def test_usage_log():
     parts = line.split("\t")
     check("three tab-separated fields", len(parts) == 3, line)
     check("backend and purpose recorded",
-          parts[1:] == ["comfyui", "c64llm/adventure"], line)
+          parts[1:] == ["comfyui", "llm64/adventure"], line)
 
 
 if __name__ == "__main__":

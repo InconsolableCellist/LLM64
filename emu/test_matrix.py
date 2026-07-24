@@ -84,7 +84,7 @@ def main():
             '-binarymonitor',
             '-binarymonitoraddress', f'ip4://127.0.0.1:{mon}',
             '-autostartprgmode', '1',
-            '-autostart', str(REPO / 'c64_client/build/c64llm.prg')])
+            '-autostart', str(REPO / 'c64_client/build/llm64.prg')])
         if not wait_for_port(mon, timeout=30):
             raise AssertionError('VICE monitor did not start')
         time.sleep(4)

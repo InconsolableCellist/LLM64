@@ -1,5 +1,5 @@
 /**
- * C64 LLM Client - Protocol Handler
+ * LLM64 Client - Protocol Handler
  */
 
 #ifndef PROTOCOL_H

@@ -120,8 +120,8 @@ def main():
             raise AssertionError('mock did not start')
         env = dict(os.environ, OPENAI_API_KEY='k', OPENAI_MODEL='mock',
                    OPENAI_API_BASE=f'http://127.0.0.1:{mock_port}/v1',
-                   C64LLM_CARDS_DIR=str(REPO / 'emu' / 'fixtures'),
-                   C64LLM_DATA_DIR=str(data_dir))
+                   LLM64_CARDS_DIR=str(REPO / 'emu' / 'fixtures'),
+                   LLM64_DATA_DIR=str(data_dir))
         pport = find_free_port()
         stack.start('proxy', [proxy_python(), '-m', 'src.main', '--host',
                               '127.0.0.1', '--port', str(pport)],
@@ -135,9 +135,9 @@ def main():
         # builds - mount a d64 carrying it
         d64 = artifacts / 'modules.d64'
         subprocess.run(
-            [*vice_tool('c1541'), '-format', 'c64llm,01', 'd64', str(d64),
-             '-write', str(REPO / 'c64_client/build/c64llm.prg.2'),
-             'c64llm.2'],
+            [*vice_tool('c1541'), '-format', 'llm64,01', 'd64', str(d64),
+             '-write', str(REPO / 'c64_client/build/llm64.prg.2'),
+             'llm64.2'],
             check=True, capture_output=True)
         mon_port = find_free_port()
         stack.start('vice', [
@@ -150,7 +150,7 @@ def main():
             '-binarymonitoraddress', f'ip4://127.0.0.1:{mon_port}',
             '-8', str(d64),
             '-autostartprgmode', '1',
-            '-autostart', str(REPO / 'c64_client/build/c64llm.prg')])
+            '-autostart', str(REPO / 'c64_client/build/llm64.prg')])
         if not wait_for_port(mon_port, timeout=30):
             raise AssertionError('VICE monitor did not start')
         time.sleep(4)

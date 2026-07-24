@@ -50,7 +50,7 @@ built-in modem provides over WiFi.
 make -C c64_client clean
 make -C c64_client CONNECT=hayes SERVER_IP=192.168.1.39 SERVER_PORT=6400
 
-# Copy build/c64llm.prg to the Ultimate however you like; with the
+# Copy build/llm64.prg to the Ultimate however you like; with the
 # Ultimate's FTP server enabled there's a shortcut:
 make -C c64_client upload C64_IP=<ultimate-ip>
 ```
@@ -58,11 +58,11 @@ make -C c64_client upload C64_IP=<ultimate-ip>
 Start the proxy on the Linux box (reachable from the C64's network):
 
 ```bash
-cd c64llm_proxy
+cd llm64_proxy
 .venv/bin/python -m src.main --host 0.0.0.0 --port 6400
 ```
 
-Then on the C64: load and run `C64LLM.PRG`. You should see the dial
+Then on the C64: load and run `LLM64.PRG`. You should see the dial
 sequence in the status bar, then "Ready. Type your message."
 
 ## If it doesn't connect
