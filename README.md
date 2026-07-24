@@ -299,12 +299,16 @@ Env overrides: `LLM64_PRINTER_BACKEND`, `LLM64_PRINTER_QUEUE`. A `cups`
 or `both` backend with no `cups_queue`, or an unknown backend name, logs a
 warning and falls back to `c64`.
 
-**Pictures.** `/print the picture` puts the conversation's last
+**Maps and pictures.** `/print the map` prints the adventure map from
+stored state — text, so it goes to either printer, drawn to each one's
+width. `/print the picture` puts the conversation's last
 illustration on the CUPS printer — the C64's own 16-colour, 160x200
 rendering decoded from the blob it displayed, not the source image the
 model painted, ordered-halftoned to 1-bit dots (`cups_pic_scale` printer
 dots per C64 pixel, default 4). The C64 printer can't do this: the IEC
-path is a text stream, so `backend = "c64"` refuses it.
+path is a text stream, so `backend = "c64"` refuses it. Both understand
+the obvious phrasings (`/print the last image`, `/print what you drew`),
+and `/print picture 2` counts the way `/pics` lists.
 
 #### Getting CUPS going (Raspberry Pi print bridge, or the proxy host itself)
 

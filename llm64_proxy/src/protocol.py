@@ -90,6 +90,13 @@ class ProtocolState(IntEnum):
     VALIDATING_CRC = 4
 
 
+def _body_at(body, width: int) -> str:
+    """A /print body, at the width the backend is about to lay out.
+    Text is the same at any width; the map is drawn to one (13.12), so a
+    callable body gets asked."""
+    return body(width) if callable(body) else body
+
+
 class ProtocolHandler:
     """Handles protocol message encoding/decoding"""
 
@@ -1195,7 +1202,7 @@ class ProtocolHandler:
         if printdoc.wants_pic(arg):
             self._print_busy = True
             try:
-                await self._print_picture()
+                await self._print_picture(arg)
             finally:
                 self._print_busy = False
             return
@@ -1203,9 +1210,24 @@ class ProtocolHandler:
         msgs = self.conv_manager.get_messages()
         adv_state = self.conv_manager.get_meta('adv_state')
         title, body = '', ''
+        wrap = True
         if not arg:
             # No title: a chat reply's first line is prose, not a heading
             body = printdoc.last_reply(msgs)
+        elif printdoc.wants_map(arg):
+            m = self.conv_manager.get_meta('adv_map')
+            if not (m or {}).get('rooms'):
+                await self._send_canned(
+                    "No map yet - the story has not moved you anywhere.")
+                return
+            # A width-taking body, because the map is DRAWN to a width
+            # rather than wrapped to one: render_ascii lays out its grid
+            # in the columns it is given, so each backend gets its own
+            # drawing instead of the same one folded (13.12). No title:
+            # render_ascii opens with its own "THE MAP - n places".
+            def body(width, _m=m):
+                return "\n".join(advmap.render_ascii(_m, width=width))
+            wrap = False
         elif printdoc.wants_sheet(arg) and adv_state:
             title = 'Character sheet'
             body = printdoc.render_sheet(
@@ -1228,22 +1250,26 @@ class ProtocolHandler:
 
         # Composed once, laid out per backend: the two printers are not
         # the same paper. Only the emptiness check needs a render here.
-        if not printdoc.finish(title, body, self.config.printer_width):
+        if not printdoc.finish(title,
+                               _body_at(body, self.config.printer_width),
+                               self.config.printer_width, wrap=wrap):
             await self._send_canned("Nothing to print.")
             return
         # Off the reader task: the job waits on ACKs only the reader can
         # dispatch (see _media_tasks)
-        self._spawn_media(self._print_job(title, body))
+        self._spawn_media(self._print_job(title, body, wrap))
 
-    async def _print_job(self, title: str, body: str):
+    async def _print_job(self, title: str, body, wrap: bool = True):
         """Deliver one composed document to every configured backend
         (docs/14 13): the C64's IEC printer, a CUPS queue on the proxy
         side, or both.
 
         Laid out once per backend rather than once per job: an MPS-803
-        page and an 80mm till roll are different paper, and the roll
-        holds about 34 columns where the C64's printer holds 78 (13.10).
-        Same title and body either way - only the wrap differs.
+        page and a narrow roll are different paper (13.10). `body` is
+        usually the text, but may be a callable taking the width - the
+        map is DRAWN to a column count rather than wrapped to one, so
+        each backend has to draw its own (13.12). `wrap` is False for
+        art, which must be clipped rather than reflowed.
 
         The two deliveries run one after the other rather than as
         parallel tasks. While the IEC job runs the client masks its
@@ -1262,17 +1288,19 @@ class ProtocolHandler:
         self._print_busy = True
         try:
             if backend in ('cups', 'both'):
+                w = self.config.printer_cups_width
                 await self._print_cups(printdoc.finish(
-                    title, body, self.config.printer_cups_width))
+                    title, _body_at(body, w), w, wrap=wrap))
             if backend in ('c64', 'both'):
+                w = self.config.printer_width
                 await self._send_print(printdoc.finish(
-                    title, body, self.config.printer_width))
+                    title, _body_at(body, w), w, wrap=wrap))
         finally:
             self._print_busy = False
 
-    async def _print_picture(self):
-        """/print the picture: the conversation's last illustration on
-        paper (printpic.py, docs/14 13.11).
+    async def _print_picture(self, arg: str = ''):
+        """/print the picture: an illustration on paper (printpic.py,
+        docs/14 13.11). The latest, or the one `arg` numbers.
 
         The CUPS leg only. The IEC path is a text stream to a KERNAL
         file - putting a bitmap through it would mean an MPS-803 graphics
@@ -1291,7 +1319,18 @@ class ProtocolHandler:
         if not pics:
             await self._send_canned("No picture in this conversation yet.")
             return
-        pic = pics[-1]
+        # "/print picture 2" counts the way /pics lists and /pic <n>
+        # re-displays - newest first, last nine. A bare ask means the
+        # latest, which is what "the last image" means too.
+        n = printdoc.pic_index(arg)
+        if n is None:
+            pic = pics[-1]
+        else:
+            listed = list(reversed(pics[-9:]))
+            if not 1 <= n <= len(listed):
+                await self._send_canned("No such picture. /pics lists them.")
+                return
+            pic = listed[n - 1]
         try:
             blob = self.images.blob_path(pic['stem']).read_bytes()
         except OSError:

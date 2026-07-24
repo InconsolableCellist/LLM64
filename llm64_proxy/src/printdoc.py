@@ -58,7 +58,17 @@ SHEET_RE = re.compile(r'\b(inventory|character|char|sheet|stats)\b', re.I)
 # SHEET_RE: "print a picture of my character" is a picture request, and
 # 'character' would otherwise claim it.
 PIC_RE = re.compile(
-    r'\b(pic|pics|picture|image|illustration|artwork|drawing)\b', re.I)
+    r'\b(pic|pics|picture|image|illustration|artwork|art|drawing|drawn|'
+    r'drew|painting|portrait|sketch|screenshot|photo)\b', re.I)
+
+# "/print picture 2" - the same numbering /pics shows and /pic <n>
+# re-displays, newest first. Bare = the latest.
+PIC_N_RE = re.compile(r'\b(\d+)\b')
+
+# "/print the map" - the adventure map, rendered from stored state.
+# ASCII art, so unlike a picture it prints on BOTH backends; it is the
+# character sheet's sibling, not the illustration's (docs/14 13.12).
+MAP_RE = re.compile(r'\bmaps?\b', re.I)
 
 # What the player's own words ask for, read off the /print argument.
 #
@@ -114,6 +124,19 @@ def wants_pic(arg: str) -> bool:
     """Does this /print argument ask for the picture rather than a
     document? Wins over wants_sheet when both match."""
     return bool(PIC_RE.search(arg or ''))
+
+
+def pic_index(arg: str):
+    """Which picture, in /pics numbering (1 = newest), or None for the
+    latest. 'the last image' is None, not 'last': there is no number in
+    it, and the latest is what it means anyway."""
+    hit = PIC_N_RE.search(arg or '')
+    return int(hit.group(1)) if hit else None
+
+
+def wants_map(arg: str) -> bool:
+    """Does this /print argument ask for the adventure map?"""
+    return bool(MAP_RE.search(arg or ''))
 
 
 def last_reply(msgs) -> str:
@@ -280,10 +303,18 @@ def _wrap(text: str, width: int):
     return lines
 
 
-def finish(title: str, body: str, width: int = 78, date: str = None) -> str:
-    """Header, rule, wrapped body, rule. Pure ASCII with \\n line ends -
-    exactly what the client's PETSCII mapping expects. Returns '' when
-    there is nothing to print."""
+def finish(title: str, body: str, width: int = 78, date: str = None,
+           wrap: bool = True) -> str:
+    """Header, rule, body, rule. Pure ASCII with \\n line ends - exactly
+    what the client's PETSCII mapping expects. Returns '' when there is
+    nothing to print.
+
+    wrap=False is for art rather than prose: the map is a grid, and
+    reflowing a grid destroys it. Overlong lines are then CLIPPED, not
+    folded - a map line that ran past the paper would come back on the
+    next row and read as a second corridor. Callers of the no-wrap path
+    render to the width they are given (advmap.render_ascii takes one),
+    so the clip is a guarantee, not the plan."""
     width = max(MIN_WIDTH, int(width))
     body = DIRECTIVE_RE.sub('', body or '').translate(UNICODE_TO_ASCII)
     title = DIRECTIVE_RE.sub('', title or '').translate(
@@ -297,5 +328,7 @@ def finish(title: str, body: str, width: int = 78, date: str = None) -> str:
     head.append(date if date is not None else time.strftime('%Y-%m-%d'))
     head.append(RULE * width)
 
-    out = '\n'.join(head + _wrap(body, width) + [RULE * width]) + '\n'
+    laid = (_wrap(body, width) if wrap else
+            [ln.rstrip()[:width] for ln in body.splitlines()])
+    out = '\n'.join(head + laid + [RULE * width]) + '\n'
     return out.encode('ascii', 'replace').decode('ascii')

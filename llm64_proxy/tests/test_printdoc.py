@@ -173,6 +173,43 @@ if not (printdoc.wants_pic('a picture of my character')
         and printdoc.wants_sheet('a picture of my character')):
     failures.append('the pic/sheet overlap case changed shape')
 
+# The natural-language surface: these are what a player actually types.
+for arg in ('the last image', 'that pic', 'the artwork', 'what you drew',
+            'the drawing', 'a sketch of the room', 'the painting',
+            'picture 2', 'the last picture'):
+    if not printdoc.wants_pic(arg):
+        failures.append(f"wants_pic({arg!r}) should be true")
+
+check('bare ask means the latest', printdoc.pic_index('the last image'), None)
+check('a number picks one', printdoc.pic_index('picture 2'), 2)
+check('no number, no index', printdoc.pic_index('the picture'), None)
+
+# The map is text, so unlike a picture it prints on either backend.
+for arg in ('the map', 'my map', 'maps'):
+    if not printdoc.wants_map(arg):
+        failures.append(f"wants_map({arg!r}) should be true")
+for arg in ('', 'the recipe', 'the picture'):
+    if printdoc.wants_map(arg):
+        failures.append(f"wants_map({arg!r}) should be false")
+
+# wrap=False is for art: a grid must be clipped, never reflowed, or a
+# line that overran the paper returns as a second corridor.
+grid = "+---+   +---+\n| 1 |---| 2 |\n+---+   +---+"
+out = printdoc.finish('', grid, width=13, date='2026-07-24', wrap=False)
+check('art keeps its rows', out.splitlines()[2:5], grid.splitlines())
+long_art = 'x' * 40
+clipped = printdoc.finish('', long_art, width=20, date='d', wrap=False)
+check('art is clipped, not folded',
+      [ln for ln in clipped.splitlines() if ln.startswith('x')], ['x' * 20])
+# ...while prose still wraps rather than losing its tail. (A single
+# unbroken 40-char token would NOT fold - _wrap keeps break_long_words
+# off on purpose - so this asserts with real words.)
+prose = 'the quick brown fox jumps over the lazy dog again'
+folded = printdoc.finish('', prose, width=20, date='d')
+body = [ln for ln in folded.splitlines()[2:-1]]
+check('prose still wraps', len(body) > 1, True)
+check('prose stays inside the page', [ln for ln in body if len(ln) > 20], [])
+
 check('split_title', printdoc.split_title("Fire Stew\n\n1. Brown it.\n"),
       ('Fire Stew', '1. Brown it.'))
 check('split_title strips a markdown heading',

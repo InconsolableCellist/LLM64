@@ -46,6 +46,11 @@ BODY = ('Brown the salted pork in a heavy pot, then add the onions and '
         'garlic until soft, stir in the paprika, and simmer for two hours.')
 
 
+async def _record(into, leg, doc):
+    """Stand-in for a delivery leg: keep the document it was handed."""
+    into.append((leg, doc))
+
+
 def run_job(backend):
     """Drive _print_job with both legs recorded. Returns the list of
     (leg, document) in delivery order."""
@@ -87,6 +92,46 @@ for leg, width in (('cups', 34), ('c64', 78)):
 words = {leg: doc.replace('-' * 78, '').replace('-' * 34, '').split()
          for leg, doc in docs.items()}
 check('both legs printed the same text', words['cups'], words['c64'])
+
+# --- a body that depends on the width (the map, 13.12) ----------------
+
+# The map is DRAWN to a column count, not wrapped to one, so each
+# backend has to draw its own - a callable body is how it finds out.
+asked = []
+
+
+def drawn(width):
+    asked.append(width)
+    return "+" + "-" * (width - 2) + "+\n|" + " " * (width - 2) + "|"
+
+
+h = ProtocolHandler.__new__(ProtocolHandler)
+h.config = FakeConfig()
+h._print_busy = False
+drawings = []
+h._print_cups = lambda doc: _record(drawings, 'cups', doc)
+h._send_print = lambda doc: _record(drawings, 'c64', doc)
+asyncio.run(h._print_job('Map', drawn, wrap=False))
+check('each backend drew its own map', sorted(asked), [34, 78])
+for leg, doc in drawings:
+    width = 34 if leg == 'cups' else 78
+    art = [ln for ln in doc.split('\n') if ln.startswith('+') or
+           ln.startswith('|')]
+    check(f'{leg} map drawn at {width}', {len(ln) for ln in art}, {width})
+
+# wrap=False must CLIP, not fold: a folded map line reads as a second
+# corridor. A body wider than the page proves which one happens.
+h2 = ProtocolHandler.__new__(ProtocolHandler)
+h2.config = FakeConfig()
+h2._print_busy = False
+clipped = []
+h2._print_cups = lambda doc: _record(clipped, 'cups', doc)
+h2._send_print = lambda doc: _record(clipped, 'c64', doc)
+asyncio.run(h2._print_job('', '#' * 100, wrap=False))
+for leg, doc in clipped:
+    width = 34 if leg == 'cups' else 78
+    check(f'{leg} clipped the overlong row',
+          [ln for ln in doc.split('\n') if ln.startswith('#')], ['#' * width])
 
 # --- routing ----------------------------------------------------------
 

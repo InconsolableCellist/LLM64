@@ -1185,3 +1185,42 @@ CPU, nothing in it awaits, and the reader task has ACKs to dispatch.
 `tests/test_printpic.py` pins the decode of both blob eras, the geometry,
 and the property that made ordered dithering the right choice — a flat
 C64 colour must come out as one repeating tile.
+
+**12. The map, and how much natural language `/print` understands
+(2026-07-24).** Two follow-ups from the first real session.
+
+**`/print the map`** renders the adventure map from stored state —
+`advmap.render_ascii` over `meta['adv_map']`, the same drawing `/map`
+puts on screen, minus the colour tags the client adds. No model call, so
+it is the character sheet's sibling rather than the illustration's: it is
+ASCII, so unlike a picture it prints on **both** backends.
+
+It needed two changes, and both are about the difference between prose
+and art:
+
+- **A map is drawn to a width, not wrapped to one.** `render_ascii`
+  takes a column count and lays its grid out inside it, so the two
+  backends cannot share one drawing the way they share one document.
+  `_print_job`'s `body` may now be a **callable taking the width**;
+  `_body_at` asks it once per leg. Text bodies are unchanged — they are
+  the same string at any width.
+- **`finish(..., wrap=False)` clips instead of folding.** Sending a grid
+  through `textwrap` destroys it, and a map row that overran the paper
+  would come back on the next line and read as a second corridor.
+  Clipping is a guarantee rather than the plan: the drawing was made to
+  fit the width it was given.
+
+**What `/print` recognises.** `wants_pic` covers what players actually
+type — *pic, pics, picture, image, illustration, artwork, art, drawing,
+drawn, drew, painting, portrait, sketch, screenshot, photo* — so
+`/print the last image` and `/print what you drew` both reach the
+picture path. A number in the argument selects one: `/print picture 2`
+counts the way `/pics` lists and `/pic <n>` re-displays (newest first,
+last nine), and a bare ask means the latest, which is also what "the
+last image" means. Order matters where the words overlap: picture is
+tested before sheet, so *"a picture of my character"* prints the
+illustration rather than a text character sheet; map is its own word.
+
+Everything else in an argument still goes to the model, which is the
+point — these fast paths exist so the obvious asks cost nothing, not to
+turn `/print` into a command grammar.
