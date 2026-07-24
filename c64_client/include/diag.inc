@@ -37,6 +37,10 @@ DIAG_TRAIL_MASK = 7
 .ifdef SOFT80
         .import __HIMEM__, __STACKSIZE__
 CANARY          = $A5
-CAN_START       = __HIMEM__ - __STACKSIZE__     ; $AA00: stack bottom
-CAN_END         = CAN_START + $0400             ; cover the deepest 1K
+CAN_START       = __HIMEM__ - __STACKSIZE__     ; $AC00: stack bottom
+; Cover the deepest 768 B of the 1K stack. Must stay well short of
+; __HIMEM__: diag_init's own callers have live frames at the top, and
+; the fill would scribble them (it did cover 1K when the stack was
+; 1.5K). Mirrored in emu/test_e2e.py CAN_END.
+CAN_END         = CAN_START + $0300
 .endif

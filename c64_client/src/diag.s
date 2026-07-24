@@ -16,10 +16,10 @@
 ;     the trail still names the last paths that ran, and PEEK reads it
 ;     straight out - see docs/crash-postmortem.md.
 ;
-; The C-stack canary is the other half. The stack ($AA00-$AFFF in the
+; The C-stack canary is the other half. The stack ($AC00-$AFFF in the
 ; soft-80 build) is already reserved, so pattern-filling it is free: the
 ; lowest byte still holding the pattern is the deepest the C stack ever
-; got. If that reaches $AA00 the stack has run into the overlay slot
+; got. If that reaches $AC00 the stack has run into the overlay slot
 ; below it, which is the leading theory for the crash.
 ;
 

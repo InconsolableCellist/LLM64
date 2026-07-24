@@ -10,7 +10,7 @@
 
 /* Which module is sitting in the slot right now ("llm64.N" -> 'N'),
    0 = unknown/nothing. Tracked here because module_load is the ONLY
-   writer of $9C00-$A9FF: the sole references to __OVERLAYSTART__ are
+   writer of $A000-$ABFF: the sole references to __OVERLAYSTART__ are
    this file, modslot.s and the linker config, so slot contents survive
    untouched between opens. */
 static uint8_t slot_owner;

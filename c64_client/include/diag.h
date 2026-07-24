@@ -29,7 +29,7 @@
 #define D_MODN    (*(volatile uint8_t*)(DIAG_BASE + 6))
 #define D_MODLAST (*(volatile uint8_t*)(DIAG_BASE + 7))
 #define D_TRAIL   ((volatile uint8_t*)(DIAG_BASE + 8))
-/* Deepest C stack seen, sampled in the IRQ. The canary at $AA00 cannot
+/* Deepest C stack seen, sampled in the IRQ. The canary at $AC00 cannot
    be read back after a crash - it sits under BASIC ROM - so the value
    is kept here in page 2, which PEEK can always see. */
 #define D_SPLO    (*(volatile uint8_t*)(DIAG_BASE + 16))

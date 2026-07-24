@@ -38,8 +38,8 @@ DIAG_BASE = 0x02A7
 DIAG_MAGIC = 0xC6
 CANARY = 0xA5
 STACK_TOP = 0xB000                  # __HIMEM__ in c64-soft80.cfg
-CAN_START = STACK_TOP - 0x0600      # $AA00, stack bottom (__STACKSIZE__)
-CAN_END = CAN_START + 0x0400        # canary covers the deepest 1K
+CAN_START = STACK_TOP - 0x0400      # $AC00, stack bottom (__STACKSIZE__)
+CAN_END = CAN_START + 0x0300        # canary covers the deepest 768 B
 CRUMB_NAMES = {
     0: '-', 1: 'BOOT',
     32: 'IMGSHOW', 33: 'IMGCLOSE', 34: 'IMGDONE',
@@ -1428,7 +1428,7 @@ def main():
                 raise AssertionError(
                     f'C stack reached ${CAN_START:04X} - overflowed into '
                     'the overlay module slot')
-            depth = STACK_TOP - CAN_START            # 1536: full stack
+            depth = STACK_TOP - CAN_START            # 1024: full stack
             if low == len(can):
                 print(f'  PASS: C-stack canary fully intact - peak use '
                       f'stayed under {STACK_TOP - CAN_END} of {depth} '
