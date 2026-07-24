@@ -35,6 +35,42 @@ MARKER = 'PRINTABLE DOCUMENT'
 # that needs no model at all.
 SHEET_RE = re.compile(r'\b(inventory|character|char|sheet|stats)\b', re.I)
 
+# What the player's own words ask for, read off the /print argument.
+#
+# Fidelity: by default a document is an EXTRACTION - everything on the
+# page was said in the conversation. But "/print please complete this
+# recipe" is a different job: the player is asking for the gaps to be
+# filled (the measurements nobody stated, the ingredient list that was
+# never written out), and refusing to invent would just reprint the
+# same holes. Only an explicit ask flips this - the default stays
+# faithful, because a printed page is easy to mistake for a record.
+SYNTH_RE = re.compile(
+    r'\b(finish|fill\s+(?:in|out)|flesh\s+out|expand|elaborat\w*|'
+    r'embellish|synthesi[sz]e|collate|compile|infer|missing|'
+    r'draft|invent|improvis\w*)\b', re.I)
+
+# "complete" is two different words. As a verb it asks for the gaps to
+# be filled ("please complete this recipe"); as an adjective it asks for
+# nothing to be left out ("the complete recipe"), which is extraction.
+# The object's determiner is what tells them apart.
+COMPLETE_VERB_RE = re.compile(
+    r'\bcomplet(?:e|ing)\s+(?:the|this|that|these|my|our|it\b)', re.I)
+
+# Length: paper has a page, and the model can't see it. "detailed" or
+# "one-page" asks for the sheet filled; "brief" asks for a note.
+FULL_RE = re.compile(
+    r'\b(detailed|detail|full|full-page|one[-\s]?page|whole\s+page|long|'
+    r'in[-\s]?depth|comprehensive|thorough|complete|exhaustive)\b', re.I)
+BRIEF_RE = re.compile(
+    r'\b(brief|briefly|short|shorter|summary|summari[sz]e[d]?|concise|'
+    r'terse|quick|one[-\s]?liner?|note)\b', re.I)
+
+# Roughly what fits a US-letter/A4 page at 6 lpi with the header and
+# rules taken off. The model is told lines, not tokens - it has no idea
+# how wide the paper is otherwise.
+FULL_LINES = 55
+BRIEF_LINES = 20
+
 # Belt and braces: stored replies have already been through the
 # directive filter, but a document must never carry [[STATE:...]] to
 # paper - it is the one text the player was never meant to read.
@@ -57,19 +93,72 @@ def last_reply(msgs) -> str:
     return ''
 
 
+def wants_synthesis(arg: str) -> bool:
+    """Has the player asked the model to fill the document's gaps rather
+    than only extract what was already said?"""
+    arg = arg or ''
+    return bool(SYNTH_RE.search(arg) or COMPLETE_VERB_RE.search(arg))
+
+
+def target_lines(arg: str):
+    """Printed lines the document should aim for, or None when the
+    player said nothing about length. 'brief' wins a tie: asking for
+    both is asking for the short version of something detailed."""
+    arg = arg or ''
+    if BRIEF_RE.search(arg):
+        return BRIEF_LINES
+    if FULL_RE.search(arg):
+        return FULL_LINES
+    return None
+
+
 def compose_question(arg: str, convo: str) -> str:
     """The one-shot question that asks the chat model to write the
     document. `convo` is the joined recent transcript (already
-    trimmed), `arg` the player's own words after /print."""
+    trimmed), `arg` the player's own words after /print.
+
+    Two things in `arg` steer it beyond naming the subject: a request to
+    complete or expand relaxes the extract-only rule, and a word about
+    length gives the model the page it cannot see. Neither fires unless
+    the player asked - a bare subject still gets today's faithful
+    extraction at whatever length the source runs to."""
+    synth = wants_synthesis(arg)
+    lines = target_lines(arg)
+
+    verb = "Compose" if synth else "Extract and compose"
+    if synth:
+        # Still anchored: what the conversation DID say is quoted, not
+        # paraphrased. Only the holes are the model's own work.
+        fidelity = (
+            "Keep every concrete detail (quantities, names, steps, "
+            "numbers) the conversation already gives exactly as it "
+            "appears. Where the document is incomplete, supply what is "
+            "missing - measurements, an ingredient or parts list, "
+            "omitted steps, times - so the page stands on its own "
+            "without the conversation. Do not contradict anything that "
+            "was said.")
+    else:
+        fidelity = (
+            "Keep every concrete detail (quantities, names, steps, "
+            "numbers) exactly as it appears; do not invent any.")
+
+    length = ''
+    if lines == BRIEF_LINES:
+        length = (f" Keep it under {BRIEF_LINES} lines - this is a note, "
+                  "not a report.")
+    elif lines == FULL_LINES:
+        length = (f" Fill the page: aim for about {FULL_LINES} lines of "
+                  "78 columns. Use the room for detail that earns it - "
+                  "complete steps, full lists - never padding or "
+                  "repetition.")
+
     return (
-        "Below is the latest part of a conversation. Extract and compose "
+        f"Below is the latest part of a conversation. {verb} "
         f"a {MARKER} from it for: {arg}\n"
         "Reply with ONLY the document: a short title on the first line, "
         "then its content. Plain text for a 1980s dot-matrix printer - "
         "no markdown, no bullets beyond '- ', no commentary before or "
-        "after, nothing addressed to the reader. Keep every concrete "
-        "detail (quantities, names, steps, numbers) exactly as it "
-        "appears; do not invent any.\n\n"
+        f"after, nothing addressed to the reader. {fidelity}{length}\n\n"
         "Conversation:\n" + convo)
 
 

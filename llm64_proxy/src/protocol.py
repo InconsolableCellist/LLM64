@@ -1100,13 +1100,18 @@ class ProtocolHandler:
         self.logger.info(f"Sent image ({len(blob)} bytes"
                          f"{', retry' if is_retry else ''})")
 
-    async def _ask_model(self, question: str, limit: int = 300) -> str:
-        """One-shot utility question to the chat model, plain text back."""
+    async def _ask_model(self, question: str, limit: int = 300,
+                         sampling: dict = None) -> str:
+        """One-shot utility question to the chat model, plain text back.
+
+        `sampling` overrides the configured generation settings for this
+        one call - /print needs a bigger max_tokens than a chat turn
+        wants to wait for."""
         out = ""
         try:
             async for kind, chunk in self.api_client.stream_chat(
                     [{'role': 'user', 'content': question}],
-                    system_prompt=None, sampling={},
+                    system_prompt=None, sampling=sampling or {},
                     model=self.model_override):
                 if kind != 'reasoning' and chunk:
                     out += chunk
@@ -1188,10 +1193,17 @@ class ProtocolHandler:
                 getattr(self.mode, 'background', ''))
         elif msgs:
             await self.send_status("Composing the document...")
-            convo = "\n".join(f"{m['role']}: {m['content'][:800]}"
+            # 4000 chars a message, not the 800 the scene prompt uses:
+            # the recipe being asked for IS one of these messages, and
+            # clipping it at 800 (about 10 printed lines) loses the tail
+            # of the document before the model can even see it.
+            convo = "\n".join(f"{m['role']}: {m['content'][:4000]}"
                               for m in msgs[-12:])
+            # limit must stay clear of printer_max_tokens or it would
+            # silently behead a page the model finished properly.
             title, body = printdoc.split_title(await self._ask_model(
-                printdoc.compose_question(arg, convo), limit=4000))
+                printdoc.compose_question(arg, convo), limit=12000,
+                sampling={'max_tokens': self.config.printer_max_tokens}))
 
         doc = printdoc.finish(title, body, self.config.printer_width)
         if not doc:

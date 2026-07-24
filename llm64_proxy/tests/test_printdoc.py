@@ -100,6 +100,51 @@ check_in('question carries the request', 'the complete recipe', q)
 check_in('question carries the transcript', 'user: hi', q)
 check_in('question forbids markdown', 'no markdown', q)
 
+# --- what the player's words steer ------------------------------------
+
+# Synthesis is opt-in: a printed page is easy to mistake for a record,
+# so the default stays a faithful extraction.
+for arg in ('please complete this recipe', 'fill in the missing steps',
+            'flesh out the plan', 'expand the notes', 'complete the recipe',
+            'collate what we discussed', 'the recipe, elaborated'):
+    if not printdoc.wants_synthesis(arg):
+        failures.append(f"wants_synthesis({arg!r}) should be true")
+# 'the complete recipe' is the ADJECTIVE - "leave nothing out", not
+# "invent what is absent". The determiner after the verb tells them apart.
+for arg in ('', 'the recipe', 'the complete recipe',
+            'a detailed one-page recipe with ingredients and steps'):
+    if printdoc.wants_synthesis(arg):
+        failures.append(f"wants_synthesis({arg!r}) should be false")
+
+check('no length asked for', printdoc.target_lines('the recipe'), None)
+check('detailed asks for a page',
+      printdoc.target_lines('detailed one-page recipe'), printdoc.FULL_LINES)
+check('brief asks for a note',
+      printdoc.target_lines('a brief summary'), printdoc.BRIEF_LINES)
+# Asking for both is asking for the short version of something detailed
+check('brief beats detailed',
+      printdoc.target_lines('a short version of the detailed plan'),
+      printdoc.BRIEF_LINES)
+
+# The extract-only clause must survive verbatim on the default path -
+# it is what keeps an unqualified /print honest.
+plain = printdoc.compose_question('the recipe', 'user: hi')
+check_in('plain document may not invent', 'do not invent any', plain)
+if 'lines' in plain:
+    failures.append('plain document should carry no length target')
+
+synth = printdoc.compose_question('please complete this recipe', 'user: hi')
+if 'do not invent any' in synth:
+    failures.append('a completion request must lift the no-invention rule')
+check_in('completion fills the gaps', 'supply what is missing', synth)
+check_in('completion stays anchored', 'Do not contradict', synth)
+
+full = printdoc.compose_question('a detailed recipe', 'user: hi')
+check_in('detailed states the target', '55 lines', full)
+check_in('detailed forbids padding', 'never padding', full)
+brief = printdoc.compose_question('a brief recipe', 'user: hi')
+check_in('brief states the target', 'under 20 lines', brief)
+
 check('split_title', printdoc.split_title("Fire Stew\n\n1. Brown it.\n"),
       ('Fire Stew', '1. Brown it.'))
 check('split_title strips a markdown heading',

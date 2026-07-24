@@ -474,6 +474,39 @@ Behavior spec for `_print_command` (in `protocol.py`, using these):
    this conversation for: {arg}. Plain text only, no markdown, no
    commentary, a short title on the first line." Feed the last ~12
    messages like `_derive_scene_prompt` does (`:1114-1118`).
+
+   **Amended (2026-07-24) — a document is not a chat turn.** As first
+   built, every one of these numbers was inherited from the interactive
+   path, and each one truncated the page independently:
+
+   - `api.max_tokens` (800 live) is tuned so a reply reaches the C64
+     fast. At 78 columns it runs dry near line 40 and stops mid-step
+     with `finish_reason: 'length'` — no error, just a short page. The
+     print path now passes its own `sampling={'max_tokens': ...}` from
+     **`[printer] max_tokens`** (default 2000, ~a full page with
+     headroom). `_ask_model` grew a `sampling` parameter for this;
+     chat, `/pic` and the caption call are untouched.
+   - The per-message context clip is **4000 chars** here, not the 800
+     `_derive_scene_prompt` uses. The document being asked for *is* one
+     of those messages; 800 chars is ~10 printed lines, so the tail was
+     lost before the model ever saw it.
+   - `limit=` on the reply is 12000 chars, kept clear of
+     `printer_max_tokens` so it can't behead a page the model finished.
+
+   The question itself now reads two things off `arg`, both opt-in
+   (`wants_synthesis()`, `target_lines()`):
+
+   - **Fidelity.** The default stays a strict extraction — "do not
+     invent any" is unchanged, because a printed page is easy to
+     mistake for a record. But an explicit ask to complete/fill in/
+     flesh out/collate (`SYNTH_RE`, plus `COMPLETE_VERB_RE` so *"please
+     complete this recipe"* synthesizes while *"the complete recipe"*
+     still only extracts) swaps in wording that supplies what's missing
+     — measurements, an ingredient list, omitted steps — while quoting
+     what was actually said and contradicting none of it.
+   - **Length.** "detailed"/"one-page" → aim for ~55 lines; "brief"/
+     "summary" → under 20. Neither word present → no length line at
+     all, i.e. exactly the original prompt. `brief` wins a tie.
 4. **`finish()`** (applied to all three): strip `[[...]]` directives
    (`re.sub(r'\[\[.*?\]\]', '', s, flags=re.S)` — stored text should
    already be clean, this is belt and braces), apply

@@ -101,6 +101,14 @@ class Config:
         printer = config.get('printer', {})
         self.printer_width = int(printer.get('width', 78))
         self.printer_formfeed = bool(printer.get('formfeed', True))
+        # A document is not a chat turn. api.max_tokens is tuned so a
+        # reply lands on the C64 quickly, which is right for play and far
+        # too short for paper: at 78 columns 800 tokens runs out around
+        # line 40, two thirds of a page, and stops mid-step with no error
+        # (finish_reason 'length'). /print gets its own budget - it is
+        # one deliberate command, not every turn, so the latency is the
+        # player's to spend.
+        self.printer_max_tokens = int(printer.get('max_tokens', 2000))
 
         # --- interaction modes -----------------------------------------
         modes = config.get('modes', {})

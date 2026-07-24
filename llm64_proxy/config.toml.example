@@ -91,3 +91,9 @@ width = 78
 # Eject the page when the job ends. The C64 Ultimate otherwise keeps a
 # partial page in its buffer until you use F5 -> Flush/Eject.
 formfeed = true
+# Generation budget for the document /print composes - deliberately NOT
+# api.max_tokens, which is kept small so ordinary replies reach the C64
+# fast. At 78 columns 800 tokens runs dry around line 40 and stops
+# mid-sentence with no error; 2000 covers a full page with headroom.
+# Costs a longer wait, but only on the one command that asked for paper.
+max_tokens = 2000
