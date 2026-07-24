@@ -1235,12 +1235,22 @@ class ProtocolHandler:
                 getattr(self.mode, 'background', ''))
         elif msgs:
             await self.send_status("Composing the document...")
+            # As much of the conversation as the model can actually
+            # hold, not a fixed dozen messages (13.13): "a detailed
+            # history of the story" is a normal thing to want on paper,
+            # and the old msgs[-12:] gave a 233-message adventure about
+            # six turns of itself. 3.5 chars a token is api_client's own
+            # estimate; the reserve is the reply plus the question's
+            # wording and the chat template's per-message overhead.
+            ctx = await self.api_client.context_window(
+                self.model_override or self.config.model)
+            budget = int(max(2000, (ctx - self.config.printer_max_tokens
+                                    - 1024)) * 3.5)
             # 4000 chars a message, not the 800 the scene prompt uses:
             # the recipe being asked for IS one of these messages, and
             # clipping it at 800 (about 10 printed lines) loses the tail
             # of the document before the model can even see it.
-            convo = "\n".join(f"{m['role']}: {m['content'][:4000]}"
-                              for m in msgs[-12:])
+            convo = printdoc.transcript(msgs, budget)
             # limit must stay clear of printer_max_tokens or it would
             # silently behead a page the model finished properly.
             title, body = printdoc.split_title(await self._ask_model(

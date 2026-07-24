@@ -1224,3 +1224,43 @@ illustration rather than a text character sheet; map is its own word.
 Everything else in an argument still goes to the model, which is the
 point — these fast paths exist so the obvious asks cost nothing, not to
 turn `/print` into a command grammar.
+
+**13. Two bugs behind one complaint: "I asked for a detailed history and
+got a character sheet" (2026-07-24).** Both were invisible from the C64,
+and the log told the whole story in two lines:
+
+```
+17:25:40  Chat request: /print summary of the story with critical characte...
+17:25:40  Spooled 341 chars        <- same second, no "Composing the document..."
+```
+
+**The fast path was too eager.** `SHEET_RE` matched the bare word
+*character* anywhere in the argument, so a plainly-a-document request was
+answered from stored `adv_state` JSON without the conversation ever being
+read. That failure is silent and total — the sheet renders fine, it is
+just not what was asked for, and it costs no model call so there is not
+even a pause to notice. `wants_sheet` now requires that nothing in the
+argument asks for a composed document (`DOC_RE`: summary, history, story,
+recap, account, chronicle, journal, log, timeline, events, narrative,
+transcript, report, happened, so far, write-up). The asymmetry is
+deliberate: being wrong towards the model costs one call, being wrong
+towards the fast path costs the answer.
+
+**And the composer could not have written that history anyway.** It fed
+the model `msgs[-12:]` — about six turns. The conversation in question
+had **233 messages**, so a request for "the story" saw 5% of it. A fixed
+message count was never right for a command whose whole purpose is
+putting a long thing on paper; `printdoc.transcript()` now fills a
+CHARACTER BUDGET taken from the model's own context window
+(`api_client.context_window`, minus the reply budget and template
+overhead, at its own 3.5 chars/token estimate), newest turns first, whole
+messages only. On the live 131k-token model that is the entire adventure;
+on an 8k model it is as much as fits. Re-running the exact request
+afterwards composed 1475 characters covering the whole arc — cell, mortar
+fragment, the sung light orb, the mind-palace, the void — from a
+conversation the composer previously saw six turns of.
+
+The general lesson for `/print`'s dispatch: **a deterministic shortcut
+must be sure, because it silently outranks the thing that would have
+been right.** Both the picture path (13.12) and the sheet path now yield
+when the argument says "document".

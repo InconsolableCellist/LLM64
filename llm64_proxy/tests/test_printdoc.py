@@ -92,6 +92,56 @@ for arg in ('', 'the complete recipe', 'characteristics of steel'):
     if printdoc.wants_sheet(arg):
         failures.append(f"wants_sheet({arg!r}) should be false")
 
+# The sheet path is DETERMINISTIC - it renders stored state and never
+# reads the conversation - so claiming a document request is a silent,
+# total failure: the player asked for a history and got a stat block in
+# the same second, with no model call (2026-07-24, docs/14 13.13).
+# These name a character AND ask for a document; the document wins.
+for arg in ('summary of the story with critical character details',
+            'a detailed history of my character',
+            'the story so far and my stats',
+            'an account of what happened to the characters',
+            'a recap with character notes',
+            'the adventure log with inventory changes'):
+    if printdoc.wants_sheet(arg):
+        failures.append(f"wants_sheet({arg!r}) must not take the fast path")
+# ...while the plain asks still do, or the fast path is pointless
+for arg in ('my inventory', 'character sheet', 'char', 'my stats',
+            'character info', 'the sheet'):
+    if not printdoc.wants_sheet(arg):
+        failures.append(f"wants_sheet({arg!r}) should still be true")
+
+# --- how much conversation the composer sees -------------------------
+
+# A fixed message count was the bug: "a detailed history" of a long
+# adventure saw six turns of it (13.13). The budget is characters, from
+# the model's context window.
+many = [{'role': 'user' if i % 2 == 0 else 'assistant',
+         'content': f'turn {i} ' + 'x' * 90} for i in range(200)]
+big = printdoc.transcript(many, 1_000_000)
+check('a large budget reads the whole conversation',
+      big.count('\n') + 1, 200)
+check('and keeps it in order', big.startswith('user: turn 0'), True)
+
+small = printdoc.transcript(many, 1000)
+check('a small budget keeps the NEWEST turns',
+      small.strip().endswith('x' * 90) and 'turn 199' in small, True)
+if 'turn 0 ' in small:
+    failures.append('a small budget should have dropped the oldest turns')
+check('the budget is respected', len(small) <= 1000, True)
+
+# Whole messages only - half a turn reads as the model being confused
+for line in printdoc.transcript(many, 1000).split('\n'):
+    if line and not line.startswith(('user: ', 'assistant: ')):
+        failures.append(f'transcript cut a message in half: {line[:40]!r}')
+
+# One message longer than the whole budget still gets printed, clipped
+# to per_msg: better a long turn than an empty document.
+huge = [{'role': 'user', 'content': 'y' * 50_000}]
+check('a single overlong turn survives',
+      len(printdoc.transcript(huge, 100)) <= 4000 + 6, True)
+check('transcript of nothing', printdoc.transcript([], 5000), '')
+
 # --- the composed question --------------------------------------------
 
 q = printdoc.compose_question('the complete recipe', 'user: hi')

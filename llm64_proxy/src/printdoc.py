@@ -53,6 +53,19 @@ SYSTEM = (
 # that needs no model at all.
 SHEET_RE = re.compile(r'\b(inventory|character|char|sheet|stats)\b', re.I)
 
+# ...but only when the request is ABOUT the sheet. These words mean
+# "compose this from the conversation" and outrank it, because the fast
+# path is deterministic: it renders stored state and never calls the
+# model, so a document request that merely mentions a character came
+# back as a character sheet in the same second it was typed - "/print
+# summary of the story with critical character details" (2026-07-24,
+# 13.13). Being wrong here is silent and total, where being wrong the
+# other way only costs a model call.
+DOC_RE = re.compile(
+    r'\b(summary|summarize|summarise|synopsis|history|story|tale|recap|'
+    r'account|chronicle|journal|diary|log|timeline|events|narrative|'
+    r'transcript|report|happened|so far|write[- ]?up)\b', re.I)
+
 # "/print the picture" - the conversation's last illustration on paper
 # instead of a document (printpic.py, docs/14 13.11). Checked BEFORE
 # SHEET_RE: "print a picture of my character" is a picture request, and
@@ -116,8 +129,14 @@ MIN_WIDTH = 20
 
 
 def wants_sheet(arg: str) -> bool:
-    """Does this /print argument ask for the character sheet?"""
-    return bool(SHEET_RE.search(arg or ''))
+    """Does this /print argument ask for the character sheet ITSELF?
+
+    'my inventory' and 'the character sheet' do. 'a summary of the story
+    with critical character details' does not - it names a character and
+    asks for a document, and the sheet path would answer it from stored
+    JSON without ever reading the conversation."""
+    arg = arg or ''
+    return bool(SHEET_RE.search(arg)) and not DOC_RE.search(arg)
 
 
 def wants_pic(arg: str) -> bool:
@@ -137,6 +156,30 @@ def pic_index(arg: str):
 def wants_map(arg: str) -> bool:
     """Does this /print argument ask for the adventure map?"""
     return bool(MAP_RE.search(arg or ''))
+
+
+def transcript(msgs, budget: int, per_msg: int = 4000) -> str:
+    """The recent conversation as one block, newest-first until `budget`
+    characters are spent, then put back in order.
+
+    Not a fixed number of messages. The composer used to take the last
+    12, which is about six turns - fine for "the recipe", useless for
+    "a detailed history of the story", which is exactly what a player
+    asks a printer for. A 233-message adventure got six turns of itself
+    and the document was thin for a reason no one could see (13.13).
+    The budget comes from the model's own context window, so a 131k
+    model reads the whole adventure and an 8k one reads what it can.
+
+    Whole messages only: half a turn reads as the model being confused
+    rather than the transcript being clipped."""
+    out, used = [], 0
+    for m in reversed(msgs or []):
+        line = f"{m['role']}: {m['content'][:per_msg]}"
+        if out and used + len(line) + 1 > budget:
+            break
+        out.append(line)
+        used += len(line) + 1
+    return "\n".join(reversed(out))
 
 
 def last_reply(msgs) -> str:
