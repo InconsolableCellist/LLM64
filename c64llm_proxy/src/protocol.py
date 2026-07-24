@@ -18,8 +18,9 @@ from .advsetup import (AdventureSetup, STAGES, ACT_QUICK,
                        ACT_THEME, ACT_BEGIN, ACT_LOAD)
 from .advtemplates import TemplateStore
 from . import advmap
+from . import printdoc
 from .scenecomp import compose_question
-from .markup import colorize_for_wire, split_safe
+from .markup import colorize_for_wire, split_safe, UNICODE_TO_ASCII
 from .markup import prompt_snippet as color_prompt_snippet
 from .images import ImageService
 from .imagegen import make_backend
@@ -69,18 +70,13 @@ class MessageType(IntEnum):
     MENU_LIST = 0x5E  # '^' - menu entries: [n][more] then
     #                   [key][label\0][cmd\0] each; cmd "!x" = client-local
     MUSIC_STOP = 0x61  # 'a' - silence a streamed SID (no ACK)
-
-
-# Common Unicode punctuation -> ASCII approximations, applied before the
-# ascii/replace encode so LLM typography doesn't become '?' on the C64.
-UNICODE_TO_ASCII = str.maketrans({
-    '‘': "'", '’': "'", '‚': "'", '‛': "'",
-    '“': '"', '”': '"', '„': '"',
-    '–': '-', '—': '-', '―': '-', '−': '-',
-    '…': '...', '•': '*', '·': '*',
-    ' ': ' ', '→': '->', '←': '<-',
-    '×': 'x', '÷': '/', '°': ' deg',
-})
+    PRINT_BEGIN = 0x62  # 'b' - [flags][nblocks]; open IEC device 4.
+    #                     flags bit0 = business charset (secondary
+    #                     address 7), bit1 = form feed before close
+    PRINT_DATA = 0x63  # 'c' - one block of ASCII text (<= 240 bytes);
+    #                    the client ACKs each one, and nothing else is
+    #                    on the wire while it prints (docs/14 §3)
+    PRINT_END = 0x64  # 'd' - close the channel
 
 
 class ProtocolState(IntEnum):
@@ -117,6 +113,10 @@ class ProtocolHandler:
         self._begin_ack = None
         # Window flow-control event (see _send_bulk_stream)
         self._flow_ack = None
+        # A print job is in flight: routes NAKs to the job (which aborts
+        # it) instead of into the image/SID retry logic
+        self._print_active = False
+        self._print_refused = False
         # Media sends triggered from the reader task must run as
         # background tasks: _send_begin waits for an ACK that only the
         # reader can dispatch, so awaiting it inline would deadlock
@@ -309,7 +309,17 @@ class ProtocolHandler:
                 # same congestion. Wait it out first, and allow two
                 # attempts (seen in the field: back-to-back retries
                 # failed identically).
-                if getattr(self, '_img_sent', False):
+                if self._print_active:
+                    # A print NAK is the client refusing the job (no
+                    # printer on the bus, or a write error mid-page).
+                    # Checked FIRST so it can never be misrouted into
+                    # the image/SID retry paths; the job's own wait is
+                    # released here and turns this into a status line.
+                    self._print_refused = True
+                    ev = self._begin_ack or self._flow_ack
+                    if ev is not None and not ev.is_set():
+                        ev.set()
+                elif getattr(self, '_img_sent', False):
                     # No auto-retry for images (user preference: work
                     # first time or fail visibly); /pic <n> re-sends
                     # from cache on demand
@@ -499,6 +509,7 @@ class ProtocolHandler:
                 "/pic [request|n] - illustrate scene / re-show pic n\n"
                 "/pics - list this conversation's pictures\n"
                 "/map [n|name] - the map / how to get there\n"
+                "/print [what] - hardcopy on the printer\n"
                 "/save [name] - checkpoint this conversation\n"
                 "/saves - list, /restore <n> - roll back\n"
                 "/history [page] - browse the full conversation\n"
@@ -748,6 +759,9 @@ class ProtocolHandler:
             else:
                 current = self.model_override or self.config.model
                 await self._send_canned(f"Current model: {current}")
+
+        elif cmd == 'print':
+            await self._print_command(arg)
 
         else:
             await self._send_canned(
@@ -1140,6 +1154,106 @@ class ProtocolHandler:
             "addressed to the player. Reply with only the caption. "
             "Scene: " + prompt, limit=100)
         return out.strip('"').strip() or prompt[:60]
+
+    # --- hardcopy: /print (docs/14) ------------------------------------
+
+    # 240 bytes fits the 512-byte buffers with room to spare and is ~4s
+    # of paper on a 60cps MPS-803 - well inside the client's ~43s
+    # watchdog, which its per-block ACK also keeps resetting.
+    PRINT_BLOCK = 240
+    PRINT_ACK_TIMEOUT = 30.0
+
+    async def _print_command(self, arg: str):
+        """/print [what]: compose a document and put it on paper.
+
+        Three sources, cheapest first (printdoc.py): a bare /print
+        reflows the last reply, an argument naming the character sheet
+        renders it from stored state, anything else asks the model to
+        extract the document from the conversation."""
+        arg = (arg or '').strip()
+        if self._print_active:
+            await self._send_canned("A print job is already running.")
+            return
+
+        msgs = self.conv_manager.get_messages()
+        adv_state = self.conv_manager.get_meta('adv_state')
+        title, body = '', ''
+        if not arg:
+            # No title: a chat reply's first line is prose, not a heading
+            body = printdoc.last_reply(msgs)
+        elif printdoc.wants_sheet(arg) and adv_state:
+            title = 'Character sheet'
+            body = printdoc.render_sheet(
+                adv_state, getattr(self.mode, 'character', ''),
+                getattr(self.mode, 'background', ''))
+        elif msgs:
+            await self.send_status("Composing the document...")
+            convo = "\n".join(f"{m['role']}: {m['content'][:800]}"
+                              for m in msgs[-12:])
+            title, body = printdoc.split_title(await self._ask_model(
+                printdoc.compose_question(arg, convo), limit=4000))
+
+        doc = printdoc.finish(title, body, self.config.printer_width)
+        if not doc:
+            await self._send_canned("Nothing to print.")
+            return
+        # Off the reader task: the job waits on ACKs only the reader can
+        # dispatch (see _media_tasks)
+        self._spawn_media(self._send_print(doc))
+
+    async def _send_print(self, doc: str):
+        """Drive one print job: BEGIN, a block at a time, END. Strictly
+        one frame in flight - the client masks serial RX for every IEC
+        write, so the wire must be silent while it prints (docs/14 3)."""
+        data = doc.encode('ascii', 'replace')
+        blocks = printdoc.blocks(data, self.PRINT_BLOCK)
+        # bit0: business charset (SA 7), so mixed case prints as chatted
+        flags = 0x01 | (0x02 if self.config.printer_formfeed else 0)
+        head = bytes([flags, min(len(blocks), 255)])
+        self._print_active = True
+        self._print_refused = False
+        try:
+            async with self._media_lock:
+                if not await self._send_begin(MessageType.PRINT_BEGIN,
+                                              head):
+                    await self.send_status("Printer not responding.")
+                    return
+                if self._print_refused:
+                    await self.send_status("No printer on the bus (dev 4).")
+                    return
+                for b in blocks:
+                    if not await self._print_block(MessageType.PRINT_DATA,
+                                                   b):
+                        return
+                if await self._print_block(MessageType.PRINT_END, b''):
+                    await self.send_status(
+                        f"Printed {doc.count(chr(10))} lines.")
+                    self.logger.info(
+                        f"Printed {len(data)} bytes in {len(blocks)} blocks")
+        finally:
+            self._print_active = False
+
+    async def _print_block(self, msg_type: MessageType,
+                           payload: bytes) -> bool:
+        """One frame, then silence until the client ACKs it. A timeout
+        or a NAK ABORTS the job rather than continuing (the bulk
+        stream's warn-and-continue would transmit into a client that is
+        printing with its serial RX masked)."""
+        self._flow_ack = asyncio.Event()
+        try:
+            await self._send_bulk(msg_type, payload)
+            await asyncio.wait_for(self._flow_ack.wait(),
+                                   self.PRINT_ACK_TIMEOUT)
+        except asyncio.TimeoutError:
+            self.logger.warning(f"{msg_type.name} not ACKed - job aborted")
+            await self.send_status("Printer stalled - job cancelled.")
+            return False
+        finally:
+            self._flow_ack = None
+        if self._print_refused:
+            await self.send_status("Printer error - job cancelled.")
+            return False
+        return True
 
     # The client's scrollback is the view, not the archive: /history pages
     # through the full stored conversation from the proxy, /find searches

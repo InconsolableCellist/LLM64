@@ -66,7 +66,20 @@ class MockHandler(BaseHTTPRequestHandler):
             import time as _t
             _t.sleep(120)
             return
-        if 'CURRENT SCENE FOR AN ILLUSTRATOR' in upper:
+        if 'PRINTABLE DOCUMENT' in upper:
+            # Hardcopy (docs/14): /print asks the model to extract and
+            # compose the document, so the composer's question lands
+            # here. First in the chain, like the scene branch below and
+            # for the same reason: the question embeds the transcript,
+            # which contains every keyword the other branches key on.
+            # Title on the first line, body under it - what finish()
+            # expects.
+            text = ("Grandma's Fire Stew\n"
+                    "Serves four adventurers.\n"
+                    "1. Brown the salted pork.\n"
+                    "2. Add root vegetables and stock.\n"
+                    "3. Simmer until the dragon calms.")
+        elif 'CURRENT SCENE FOR AN ILLUSTRATOR' in upper:
             # Scene composition (docs/13): /pic now asks the model to WRITE
             # the image prompt from game state instead of sending a
             # directive verbatim, so the derive step lands here. Return a

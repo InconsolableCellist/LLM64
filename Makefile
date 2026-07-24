@@ -99,6 +99,15 @@ client-tui-direct-80:
 test-emu-tui-80: client-tui-direct-80
 	$(PYTHON) emu/test_e2e.py --mode direct --tui --cols80 --proxy-port $(TESTPORT)
 
+# Same run with NOTHING on IEC device 4: /print must be refused at the
+# BEGIN handshake and leave the client usable, rather than sitting on a
+# channel that never opened (docs/14 §7.3). Not in test-all - it is the
+# whole 80-column suite again for one assertion; run it when the print
+# path changes.
+test-emu-print-fail: client-tui-direct-80
+	$(PYTHON) emu/test_e2e.py --mode direct --tui --cols80 --no-printer \
+		--proxy-port $(TESTPORT)
+
 # Same run against a DIAG=1 client, then read the crash post-mortem
 # block back out: proves the instrumentation records what the user will
 # PEEK after a drop to BASIC, and reports the C-stack high-water mark

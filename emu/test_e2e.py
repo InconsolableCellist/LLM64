@@ -225,10 +225,16 @@ def main():
     parser.add_argument('--diag', action='store_true',
                         help='Client built with DIAG=1: dump and assert the '
                              'crash post-mortem block + C-stack canary')
+    parser.add_argument('--no-printer', action='store_true',
+                        help='Leave device 4 off the IEC bus: /print must be '
+                             'refused cleanly instead of printing (docs/14)')
     args = parser.parse_args()
 
     artifacts = REPO / 'emu' / 'artifacts'
     artifacts.mkdir(parents=True, exist_ok=True)
+    # VICE APPENDS to the printer dump, so last run's page would satisfy
+    # this run's assertion. Start every run with an empty sheet.
+    (artifacts / 'printer4.txt').unlink(missing_ok=True)
 
     if not Path(args.prg).exists():
         sys.exit(f"PRG not found: {args.prg} (build it first)")
@@ -239,6 +245,7 @@ def main():
 
     stack = Stack(artifacts)
     status = 1
+    printer_flushed = False   # did the device-4 dump land before exit?
     try:
         # 1. Mock LLM (unless testing live)
         env = dict(os.environ)
@@ -332,6 +339,15 @@ def main():
         # 4. VICE. No warp in hayes mode: the client's AT-response timeouts
         # are cycle-based, but tcpser answers in wall-clock time, so a warped
         # C64 gives up long before the modem replies.
+        printer_args = (
+            # Nothing answering on device 4: the KERNAL OPEN fails with
+            # 'device not present' and the client must NAK the job
+            ['-devicebackend4', '0', '+busdevice4', '+trapdevice4']
+            if args.no_printer else
+            ['-devicebackend4', '1', '-busdevice4',
+             '-pr4drv', 'ascii', '-pr4output', 'text',
+             '-pr4txtdev', '0', '-prtxtdev1',
+             str(artifacts / 'printer4.txt')])
         mon_port = find_free_port()
         speed = [] if (args.mode == 'hayes' or args.no_warp) else ['-warp']
         disk8 = ['-8', str(d64_path)] if d64_path else []
@@ -346,6 +362,12 @@ def main():
             '-acia1irq', '2', '-myaciadev', '0',
             *rsdev, '-rsdev1baud', str(args.baud),
             *disk8,
+            # Printer hardcopy (docs/14): device 4 on the emulated IEC
+            # bus, dumped as plain text so the test can grep the page.
+            # Independent of drives 8/9 and the ACIA - nothing else is
+            # affected by having it always on. --no-printer takes it
+            # off the bus instead, for the refusal path.
+            *printer_args,
             '-binarymonitor',
             '-binarymonitoraddress', f'ip4://127.0.0.1:{mon_port}',
             '-exitscreenshot', str(artifacts / f'{args.mode}-final.png'),
@@ -425,6 +447,96 @@ def main():
                 wait_ready(monitor, 30, artifacts, f'{tag}-adventure-ready')
 
                 if args.cols80:
+                    # Printer hardcopy (docs/14). The proxy composes
+                    # a document and the client prints it a block at a
+                    # time to IEC device 4, which VICE dumps to
+                    # artifacts/printer4.txt (asserted after teardown).
+                    # Client-side this is soft-80 only, so the
+                    # 40-column pass skips it entirely.
+                    #
+                    # Every checkpoint here reads the STATUS ROW, not
+                    # the whole screen: both jobs end with the same
+                    # "Printed NN lines." and a whole-screen match would
+                    # let job 1's status satisfy job 2's wait (it did -
+                    # the /mode below then landed mid-job and was
+                    # swallowed as Busy).
+                    def wait_status(pattern, timeout, label):
+                        end = time.time() + timeout
+                        row = ''
+                        while time.time() < end:
+                            rows = monitor.screen_text().splitlines()
+                            row = (rows[24].lower() if len(rows) > 24
+                                   else '')
+                            if re.search(pattern, row):
+                                return row
+                            time.sleep(POLL_INTERVAL)
+                        (artifacts / f'fail-{label}.txt').write_text(
+                            monitor.screen_text())
+                        raise AssertionError(
+                            f'status row never matched {pattern!r} '
+                            f'({label}); it says {row!r}')
+
+                    # A print job ends with no CHAT_DONE, so only the
+                    # client's own state handling hands typing back.
+                    # /mode after each job proves it did: the reply puts
+                    # "Ready." in the status row, while a client still
+                    # stuck in the job answers "Busy - wait...".
+                    def assert_usable(label):
+                        monitor.keyboard_feed('/mode\r')
+                        wait_status(r'ready\.', 30, label)
+
+                    if args.no_printer:
+                        # No printer to print on. TWO refusals are
+                        # correct and which one you get depends on the
+                        # bus: a genuinely absent device fails the OPEN
+                        # (ST bit 7) and the client NAKs the BEGIN ->
+                        # "No printer on the bus"; VICE with
+                        # -devicebackend4 0 keeps device 4 ON the bus
+                        # with nothing behind it, so the OPEN succeeds
+                        # and the first cbm_write fails instead ->
+                        # "Printer error". What must hold either way is
+                        # that the job is abandoned and the client comes
+                        # back - not that it hangs on an open channel.
+                        monitor.keyboard_feed('/print the recipe\r')
+                        wait_status(r'no printer on the bus|printer error',
+                                    90, f'{tag}-print-none')
+                        assert_usable(f'{tag}-print-none-idle')
+                        print('  PASS: /print with no printer refuses the '
+                              'job and leaves the client usable')
+                    else:
+                        # "Printed NN lines." is the PROXY's closing
+                        # status, which only lands after the client
+                        # ACKed PRINT_END - the client's own "Printed."
+                        # would pass one handshake early.
+                        monitor.keyboard_feed('/print the recipe\r')
+                        wait_status(r'printed \d+ lines', 60,
+                                    f'{tag}-print')
+                        assert_usable(f'{tag}-print-idle')
+                        # ...then the character sheet, rendered from the
+                        # adventure's [[STATE]] block with no model call
+                        monitor.keyboard_feed('/print my inventory\r')
+                        wait_status(r'printed \d+ lines', 60,
+                                    f'{tag}-print-sheet')
+                        assert_usable(f'{tag}-print-sheet-idle')
+                        print('  PASS: /print ran both composer paths and '
+                              'left the client usable')
+
+                        # Whether VICE's ascii driver flushes mid-run
+                        # was UNVERIFIED (docs/14 2.2): try here, and if
+                        # the page has not landed leave it to the
+                        # post-teardown assert. Either way, record it.
+                        cap = artifacts / 'printer4.txt'
+                        deadline = time.time() + 10
+                        while time.time() < deadline and not printer_flushed:
+                            printer_flushed = (
+                                cap.exists()
+                                and 'fire stew' in cap.read_text(
+                                    errors='replace').lower())
+                            if not printer_flushed:
+                                time.sleep(1)
+                        print(f'  NOTE: VICE device-4 ascii driver flushes '
+                              f'mid-run: {printer_flushed}')
+
                     # Streamed SID: /music picks Pac-Man (only urgent tune
                     # in the fixture library) and the client starts playing
                     # it: music_state == $FF, play vector = Pac-Man's
@@ -1352,6 +1464,31 @@ def main():
                     f'cfg on disk wrong: magic={blob[:2].hex()} '
                     f'host={host!r} port={port!r} baud_idx={baud_idx!r}')
             print('  PASS: c64llm.cfg on the d64 holds the edited v2 config')
+
+        # Printer hardcopy (docs/14): what actually came out of IEC
+        # device 4. This is the only end-to-end proof of the whole
+        # chain - composer, ack-paced blocks, KERNAL write, PETSCII
+        # mapping - since nothing about a printed page shows on screen.
+        if args.tui and args.cols80 and not args.live and not args.no_printer:
+            cap = artifacts / 'printer4.txt'
+            page = cap.read_text(errors='replace') if cap.exists() else ''
+            low = page.lower()
+            for want in ("grandma's fire stew",       # composed title
+                         'brown the salted pork',     # composed body
+                         'patched gray cloak',        # sheet: appearance
+                         'inventory:'):               # sheet: layout
+                if want not in low:
+                    (artifacts / 'fail-printer.txt').write_text(page)
+                    raise AssertionError(
+                        f'{want!r} never reached the printer:\n{page[:800]}')
+            # Line ends: the client maps \n -> CR, so the capture must
+            # have real lines rather than one long run
+            if len(page.splitlines()) < 10:
+                raise AssertionError(
+                    f'printer capture has no line breaks:\n{page[:400]}')
+            print(f'  PASS: both documents printed to device 4 '
+                  f'({len(page.splitlines())} lines; mid-run flush: '
+                  f'{printer_flushed})')
 
         # The disk-copy module's target must hold the module files
         # (the main PRG isn't on the test's modules.d64, so it is

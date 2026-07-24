@@ -92,6 +92,16 @@ class Config:
             'C64LLM_WIRE_BAUD',
             config.get('serial', {}).get('wire_baud', 9600)))
 
+        # Hardcopy (/print, docs/14). `width` is the column the composed
+        # document wraps at - the printer's, not the screen's: an
+        # MPS-803 is 80 columns wide whichever mode the client is in.
+        # `formfeed` ejects the page when the job ends; the C64
+        # Ultimate's virtual printer otherwise holds a partial page in
+        # its buffer until the F5 menu flushes it.
+        printer = config.get('printer', {})
+        self.printer_width = int(printer.get('width', 78))
+        self.printer_formfeed = bool(printer.get('formfeed', True))
+
         # --- interaction modes -----------------------------------------
         modes = config.get('modes', {})
         self.user_name = modes.get('user_name', 'You')

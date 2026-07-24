@@ -150,6 +150,18 @@ typedef enum {
                                          so stopping goes through it -
                                          /music stop, and the jukebox's
                                          own stop key, both land here */
+#define MSG_PRINT_BEGIN         0x62  /* 'b' - open IEC device 4:
+                                         [flags][nblocks]. flags bit0 =
+                                         business charset (secondary
+                                         address 7), bit1 = form feed
+                                         before close. ACK when open,
+                                         NAK if there is no printer */
+#define MSG_PRINT_DATA          0x63  /* 'c' - one block of ASCII text
+                                         (<=240 bytes) to print. ACK per
+                                         block: the proxy sends nothing
+                                         else while we hold serial RX
+                                         paused for the IEC write */
+#define MSG_PRINT_END           0x64  /* 'd' - close the channel */
 
 /* Pseudo message type returned by proto_process_byte on checksum failure
    (not a wire value - chosen outside the protocol's type range) */

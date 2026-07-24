@@ -20,6 +20,17 @@ C64 only.
 
 import re
 
+# Common Unicode punctuation -> ASCII approximations, applied before the
+# ascii/replace encode so LLM typography doesn't become '?' on the C64.
+UNICODE_TO_ASCII = str.maketrans({
+    '‘': "'", '’': "'", '‚': "'", '‛': "'",
+    '“': '"', '”': '"', '„': '"',
+    '–': '-', '—': '-', '―': '-', '−': '-',
+    '…': '...', '•': '*', '·': '*',
+    ' ': ' ', '→': '->', '←': '<-',
+    '×': 'x', '÷': '/', '°': ' deg',
+})
+
 # Marker cells (docs/08 §2). 0x00 is unusable - payloads are C strings -
 # and 0x0A/0x0D stay newline/CR.
 M_CLOSE = 0x01

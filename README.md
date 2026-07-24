@@ -101,7 +101,8 @@ another drive, accessible in the F1 menu.
 
 `/help` on the C64 lists all slash commands: modes (`/chat`, `/adventure`,
 `/char`, `/code`), `/music <mood>`, `/pic [desc|n]`, `/pics`, `/history`,
-`/find`, `/findall`, `/save`, `/restore`, `/model`, `/stats`.
+`/find`, `/findall`, `/save`, `/restore`, `/model`, `/stats`,
+`/print [what]`.
 
 ## Installation
 
@@ -270,6 +271,11 @@ Some prompts to test with once the proxy is up:
   campfire`, `/pics`, `/pic 1` (re-show).
 - **Music:** `/music urgent`, `/music next`, `/music stop`, `/auto` (hand
   control back to the narrator).
+- **Printing:** `/print` puts the last reply on paper, `/print my
+  inventory` the character sheet, `/print the complete recipe`
+  whatever you ask for - composed on the proxy and printed through a
+  printer on IEC device 4 (a real MPS-803, the C64 Ultimate's virtual
+  printer, or VICE's). Soft-80 builds only.
 - **Claude Code:** `/code` (or `/code sonnet`) drives a coding-agent session
   from the C64, tool approvals answered at the prompt.
 - **Housekeeping:** `/save`, `/restore`, `/history`, `/find <text>`,

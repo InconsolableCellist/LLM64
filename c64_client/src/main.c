@@ -14,6 +14,7 @@
 #include <string.h>
 #include <conio.h>
 #include <c64.h>
+#include <cbm.h>
 #include "common.h"
 #include "serial.h"
 #include "protocol.h"
@@ -118,6 +119,15 @@ uint8_t img_shown;           /* displayed; next key dismisses */
 static uint8_t img_mc;       /* multicolor: VIC state to restore */
 static uint8_t img_d021_save;
 static uint16_t img_got, img_expect;
+
+/* Printer hardcopy (docs/14). The proxy composes the document and
+   sends it a block at a time, silent between blocks, because every
+   block is written to IEC device 4 with serial RX masked. */
+#define LFN_PRT 6            /* logical file (4 and 5 are disk copy's) */
+static uint8_t prt_active;   /* channel open, job in progress */
+static uint8_t prt_ff;       /* form feed before closing (BEGIN bit1) */
+static uint8_t prt_total;    /* blocks expected, for the progress line */
+static uint8_t prt_done;     /* blocks printed */
 
 /* Received-chunk bitmap (256-byte chunks; SID and image transfers never
    overlap so they share it). DATA frames carry their own offset, so a
@@ -582,6 +592,19 @@ static void sound_open(void) {
 static void menu_module_open(void) {
     if (!mod_open("c64llm.4", mod_menu_run)) menu_open();
 }
+
+/* End a print job: close the IEC channel, let the wire and the music go
+   again. Safe to call with serial RX already paused - the mask is a
+   flag, not a count, so the pause below is a no-op and the resume
+   unmasks exactly once. */
+static void prt_close(void) {
+    serial_rx_pause();
+    cbm_close(LFN_PRT);
+    serial_rx_resume();
+    music_hold_end();
+    prt_active = 0;
+    if (state == ST_LOADING) state = ST_IDLE;
+}
 #endif
 
 /* Parse a CONVERSATION_DATA frame: count, more, then [role text\0].
@@ -974,6 +997,100 @@ static void handle_message(uint8_t msg_type) {
             img_active = 0;
             if (state == ST_LOADING) state = ST_IDLE;
             break;
+        case MSG_PRINT_BEGIN: {
+            /* flags(1) nblocks(1). Open IEC device 4 and hold the tune
+               for the whole job: a streamed SID's play routine steals
+               cycle-counted time from bit-banged IEC (see mod_open). */
+            uint8_t* p = proto_get_payload(&proto);
+            uint8_t sa;
+            if (prt_active) {   /* a re-sent BEGIN: re-ACK, don't reopen */
+                proto_send_ack();
+                break;
+            }
+            if (proto_get_length(&proto) < 2) {
+                proto_send_nak();
+                break;
+            }
+            sa = (p[0] & 1) ? 7 : 0;   /* 7 = business (mixed case) */
+            prt_ff = (p[0] & 2) ? 1 : 0;
+            prt_total = p[1];
+            prt_done = 0;
+            /* Own the state for the whole job. NOT the SID/IMG
+               'if (state == ST_IDLE)' test: those arrive unbidden while
+               the client is idle, but a print job is the answer to the
+               /print the user just typed, so the client is sitting in
+               ST_WAITING for a reply that never comes (no CHAT_DONE
+               ends a print). Without this the editor stays Busy until
+               the ~43s watchdog gives up on it. A live stream is left
+               alone - nothing sends a print into one. */
+            if (state != ST_STREAMING) {
+                state = ST_LOADING;   /* watchdog covers the job */
+                watchdog_reset();
+            }
+            music_hold_begin();
+            serial_rx_pause();
+            /* A KERNAL OPEN to a MISSING IEC device does not fail: it
+               returns cleanly and only sets ST bit 7 (device not
+               present), so without the READST the first cbm_write is
+               what discovers there is no printer - after the proxy has
+               already been told the job is on. Verified in VICE with
+               device 4 off the bus (make test-emu-print-fail). */
+            if (cbm_open(LFN_PRT, 4, sa, "") != 0
+                    || (cbm_k_readst() & 0x80)) {
+                /* prt_close does the whole unwind - close, unmask,
+                   free the tune, hand the editor back */
+                prt_close();
+                proto_send_nak();
+                ui_status("No printer on device 4.");
+                break;
+            }
+            serial_rx_resume();
+            prt_active = 1;
+            ui_status("Printing...");
+            proto_send_ack();
+            break;
+        }
+        case MSG_PRINT_DATA: {
+            /* One block of ASCII text, printed straight out of the
+               payload buffer (nothing else reads it afterwards) */
+            uint8_t* p = proto_get_payload(&proto);
+            uint16_t len = proto_get_length(&proto);
+            uint8_t* q;
+            if (!prt_active) break;   /* stray frame after an abort */
+            for (q = p; q < p + len; ++q)
+                *q = (*q == 0x0A) ? 0x0D : ascii_to_petscii(*q);
+            serial_rx_pause();
+            if (cbm_write(LFN_PRT, p, len) != (int)len) {
+                prt_close();
+                proto_send_nak();
+                ui_status("Printer error - job cancelled.");
+                break;
+            }
+            serial_rx_resume();
+            {
+                static char pm[16];
+                ++prt_done;
+                strcpy(pm, "Printing ??/??");
+                pm[9] = '0' + (prt_done / 10) % 10;
+                pm[10] = '0' + prt_done % 10;
+                pm[12] = '0' + (prt_total / 10) % 10;
+                pm[13] = '0' + prt_total % 10;
+                ui_status(pm);
+            }
+            watchdog_reset();
+            proto_send_ack();
+            break;
+        }
+        case MSG_PRINT_END: {
+            static const uint8_t ff = 0x0C;
+            if (!prt_active) break;
+            serial_rx_pause();
+            if (prt_ff) cbm_write(LFN_PRT, &ff, 1);
+            prt_close();              /* closes, unmasks, frees the tune */
+            ui_status("Printed.");
+            proto_send_ack();
+            break;
+        }
 #endif
         default:
             break;
@@ -1383,6 +1500,16 @@ int main(void) {
             uint8_t was_loading = (state == ST_LOADING);
             state = ST_IDLE;
 #ifdef SOFT80
+            if (prt_active) {
+                /* A print job went quiet. Unlike a media transfer there
+                   is nothing to resend - the proxy's own per-block
+                   timeout has already abandoned the job - so just close
+                   the channel and free the wire and the tune. */
+                prt_close();
+                proto_init(&proto, payload_buffer, MAX_PAYLOAD);
+                ui_status("Print job timed out.");
+                continue;
+            }
             if (sid_active || img_active) {  /* transfer lost its tail */
                 sid_active = 0;
                 if (img_active) {

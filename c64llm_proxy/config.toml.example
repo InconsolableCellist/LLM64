@@ -79,3 +79,15 @@ model = "gemini-2.5-flash-image"
 command = "claude"
 # Default project directory the agent works in
 workdir = "~/code"
+
+# Hardcopy: /print sends a composed document to a printer on IEC
+# device 4 (a real MPS-803, the C64 Ultimate's virtual printer, or
+# VICE's - docs/14-printer-hardcopy.md). Nothing to enable here; the
+# command works whenever the C64 has a printer on the bus.
+[printer]
+# Column the document wraps at - the PRINTER's width, not the screen's
+# (an MPS-803 is 80 columns whichever mode the client is in).
+width = 78
+# Eject the page when the job ends. The C64 Ultimate otherwise keeps a
+# partial page in its buffer until you use F5 -> Flush/Eject.
+formfeed = true
