@@ -112,4 +112,17 @@ cups_queue = ""
 cups_server = ""
 # Passed to lp as -o. 78 columns doesn't fit an A4 page at CUPS's 10 cpi
 # default; 12 cpi holds 87. Empty = whatever the queue defaults to.
+# A roll printer also needs its page size here, or CUPS renders a full
+# A4 width and the driver crops every line - for an 80mm till roll:
+# cups_options = "cpi=12 lpi=8 PageSize=Custom.204x842"
 cups_options = "cpi=12 lpi=8"
+# Columns for the CUPS leg alone. 0 = use `width` above, which is right
+# for an ordinary A4 printer. A roll printer is NOT 78 columns: an 80mm
+# head prints 576 dots = 72mm = ~34 columns at 12 cpi. Wrapping wide and
+# letting the driver crop loses the right-hand end of every line.
+cups_width = 0
+# Blank lines after the document. A till roll stops with its last line
+# inside the mechanism, below the tear bar, so tearing takes the end of
+# the page with it; ~5 lines at lpi=8 clears it. 0 for a page printer,
+# which ejects on its own.
+cups_feed_lines = 0

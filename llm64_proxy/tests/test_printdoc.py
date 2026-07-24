@@ -145,6 +145,18 @@ check_in('detailed forbids padding', 'never padding', full)
 brief = printdoc.compose_question('a brief recipe', 'user: hi')
 check_in('brief states the target', 'under 20 lines', brief)
 
+# The compose call must not run as the chat persona: stream_chat reads
+# system_prompt=None as "use the configured one", and the configured one
+# says to keep replies short for a 40-column screen. That produced
+# one-paragraph recipes on the live proxy no matter the token budget.
+check_in('a document is not a chat message', 'not a chat message',
+         printdoc.SYSTEM)
+check_in('length comes from the request', 'brevity is not a virtue',
+         printdoc.SYSTEM)
+if '40-column' not in printdoc.SYSTEM:
+    failures.append('the document prompt should say what it is NOT '
+                    'writing for')
+
 check('split_title', printdoc.split_title("Fire Stew\n\n1. Brown it.\n"),
       ('Fire Stew', '1. Brown it.'))
 check('split_title strips a markdown heading',

@@ -31,6 +31,24 @@ from .markup import UNICODE_TO_ASCII
 # on it (emu/mock_llm.py), so it must not drift.
 MARKER = 'PRINTABLE DOCUMENT'
 
+# The system prompt the compose call runs under, and the reason it must
+# exist at all: api_client.stream_chat reads system_prompt=None as "use
+# the configured one", so a document request inherited the CHAT prompt -
+# on this deployment "You are chatting with a user on a Commodore 64
+# with a 40-column screen. Keep replies short and conversational."
+# Asking that persona for a one-page recipe gets a one-paragraph recipe,
+# and no token budget fixes it: measured on the live proxy, a whole
+# story summary composed to 782 characters with printer max_tokens at
+# 2000. The page is not a chat turn and must not be written by the chat
+# persona (docs/14 13.9).
+SYSTEM = (
+    "You are composing a document that will be printed on paper. This "
+    "is not a chat message: nobody is reading it on a 40-column screen, "
+    "there is no conversation to continue, and nothing is addressed to "
+    "a reader. Write the document itself, in plain ASCII, at whatever "
+    "length the request asks for - brevity is not a virtue here."
+)
+
 # "/print my inventory", "/print the character sheet" - the fast path
 # that needs no model at all.
 SHEET_RE = re.compile(r'\b(inventory|character|char|sheet|stats)\b', re.I)

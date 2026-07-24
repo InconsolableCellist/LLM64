@@ -1051,3 +1051,87 @@ Four deltas, two of them bugs the plan walked into:
   `backend = "both"` would spool every test run's pages to real paper.
   `make test-emu-print-cups` uses them with a stub `lp` and device 4 off
   the bus; the other e2e targets pin `c64`.
+
+**9. First live CUPS session (2026-07-24) — three faults, one of them
+not ours.** The N80 on a Pi bridge printed, and printed badly: a line or
+two per job instead of a page, fragments of different documents arriving
+minutes apart and out of order. Three independent causes, worth keeping
+apart because only the middle one was a bug in this repo.
+
+- **Fragments, delays, wrong order: the Pi's USB port, not the queue.**
+  `dmesg` on the print host: 2041 `over-current change` events and 37
+  `usblp0` attach/detach cycles in under two hours. The thermal head's
+  peak draw browns out the port, the device drops off the bus
+  mid-transfer, and the backend fails — `Unable to send data to
+  printer`, `Backend usb returned status 1`. CUPS then retries each
+  failed job on a timer, so jobs 5, 7 and 8 took turns pushing a few
+  more centimetres of paper every few minutes. Nothing was buffered and
+  nothing was out of order: it was the same three jobs being re-sent.
+  A Pi 5 caps total USB current at 600 mA unless `usb_max_current_enable=1`
+  is set AND the supply advertises a 5 V/5 A PD profile (most 100 W
+  bricks offer 100 W only at 20 V and cap 5 V at 3 A). The fix is to
+  keep printer draw off the Pi's rail entirely: a powered hub, or the
+  printer on its own supply. **`lp` reporting success proves only that
+  cupsd accepted the job** — §13.6's debugging list is the whole
+  visibility this backend has, and this is exactly the case it warns
+  about.
+- **A line or two per job: the compose call was wearing the chat
+  persona.** `_ask_model` passed `system_prompt=None`, and
+  `api_client.stream_chat` reads None as "use the configured one" —
+  which on a live deployment is *"You are chatting with a user on a
+  Commodore 64 with a 40-column screen. Keep replies short and
+  conversational."* Every document was composed by the persona whose
+  entire job is brevity. The proxy log shows what that costs: a whole
+  story summary composed to 782 characters, a "detailed one-page recipe"
+  to 683. Raising `[printer] max_tokens` to 2000 that morning changed
+  nothing, because tokens were never the constraint — a strong evidence
+  point that a generation budget and a length *instruction* are
+  different levers, and the model obeys the instruction. `/print` now
+  passes `printdoc.SYSTEM`, which says the opposite in as many words:
+  this is paper, not a 40-column screen, and brevity is not a virtue.
+  `_ask_model` grew a `system_prompt` parameter; the scene and caption
+  calls keep the default (None), because they *are* chat-adjacent and
+  want the chat prompt's brevity.
+- **Cropped lines: 78 columns is the MPS-803's number, not the roll's.**
+  See §13.10.
+
+**10. Two printers, two page widths (`cups_width`).** `[printer] width`
+is the IEC printer's line — 78 columns, an MPS-803 on fanfold. An 80 mm
+till roll is not that paper: the N80's head is 576 dots at 203 dpi =
+72 mm = about **34 columns at 12 cpi**. Sending it a document wrapped at
+78 does not re-wrap; the vendor filter gets a raster wider than the head
+and the right-hand end of every line is simply gone.
+
+The queue's page size is the other half of the same mistake. The vendor
+PPD offers A4, Letter and a custom size, and A4 is the default — so
+every job was rendered 210 mm wide for a 72 mm head:
+
+```
+*DefaultPageSize: w595h842      # 210mm
+*DefaultResolution: 203dpi      # head = 576 dots = 72mm
+```
+
+So the composed document is now laid out **once per backend** rather
+than once per job: `_print_job` takes `(title, body)` and calls
+`printdoc.finish` with `printer_width` for the IEC leg and
+`printer_cups_width` for the CUPS leg. Same text, two wraps.
+`cups_width = 0` (the default) means "share `width`", which is right
+when the CUPS queue is an ordinary A4 printer — the roll case is the
+one that has to say so. For an 80 mm roll:
+
+```toml
+cups_width = 34
+cups_options = "cpi=12 lpi=8 PageSize=Custom.204x842"
+cups_feed_lines = 5
+```
+
+`cups_feed_lines` is the tear-off: a roll printer stops with its last
+line still inside the mechanism, below the tear bar, so tearing takes
+the end of your own document with it. Five blank lines at `lpi=8` is
+~16 mm, the usual head-to-bar gap. They go on the wire in
+`printcups.send`, not into the composed document — the IEC leg prints
+the same text and ejects its own way (`formfeed`). Default 0: a page
+printer ejects on its own, and trailing blanks near a page boundary
+would cost it a second sheet. If a driver trims trailing blank raster
+lines (some receipt drivers do), set the custom page height instead so
+the page itself ends past the bar.

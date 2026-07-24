@@ -82,6 +82,18 @@ check_in('argv reached lp', 'ARGS -d n80 -t llm64 -o cpi=12 -o lpi=8 -',
          captured)
 check('document reached lp intact', captured.split('\n', 1)[1], DOC)
 
+# The tear-off feed rides on the wire, not in the document: the same
+# composed text goes to the IEC leg, which ejects its own way.
+cap = stub_lp('cat > "@CAP@"\n')
+asyncio.run(printcups.send(DOC, 'n80', feed_lines=5))
+check('feed lines follow the document', cap.read_text(), DOC + '\n' * 5)
+cap = stub_lp('cat > "@CAP@"\n')
+asyncio.run(printcups.send(DOC, 'n80', feed_lines=0))
+check('no feed by default', cap.read_text(), DOC)
+cap = stub_lp('cat > "@CAP@"\n')
+asyncio.run(printcups.send(DOC, 'n80', feed_lines=-3))
+check('a negative feed is not a truncation', cap.read_text(), DOC)
+
 # A queue that does not exist: lp says so and exits nonzero. The C64 gets
 # three words; the log gets lp's whole sentence.
 stub_lp('echo "lp: Error - The printer or class does not exist." >&2\n'
@@ -145,7 +157,8 @@ else:
                        f'[printer]\n{table}\n')
         c = Config(str(cfg))
         return (c.printer_backend, c.printer_cups_queue,
-                c.printer_cups_server, c.printer_cups_options)
+                c.printer_cups_server, c.printer_cups_options,
+                c.printer_cups_width, c.printer_cups_feed)
 
     check('config default is the shipped IEC path', printer_cfg('')[0], 'c64')
     check('config cups', printer_cfg('backend = "cups"\n'
@@ -156,7 +169,7 @@ else:
     check('config bridge and options',
           printer_cfg('backend = "cups"\ncups_queue = "n80"\n'
                       'cups_server = "printpi.local:631"\n'
-                      'cups_options = ""')[2:],
+                      'cups_options = ""')[2:4],
           ('printpi.local:631', ''))
     check('config keeps the cpi default', printer_cfg('')[3], 'cpi=12 lpi=8')
     check('config junk backend falls back',
@@ -165,6 +178,17 @@ else:
           printer_cfg('backend = "cups"')[0], 'c64')
     check('config both without a queue falls back',
           printer_cfg('backend = "both"')[0], 'c64')
+
+    # The paper leg's own layout. 0 means "share the C64 printer's
+    # width" - the A4 case; a till roll sets its own and is not silently
+    # given 78 columns for the driver to crop (13.10).
+    check('cups width defaults to the shared one',
+          printer_cfg('width = 78')[4], 78)
+    check('cups width can differ from the C64 printer',
+          printer_cfg('width = 78\ncups_width = 34')[4], 34)
+    check('no tear-off feed unless asked', printer_cfg('')[5], 0)
+    check('tear-off feed configured',
+          printer_cfg('cups_feed_lines = 5')[5], 5)
 
 # --- report ------------------------------------------------------------
 

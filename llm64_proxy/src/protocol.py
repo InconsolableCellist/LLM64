@@ -1106,17 +1106,23 @@ class ProtocolHandler:
                          f"{', retry' if is_retry else ''})")
 
     async def _ask_model(self, question: str, limit: int = 300,
-                         sampling: dict = None) -> str:
+                         sampling: dict = None,
+                         system_prompt: str = None) -> str:
         """One-shot utility question to the chat model, plain text back.
 
         `sampling` overrides the configured generation settings for this
         one call - /print needs a bigger max_tokens than a chat turn
-        wants to wait for."""
+        wants to wait for.
+
+        `system_prompt` likewise: None keeps the configured chat prompt
+        (right for the scene and caption calls, which ARE chat-adjacent
+        and want its brevity), '' drops it, and a string replaces it.
+        /print passes its own - see printdoc.SYSTEM for why."""
         out = ""
         try:
             async for kind, chunk in self.api_client.stream_chat(
                     [{'role': 'user', 'content': question}],
-                    system_prompt=None, sampling=sampling or {},
+                    system_prompt=system_prompt, sampling=sampling or {},
                     model=self.model_override):
                 if kind != 'reasoning' and chunk:
                     out += chunk
@@ -1208,20 +1214,27 @@ class ProtocolHandler:
             # silently behead a page the model finished properly.
             title, body = printdoc.split_title(await self._ask_model(
                 printdoc.compose_question(arg, convo), limit=12000,
-                sampling={'max_tokens': self.config.printer_max_tokens}))
+                sampling={'max_tokens': self.config.printer_max_tokens},
+                system_prompt=printdoc.SYSTEM))
 
-        doc = printdoc.finish(title, body, self.config.printer_width)
-        if not doc:
+        # Composed once, laid out per backend: the two printers are not
+        # the same paper. Only the emptiness check needs a render here.
+        if not printdoc.finish(title, body, self.config.printer_width):
             await self._send_canned("Nothing to print.")
             return
         # Off the reader task: the job waits on ACKs only the reader can
         # dispatch (see _media_tasks)
-        self._spawn_media(self._print_job(doc))
+        self._spawn_media(self._print_job(title, body))
 
-    async def _print_job(self, doc: str):
+    async def _print_job(self, title: str, body: str):
         """Deliver one composed document to every configured backend
         (docs/14 13): the C64's IEC printer, a CUPS queue on the proxy
         side, or both.
+
+        Laid out once per backend rather than once per job: an MPS-803
+        page and an 80mm till roll are different paper, and the roll
+        holds about 34 columns where the C64's printer holds 78 (13.10).
+        Same title and body either way - only the wrap differs.
 
         The two deliveries run one after the other rather than as
         parallel tasks. While the IEC job runs the client masks its
@@ -1240,9 +1253,11 @@ class ProtocolHandler:
         self._print_busy = True
         try:
             if backend in ('cups', 'both'):
-                await self._print_cups(doc)
+                await self._print_cups(printdoc.finish(
+                    title, body, self.config.printer_cups_width))
             if backend in ('c64', 'both'):
-                await self._send_print(doc)
+                await self._send_print(printdoc.finish(
+                    title, body, self.config.printer_width))
         finally:
             self._print_busy = False
 
@@ -1265,7 +1280,8 @@ class ProtocolHandler:
         res = await printcups.send(
             doc, queue,
             server=self.config.printer_cups_server,
-            options=self.config.printer_cups_options)
+            options=self.config.printer_cups_options,
+            feed_lines=self.config.printer_cups_feed)
         if res.ok:
             await self._send_canned("Sent to the paper printer.")
             self.logger.info(

@@ -280,6 +280,19 @@ backend = "both"                     # c64 | cups | both
 cups_queue = "n80"                   # required for cups/both
 cups_server = "printpi.local:631"    # "" = a queue on this same host
 cups_options = "cpi=12 lpi=8"        # 78 columns needs 12 cpi to fit A4
+cups_width = 0                       # 0 = share `width`; a roll is narrower
+cups_feed_lines = 0                  # blank lines to clear a tear bar
+```
+
+**On a receipt/till roll** the defaults are wrong, because `width` is the
+C64 printer's line. An 80 mm head prints 576 dots at 203 dpi — 72 mm, about
+34 columns at 12 cpi — and a document wrapped at 78 is not re-wrapped by the
+driver, it is cropped. Give the paper leg its own layout:
+
+```toml
+cups_width = 34                                    # what actually fits
+cups_options = "cpi=12 lpi=8 PageSize=Custom.204x842"
+cups_feed_lines = 5                                # clears the tear bar
 ```
 
 Env overrides: `LLM64_PRINTER_BACKEND`, `LLM64_PRINTER_QUEUE`. A `cups`
@@ -342,6 +355,15 @@ IEC one as well). When it doesn't:
 - **The job says it printed but no page appeared** — a spooled job
   completes cleanly into a sleeping printer. Poke its power button, then
   check `lpstat -o` and `journalctl -u cups` on the print host.
+- **Bits of different documents dribble out minutes apart, out of order** —
+  the printer is dropping off the USB bus and CUPS is retrying each failed
+  job on a timer, so several jobs take turns printing fragments. Check
+  `dmesg | grep -c over-current` and `dmesg | grep usblp` on the print
+  host: a thermal head's peak draw browns out an unpowered port. Put the
+  printer on a powered hub or its own supply, then `cancel -a <queue>` to
+  clear the retry backlog. (A Pi 5 caps USB at 600 mA unless
+  `usb_max_current_enable=1` is set *and* the supply really offers 5 V/5 A —
+  most 100 W USB-C bricks only do 100 W at 20 V.)
 
 Full design, the N80 investigation, and the deltas from the original plan:
 [docs/14](docs/14-printer-hardcopy.md) §13.

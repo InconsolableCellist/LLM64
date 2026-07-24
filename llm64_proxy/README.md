@@ -43,7 +43,14 @@ backend = "cups"
 cups_queue = "n80"                   # required; else it falls back to c64
 cups_server = "printpi.local:631"    # "" = cupsd on this host
 cups_options = "cpi=12 lpi=8"        # 78 columns needs 12 cpi to fit A4
+cups_width = 0                       # 0 = share `width` (the C64 printer's)
+cups_feed_lines = 0                  # blank lines to clear a roll's tear bar
 ```
+
+`width` is the IEC printer's 78 columns. A till roll holds about 34 at
+12 cpi and the driver crops rather than re-wraps, so a roll wants
+`cups_width = 34`, `PageSize=Custom.204x842` in `cups_options`, and a few
+`cups_feed_lines` so the last line clears the tear bar.
 
 Requirements on THIS host: just `lp` (`apt install cups-client`, Arch
 `pacman -S cups`) - no printer driver, even when the printer is a

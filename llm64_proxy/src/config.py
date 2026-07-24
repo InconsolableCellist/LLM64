@@ -134,6 +134,18 @@ class Config:
         self.printer_cups_server = str(printer.get('cups_server', '')).strip()
         self.printer_cups_options = str(
             printer.get('cups_options', printcups.OPTIONS))
+        # The paper leg's own column count, because `width` is the C64's
+        # printer talking: 78 is the MPS-803's line. An 80mm till roll
+        # prints 576 dots = 72mm = about 34 columns at 12 cpi, and a
+        # document wrapped for the MPS-803 gets cropped by the thermal
+        # driver, not re-wrapped (docs/14 13.10). 0 = share `width`,
+        # which is right when the CUPS queue is an ordinary A4 printer.
+        self.printer_cups_width = int(
+            printer.get('cups_width', 0)) or self.printer_width
+        # Blank lines after the document so the last line clears a roll
+        # printer's tear bar (printcups.FEED_LINES).
+        self.printer_cups_feed = int(
+            printer.get('cups_feed_lines', printcups.FEED_LINES))
         # Misconfiguration falls back to the default backend rather than
         # failing at /print time: the C64 user is not the one who can fix
         # config.toml, and 'c64' is the one backend that needs no setup.

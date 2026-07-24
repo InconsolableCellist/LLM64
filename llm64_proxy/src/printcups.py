@@ -40,6 +40,14 @@ OPTIONS = 'cpi=12 lpi=8'
 # it every job is called "(stdin)".
 TITLE = 'llm64'
 
+# Blank lines added after the document so a roll printer's last line
+# clears the tear bar - on a receipt printer the bar sits above the head
+# and the end of the page stops inside the mechanism, so you tear
+# through the last line of your own recipe. Off by default: a page
+# printer ejects on its own and trailing blanks there risk a second
+# sheet. 5 lines at lpi=8 is about 16mm, the usual head-to-bar gap.
+FEED_LINES = 0
+
 # lp's own words, mapped to something that fits the C64's status row.
 # Anything unmatched falls back to the exit code and the log keeps the
 # full text - these are the three that actually happen.
@@ -77,7 +85,8 @@ def _reason(text: str, returncode: int) -> str:
 
 async def send(doc: str, queue: str, server: str = '',
                options: str = OPTIONS, title: str = TITLE,
-               timeout: float = TIMEOUT) -> Result:
+               timeout: float = TIMEOUT,
+               feed_lines: int = FEED_LINES) -> Result:
     """Spool `doc` to `queue`. Never raises and never blocks the reader
     task: every failure comes back as a Result whose `reason` is short
     enough for the C64's status row and whose `detail` carries lp's own
@@ -104,7 +113,9 @@ async def send(doc: str, queue: str, server: str = '',
     except OSError as exc:
         return Result(False, 'lp failed to start', str(exc))
 
-    data = doc.encode('ascii', 'replace')
+    # The feed goes on the wire, not into the composed document: the
+    # IEC leg prints the same document and has its own eject (formfeed).
+    data = (doc + '\n' * max(0, int(feed_lines))).encode('ascii', 'replace')
     try:
         out, _ = await asyncio.wait_for(proc.communicate(data), timeout)
     except asyncio.TimeoutError:
