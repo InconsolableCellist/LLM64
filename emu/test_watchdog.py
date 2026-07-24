@@ -2,12 +2,19 @@
 """Response-watchdog test: a request that never gets a reply must time out
 and return the client to Ready, rather than hanging forever.
 
-Two scenarios:
+Three scenarios:
   1. Chat: the mock (STALLTEST) accepts the request but never streams.
   2. Load: a relay between VICE and the proxy swallows the final (more=0)
      CONVERSATION_DATA frame of a bulk load - what the C64U modem does to
      the tail of a burst - so the client must time out, unfreeze the chat,
      and succeed on a retry.
+  3. Truncation: the relay chops the TAIL off one frame instead of
+     dropping it whole, which leaves the parser stuck mid-payload. With
+     the chat state machine idle the response watchdog never runs, so
+     without a parser-level resync the client swallows the head of every
+     later reply as this frame's payload and never recovers (field:
+     C64U session deaf for 20 minutes after a 126-of-204-byte frame).
+     The client must resync and the conversation list must arrive.
 
 The client is built with a short watchdog (WATCHDOG_UNITS=1, ~4s) so the
 test is quick.
@@ -29,17 +36,24 @@ from vice_monitor import ViceMonitor
 
 SYNC_BYTE = 0x42
 MSG_CONVERSATION_DATA = 0x54
+MSG_CONVERSATION_LIST = 0x53
 
 
 class FrameDropRelay(threading.Thread):
     """TCP relay VICE <-> proxy that drops the first CONVERSATION_DATA
-    frame carrying more=0 (payload byte 1), then forwards everything."""
+    frame carrying more=0 (payload byte 1), then forwards everything.
+
+    Set .truncate to a message type to chop the tail (and CRC) off the
+    next frame of that type instead - the C64U bridge's other failure
+    mode, which strands the client's parser mid-payload."""
 
     def __init__(self, listen_port, proxy_port):
         super().__init__(daemon=True)
         self.listen_port = listen_port
         self.proxy_port = proxy_port
         self.dropped = False
+        self.truncate = None
+        self.truncated = False
 
     def run(self):
         srv = socket.socket()
@@ -88,6 +102,17 @@ class FrameDropRelay(threading.Thread):
             self.dropped = True
             print('  relay: dropped final CONVERSATION_DATA frame')
             return b''
+        # The LAST frame of the reply (more bit clear), so nothing follows
+        # to flush the parser: a truncated frame mid-reply heals itself on
+        # the next frame's bytes, which is not the case being tested.
+        if (self.truncate is not None and frame[1] == self.truncate
+                and length >= 2 and (frame[4 + 1] & 1) == 0):
+            self.truncate = None
+            self.truncated = True
+            keep = 4 + length // 2      # header + half the payload, no CRC
+            print(f'  relay: truncated final {frame[1]:#04x} frame '
+                  f'to {keep}/{end} bytes')
+            return frame[:keep]
         return frame
 
 
@@ -185,6 +210,21 @@ def main():
         wait_for_screen(mon, r'conversation loaded', 60, artifacts,
                         'wd-load-retry')
         print('WATCHDOG load retry: PASS')
+
+        # Scenario 3 - truncation: the relay chops the tail off the list
+        # reply, stranding the parser mid-payload while the chat state
+        # machine is idle. The resident loop must resync it (nothing else
+        # ever will) and the manager must retry, or the modal sits at
+        # 'loading...' and every later reply is eaten as this frame's
+        # payload - the wedge seen on the C64U.
+        relay.truncate = MSG_CONVERSATION_LIST
+        mon.keyboard_feed_petscii(b'\x87')  # F5: conversation manager
+        wait_for_screen(mon, r'watchdog load fixture', 60, artifacts,
+                        'wd-truncate')
+        if not relay.truncated:
+            raise AssertionError('relay never truncated a frame - the '
+                                 'list arrived without being tested')
+        print('WATCHDOG truncated frame: PASS (resynced and retried)')
         status = 0
     except AssertionError as e:
         print(f'WATCHDOG: FAIL\n{e}', file=sys.stderr)

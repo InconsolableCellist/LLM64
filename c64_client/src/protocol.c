@@ -18,6 +18,11 @@ void proto_init(ProtoContext* ctx, uint8_t* payload_buffer, uint16_t buffer_size
     ctx->payload_max = buffer_size;
 }
 
+/* Is the parser part-way through a frame? */
+uint8_t proto_mid_frame(ProtoContext* ctx) {
+    return ctx->state != PROTO_SYNC_SEARCHING;
+}
+
 /* Calculate XOR checksum */
 uint8_t proto_calc_crc(uint8_t msg_type, uint16_t length, const uint8_t* payload) {
     uint8_t crc = msg_type;

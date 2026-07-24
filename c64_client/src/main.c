@@ -232,6 +232,18 @@ static void watchdog_reset(void) {
 static uint8_t watchdog_expired(void) {
     return (uint8_t)(sys_ticks[1] - watchdog_at) >= WATCHDOG_UNITS;
 }
+/* Separate, much shorter deadline for a parser left mid-frame: a whole
+   frame is under 0.3s on the wire, so several seconds of silence inside
+   one means its tail is gone for good. Deliberately not WATCHDOG_UNITS
+   (~43s) - an overlay module retries its own request in ~15s, and a
+   resync that landed AFTER that retry would eat the retry's reply too.
+   Two units rather than one: the high byte ticks on a fixed boundary,
+   so a single unit can expire microseconds after the last byte and
+   resync a frame that is merely in flight. */
+#define STALL_UNITS 2             /* * ~4.3s */
+static uint8_t watchdog_stalled(void) {
+    return (uint8_t)(sys_ticks[1] - watchdog_at) >= STALL_UNITS;
+}
 
 /* What the next ACK acknowledges */
 #define PA_NONE    0
@@ -1530,6 +1542,20 @@ int main(void) {
                 : "(no response - message may be lost; try again)");
             chat_finish();
             ui_status("Timed out. Ready.");
+        } else if (proto_mid_frame(&proto) && watchdog_stalled()) {
+            /* Half a frame arrived and the rest never did - the C64U
+               bridge drops the tail of a burst, and a truncated frame
+               leaves the parser mid-payload. With the state machine
+               already idle the watchdog above never runs, so nothing
+               clears it: the head of every LATER reply is swallowed as
+               this frame's payload and the session stays deaf forever
+               (field: a conversation load whose last frame arrived
+               126/204, then no traffic for 20 minutes). Resync.
+               Costs one lost frame, which the request that follows -
+               or its own retry - fetches again. */
+            proto_init(&proto, payload_buffer, MAX_PAYLOAD);
+            watchdog_reset();       /* one resync per silent stretch */
+            ui_status("Lost a frame - link resynced.");
         }
 #ifdef SOFT80
         /* Modules that have to keep moving without a key or a frame to

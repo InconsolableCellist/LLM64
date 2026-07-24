@@ -31,6 +31,10 @@ typedef struct {
  */
 void proto_init(ProtoContext* ctx, uint8_t* payload_buffer, uint16_t buffer_size);
 
+/* Is the parser part-way through a frame? A stalled one has to be
+   resynced by the caller - see the main loop's link watchdog. */
+uint8_t proto_mid_frame(ProtoContext* ctx);
+
 /**
  * Process one byte from serial (state machine)
  * Returns message type if complete message received, 0 otherwise

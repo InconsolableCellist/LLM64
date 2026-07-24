@@ -48,6 +48,8 @@ static const char S_DELCANC[] = "Delete cancelled.";
 static const char S_DELCONF[] = "Delete selected conversation? y = yes";
 static const char S_STARING[] = "Toggling star...";
 static const char S_READY[]  = "Ready.";
+static const char S_RETRYING[] = "No reply - retrying...";
+static const char S_NOREPLY[] = "No reply - close and reopen (f5).";
 
 #define MK_STOP    3
 #define ROW_FIRST  2   /* first list row (header is row 1) */
@@ -61,6 +63,19 @@ static const char S_READY[]  = "Ready.";
 static uint8_t page;
 static uint8_t pend;
 static uint8_t del_arm;   /* next key confirms the delete */
+
+/* Request timeout. Nothing here goes through the resident response
+   watchdog - that one only runs while the chat state machine is busy,
+   and a manager request leaves it idle - so a reply lost on the wire
+   (the C64U bridge drops burst tails) parked the modal at
+   'loading...' forever with no way out. ~15s: long enough that the
+   resident loop has already resynced a parser left mid-frame by a
+   truncated reply (STALL_UNITS in main.c), so the retry does not feed
+   its own reply to a jammed parser. */
+extern volatile uint8_t sys_ticks[2];
+#define REQ_UNITS  4      /* * ~4.3s (sys_ticks high byte) */
+static uint8_t req_at;    /* tick at the last request */
+static uint8_t req_retry; /* the automatic retry is already spent */
 
 static void mgr_row(uint8_t i) {
     ui_draw_row(ROW_FIRST + i, convs[i].title,
@@ -94,7 +109,39 @@ static void mgr_request(void) {
     conv_count = 0;
     conv_sel = 0;
     conv_loading = 1;
+    req_at = sys_ticks[1];
     proto_send_message(MSG_LIST_CONVERSATIONS, &page, 1);
+}
+
+/* A request the USER asked for: spends a fresh automatic retry. The
+   retry itself goes through mgr_request, so it can never re-arm. */
+static void mgr_fresh(void) {
+    req_retry = 0;
+    mgr_request();
+}
+
+/* Called from the resident main loop while the modal is open. */
+static void mgr_tick(void) {
+    if (!conv_loading && !pend) return;
+    if ((uint8_t)(sys_ticks[1] - req_at) < REQ_UNITS) return;
+    req_at = sys_ticks[1];
+    if (pend) {
+        /* Never repeat a delete or a star on its own: the server may
+           have done the work and lost only the ACK. Say so and let the
+           list refresh show what actually happened. */
+        pend = OP_NONE;
+        ui_status(S_NOREPLY);
+        return;
+    }
+    if (!req_retry) {
+        req_retry = 1;
+        mgr_request();
+        ui_status(S_RETRYING);
+        return;
+    }
+    conv_loading = 0;   /* stop claiming to be loading */
+    mgr_draw();
+    ui_status(S_NOREPLY);
 }
 
 static uint8_t mgr_msg(uint8_t t) {
@@ -104,7 +151,7 @@ static uint8_t mgr_msg(uint8_t t) {
             /* deleting the last entry of a tail page: step back */
             if (!conv_count && page) {
                 --page;
-                mgr_request();
+                mgr_fresh();
             }
             mgr_draw();
         }
@@ -114,7 +161,7 @@ static uint8_t mgr_msg(uint8_t t) {
         if (t == MSG_ACK) {
             ui_status(pend == OP_DELETE ? S_DELETED : S_STARRED);
             pend = OP_NONE;
-            mgr_request();
+            mgr_fresh();
             mgr_draw();
         } else {
             pend = OP_NONE;
@@ -131,6 +178,7 @@ static void mgr_key(uint8_t k) {
         del_arm = 0;
         if (k == 'y') {
             pend = OP_DELETE;
+            req_at = sys_ticks[1];
             proto_send_message(MSG_DELETE_CONVERSATION,
                                (uint8_t*)&convs[conv_sel].id, 4);
             ui_status(S_DELETING);
@@ -157,14 +205,14 @@ static void mgr_key(uint8_t k) {
         case KEY_CRSR_LEFT:
             if (page) {
                 --page;
-                mgr_request();
+                mgr_fresh();
                 mgr_draw();
             }
             break;
         case KEY_CRSR_RIGHT:
             if (conv_more_pages) {
                 ++page;
-                mgr_request();
+                mgr_fresh();
                 mgr_draw();
             }
             break;
@@ -202,7 +250,8 @@ void mod_convmgr_run(void) {
     pend = OP_NONE;
     del_arm = 0;
     mod_modal_begin(mgr_msg, mgr_key);
-    mgr_request();
+    mod_modal_tick(mgr_tick);   /* AFTER begin, which clears the hook */
+    mgr_fresh();
     mgr_draw();
 }
 
