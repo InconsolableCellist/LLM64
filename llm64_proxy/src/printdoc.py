@@ -53,6 +53,13 @@ SYSTEM = (
 # that needs no model at all.
 SHEET_RE = re.compile(r'\b(inventory|character|char|sheet|stats)\b', re.I)
 
+# "/print the picture" - the conversation's last illustration on paper
+# instead of a document (printpic.py, docs/14 13.11). Checked BEFORE
+# SHEET_RE: "print a picture of my character" is a picture request, and
+# 'character' would otherwise claim it.
+PIC_RE = re.compile(
+    r'\b(pic|pics|picture|image|illustration|artwork|drawing)\b', re.I)
+
 # What the player's own words ask for, read off the /print argument.
 #
 # Fidelity: by default a document is an EXTRACTION - everything on the
@@ -101,6 +108,12 @@ MIN_WIDTH = 20
 def wants_sheet(arg: str) -> bool:
     """Does this /print argument ask for the character sheet?"""
     return bool(SHEET_RE.search(arg or ''))
+
+
+def wants_pic(arg: str) -> bool:
+    """Does this /print argument ask for the picture rather than a
+    document? Wins over wants_sheet when both match."""
+    return bool(PIC_RE.search(arg or ''))
 
 
 def last_reply(msgs) -> str:

@@ -87,15 +87,27 @@ async def send(doc: str, queue: str, server: str = '',
                options: str = OPTIONS, title: str = TITLE,
                timeout: float = TIMEOUT,
                feed_lines: int = FEED_LINES) -> Result:
-    """Spool `doc` to `queue`. Never raises and never blocks the reader
-    task: every failure comes back as a Result whose `reason` is short
-    enough for the C64's status row and whose `detail` carries lp's own
-    words for the log.
+    """Spool the composed document `doc` to `queue`, with `feed_lines`
+    blank lines after it for a roll printer's tear bar.
 
     ok=True means CUPS ACCEPTED the job, which is as far as this can
     see - a printer that is asleep, out of paper or unplugged still
     spools cleanly (docs/14 13.6 lists where to look when a page never
     appears)."""
+    # The feed goes on the wire, not into the composed document: the
+    # IEC leg prints the same document and has its own eject (formfeed).
+    data = (doc + '\n' * max(0, int(feed_lines))).encode('ascii', 'replace')
+    return await send_bytes(data, queue, server, options, title, timeout)
+
+
+async def send_bytes(data: bytes, queue: str, server: str = '',
+                     options: str = OPTIONS, title: str = TITLE,
+                     timeout: float = TIMEOUT) -> Result:
+    """Spool arbitrary bytes - cupsd sniffs the type, so this takes a
+    PNG (printpic) as readily as text. Never raises and never blocks the
+    reader task: every failure comes back as a Result whose `reason` is
+    short enough for the C64's status row and whose `detail` carries
+    lp's own words for the log."""
     if not queue:
         return Result(False, 'no queue configured',
                       'printer.cups_queue is empty')
@@ -113,9 +125,6 @@ async def send(doc: str, queue: str, server: str = '',
     except OSError as exc:
         return Result(False, 'lp failed to start', str(exc))
 
-    # The feed goes on the wire, not into the composed document: the
-    # IEC leg prints the same document and has its own eject (formfeed).
-    data = (doc + '\n' * max(0, int(feed_lines))).encode('ascii', 'replace')
     try:
         out, _ = await asyncio.wait_for(proc.communicate(data), timeout)
     except asyncio.TimeoutError:

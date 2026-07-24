@@ -126,3 +126,11 @@ cups_width = 0
 # the page with it; ~5 lines at lpi=8 clears it. 0 for a page printer,
 # which ejects on its own.
 cups_feed_lines = 0
+# "/print the picture" puts the conversation's last illustration on the
+# CUPS printer (never the C64's - a bitmap is not a text stream).
+# scale = printer dots per C64 pixel: 4 is one ordered-halftone cell per
+# pixel and 6.3in wide at 203 dpi. Raise in steps of 4.
+cups_pic_scale = 4
+# The queue's real dot pitch. Stamped into the PNG and passed to lp as
+# `ppi`; if they disagree CUPS rescales and moires the halftone.
+cups_pic_dpi = 203

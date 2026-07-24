@@ -157,6 +157,22 @@ if '40-column' not in printdoc.SYSTEM:
     failures.append('the document prompt should say what it is NOT '
                     'writing for')
 
+# --- picture vs document ----------------------------------------------
+
+# /print the picture takes the illustration path, not the composer.
+for arg in ('the picture', 'pic', 'this image', 'the illustration',
+            'a picture of my character'):
+    if not printdoc.wants_pic(arg):
+        failures.append(f"wants_pic({arg!r}) should be true")
+for arg in ('', 'the recipe', 'my inventory', 'the story so far'):
+    if printdoc.wants_pic(arg):
+        failures.append(f"wants_pic({arg!r}) should be false")
+# Both match here, and the picture has to win - otherwise "print a
+# picture of my character" renders a text character sheet.
+if not (printdoc.wants_pic('a picture of my character')
+        and printdoc.wants_sheet('a picture of my character')):
+    failures.append('the pic/sheet overlap case changed shape')
+
 check('split_title', printdoc.split_title("Fire Stew\n\n1. Brown it.\n"),
       ('Fire Stew', '1. Brown it.'))
 check('split_title strips a markdown heading',

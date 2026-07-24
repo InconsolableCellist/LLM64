@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from . import printcups
+from . import printpic
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,16 @@ class Config:
         # printer's tear bar (printcups.FEED_LINES).
         self.printer_cups_feed = int(
             printer.get('cups_feed_lines', printcups.FEED_LINES))
+        # "/print the picture" (printpic.py, docs/14 13.11). scale is
+        # printer dots per C64 pixel - 4 puts a 320-wide picture at 6.3in
+        # on a 203 dpi head and keeps the halftone cell aligned to the
+        # pixel grid, so raise it in steps of 4. dpi must be the queue's
+        # real dot pitch: it is stamped into the PNG and passed to lp as
+        # `ppi`, and the two matching is what stops CUPS resampling the
+        # halftone into moire.
+        self.printer_pic_scale = int(
+            printer.get('cups_pic_scale', printpic.SCALE))
+        self.printer_pic_dpi = int(printer.get('cups_pic_dpi', printpic.DPI))
         # Misconfiguration falls back to the default backend rather than
         # failing at /print time: the C64 user is not the one who can fix
         # config.toml, and 'c64' is the one backend that needs no setup.

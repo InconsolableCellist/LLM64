@@ -20,6 +20,7 @@ from .advtemplates import TemplateStore
 from . import advmap
 from . import printdoc
 from . import printcups
+from . import printpic
 from .scenecomp import compose_question
 from .markup import colorize_for_wire, split_safe, UNICODE_TO_ASCII
 from .markup import prompt_snippet as color_prompt_snippet
@@ -1191,6 +1192,14 @@ class ProtocolHandler:
             await self._send_canned("A print job is already running.")
             return
 
+        if printdoc.wants_pic(arg):
+            self._print_busy = True
+            try:
+                await self._print_picture()
+            finally:
+                self._print_busy = False
+            return
+
         msgs = self.conv_manager.get_messages()
         adv_state = self.conv_manager.get_meta('adv_state')
         title, body = '', ''
@@ -1260,6 +1269,70 @@ class ProtocolHandler:
                     title, body, self.config.printer_width))
         finally:
             self._print_busy = False
+
+    async def _print_picture(self):
+        """/print the picture: the conversation's last illustration on
+        paper (printpic.py, docs/14 13.11).
+
+        The CUPS leg only. The IEC path is a text stream to a KERNAL
+        file - putting a bitmap through it would mean an MPS-803 graphics
+        mode the client knows nothing about - so with backend="c64" this
+        says so plainly rather than printing a page of garbage.
+
+        What goes on paper is the C64's own blob, the same bytes /pic
+        <n> re-streams to the screen, so the page shows the machine's
+        16-colour rendering rather than the source painting."""
+        if self.config.printer_backend == 'c64':
+            await self._send_canned(
+                "Pictures print on the paper printer only, and this "
+                "proxy is set to the C64's.")
+            return
+        pics = self.conv_manager.get_meta('images', [])
+        if not pics:
+            await self._send_canned("No picture in this conversation yet.")
+            return
+        pic = pics[-1]
+        try:
+            blob = self.images.blob_path(pic['stem']).read_bytes()
+        except OSError:
+            await self._send_canned("That picture's data is gone.")
+            return
+
+        await self.send_status("Rendering the picture...")
+        try:
+            # Over a million dots of thresholding: off the reader task,
+            # which has ACKs to dispatch (it is pure CPU, so a thread is
+            # enough - nothing here awaits).
+            png = await asyncio.to_thread(
+                printpic.render, blob, self.config.printer_pic_scale,
+                self.config.printer_pic_dpi)
+        except ValueError as exc:
+            await self._send_canned("That picture is in a format I "
+                                    "cannot print.")
+            self.logger.error(f"printpic could not decode "
+                              f"{pic['stem']}: {exc}")
+            return
+
+        # ppi must match the DPI stamped into the PNG or CUPS fits the
+        # image to the page, resampling the halftone against the
+        # printer's dot grid.
+        res = await printcups.send_bytes(
+            png, self.config.printer_cups_queue,
+            server=self.config.printer_cups_server,
+            options=f"{self.config.printer_cups_options} "
+                    f"ppi={self.config.printer_pic_dpi}".strip(),
+            title=printcups.TITLE + '-pic')
+        if res.ok:
+            await self._send_canned(
+                f"Sent the picture to the paper printer: "
+                f"{pic.get('caption') or pic['prompt'][:48]}")
+            self.logger.info(
+                f"Spooled picture {pic['stem']} ({len(png)} bytes PNG) to "
+                f"CUPS queue {self.config.printer_cups_queue!r}"
+                + (f": {res.detail}" if res.detail else ''))
+        else:
+            await self._send_canned(f"Paper print failed: {res.reason}")
+            self.logger.error(f"CUPS picture print failed: {res.detail}")
 
     async def _print_cups(self, doc: str):
         """The paper-printer leg (docs/14 13): the composed document into

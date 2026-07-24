@@ -1135,3 +1135,53 @@ printer ejects on its own, and trailing blanks near a page boundary
 would cost it a second sheet. If a driver trims trailing blank raster
 lines (some receipt drivers do), set the custom page height instead so
 the page itself ends past the bar.
+
+**11. Pictures on paper: `/print the picture` (2026-07-24).** The third
+thing `/print` can produce, after the composed document and the
+character sheet. `printpic.py` decodes the conversation's last
+illustration and `printcups.send_bytes` spools it as a PNG; the C64
+sends nothing but the command.
+
+**What gets printed is the blob, not the painting.** The proxy keeps
+both — the model's 1024×1024 source PNG and the 10001-byte blob the C64
+actually displays (8000 bitmap + 1000 screen + 1000 colour RAM + 1
+background). Printing the source would be printing something the player
+never saw; `imaging.render_preview_mc` turns the blob back into pixels,
+so the page carries the machine's own 16-colour, 160×200 rendering,
+caption band included. Hires-era blobs (9000 bytes) decode too, for the
+same reason `/pic <n>` still accepts them.
+
+**How colour becomes dots decided everything.** A thermal head is 1-bit.
+Three orders of operation were rendered and compared on paper:
+
+| | result |
+|---|---|
+| dither at 160×200, then enlarge | every flat colour area becomes coarse noise; the scene stops reading. Rejected from the digital proof before it cost paper. |
+| enlarge, then Floyd–Steinberg | good tonal range, but error diffusion still speckles areas the C64 drew as one flat colour |
+| enlarge, then **ordered 4×4 halftone** | **chosen.** Every pixel of the same colour gets the identical dot pattern, so flat stays flat and edges stay hard |
+
+At `cups_pic_scale = 4` the Bayer matrix is exactly one halftone cell per
+C64 pixel — the pixel grid and the dot grid line up instead of beating
+against each other, which is why the scale is an integer and why 4 is the
+default (it also puts a 320-wide picture at 6.3 in on a 203 dpi head).
+Raise it in steps of 4.
+
+`cups_pic_dpi` is stamped into the PNG **and** passed to `lp` as `ppi`.
+The two matching is what keeps CUPS from fitting the image to the page:
+any rescale resamples the halftone against the printer's own dot grid
+and moirés it.
+
+**`backend = "c64"` refuses this rather than trying.** The IEC path is a
+text stream through a KERNAL file; a bitmap would need an MPS-803
+graphics mode the client knows nothing about, so it says so instead of
+printing a page of garbage. Everything else about the routing is the
+document path's: the re-entry guard, a canned REPLY for the outcome
+(§13.8), the short reason on the C64 and `lp`'s own words in the log.
+The tear-off feed does not apply — blank lines are text, and the page
+ends at the page.
+
+Rendering a million-plus dots runs in `asyncio.to_thread`: it is pure
+CPU, nothing in it awaits, and the reader task has ACKs to dispatch.
+`tests/test_printpic.py` pins the decode of both blob eras, the geometry,
+and the property that made ordered dithering the right choice — a flat
+C64 colour must come out as one repeating tile.
