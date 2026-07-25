@@ -1,40 +1,49 @@
 # LLM64
 
-LLM64 is a Commodore 64 program that allows your real C64 to communicate and
-play games with a Large Language Model (LLM) like ChatGPT, Claude, or local
-models.
+LLM64 is a Commodore 64 program that allows you to play an infinite D&D style
+text adventure with a local (or remote) Large Language Model like Gemma 4, ChatGPT, 
+Claude, Grok, etc.
 
 ![Status](https://img.shields.io/badge/status-working-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-C64%20%2F%20VICE%20%2F%20C64%20Ultimate-red)
 ![Language](https://img.shields.io/badge/c64-C%2FASM%20(cc65)-orange)
 ![Language](https://img.shields.io/badge/proxy-Python%203.10%2B-green)
 
-It has four main modes:
+It has the following main features:
 
-1. Chat with the model directly
-2. Play fully interactive D&D style text adventures, with music and
-   AI-generated C64-style images
+1. Chat with an AI Assistant personality, the raw model, or with SillyTavern-compatible
+   character cards
+2. Play a fully interactive, custom, D&D style text adventure, with the narrator
+   streaming SID music, the occasional C64-style image, and keeping track of a map
 3. Integrate with Claude Code and drive the session (even updating itself!)
-4. Load SillyTavern-compatible Character Cards and chat/roleplay with
-   characters
+4. Intelligently print any content (e.g., "/print my character sheet" or 
+   "/print please give me a summary of the story so far, with plot points and
+   the result of combat" or "/print the complete recipe we just discussed")
 
-This is accomplished by loading the C64 program/modules from a disk on a real
-or emulated C64 (or C64U), and streaming data via a SwiftLink-compatible modem
-on $DE00 (NMI recommended) to the LLM64_Proxy running on a computer on your network.
+The program fits this all into RAM by breaking some features into modules, which 
+load from a real or emulated C64 disk drive. 
+
+The communication to the LLM happens, critically, through a proxy server that the C64
+must talk to via a SwiftLink-compatible userport MODEM (included in the C64U and Vice).
+
+Configuration settings are below, but set your MODEM to $DE00 with NMI. 9600, 19200, or 38400
+baud is supported (the proxy auto-detects your selected speed).
 
 ```
 ┌─────────────────┐         ┌──────────────┐         ┌──────────────────┐
 │  C64 / VICE /   │  TCP    │ Linux proxy  │  HTTPS  │ OpenAI-compatible│
 │  C64 Ultimate   │ ◄─────► │  (Python,    │ ◄─────► │ API (llama.cpp,  │
-│  TUI client     │ 19200bd │   asyncio)   │   SSE   │ OpenAI, Ollama…) │
+│                 │ 19200bd │   asyncio)   │   SSE   │ OpenAI, Ollama…) │
 └─────────────────┘         └──────────────┘         └──────────────────┘
 ```
 
 ## Using it
 
-You launch the program by mounting the disk image or real disk on your C64
-(`LOAD"*",8,1`), which then loads modules from that same disk. On initial
-startup it'll ask you for the IP address and port of the LLM64_Proxy running
+Launch the program by mounting the disk image or real disk on your C64
+(`LOAD"*",8,1`), which then loads modules from that same disk. A fastloader or 
+JiffyDOS is of course highly recommended. On initial startup it'll initialize
+your Hayes-compatible MODEM and then ask you for the IP address and port of 
+the LLM64_Proxy running
 on your network (you can change this later with the F1 menu). After
 connecting, you can hit F1 to browse the various features, or press F5 to
 quickly get to a sortable list of your past conversations/roleplays/
@@ -66,6 +75,8 @@ to indicate that the adventure-mode narrator should generate a picture for
 you now. Images are converted to C64 multicolor (160×200, Pepto palette,
 Floyd–Steinberg dither) with an LLM-written caption burned into the frame.
 
+You can browse past pictures associated with the current conversation using `/pics`
+
 ### Music
 
 With the F1 menu you can also browse and play SIDs, streamed from the proxy,
@@ -78,7 +89,10 @@ it's time for a new song or mood, and you can also control it with the
 jukebox or `/music`. Over 10,000 SIDs are available, across 15 moods. They're
 also preprocessed to reside at the proper address, and are volume normalized.
 
-### Everything else
+I've automated the assignment of moods based on the game title, but some of them
+are mis-sorted, which I'm working through (hopefully).
+
+### Conversations, Misc.
 
 All conversations are viewable on the LLM64_Proxy in the
 `data/conversations` directory.
@@ -103,6 +117,9 @@ another drive, accessible in the F1 menu.
 `/char`, `/code`), `/music <mood>`, `/pic [desc|n]`, `/pics`, `/history`,
 `/find`, `/findall`, `/save`, `/restore`, `/model`, `/stats`,
 `/print [what]`.
+
+LLM64 implements its own keyboard scanning that generally allows for
+n-key rollover and typing speed of around 150 WPM.
 
 ## Installation
 
@@ -129,32 +146,48 @@ Run it:
 --port 6400`). The proxy listens on TCP port 6400 by default.
 
 Point `[api]` in `config.toml` at any OpenAI-compatible Chat Completions
-endpoint — llama.cpp's `llama-server`, Ollama, LocalAI, or OpenAI itself.
+endpoint, such as llama.cpp's `llama-server`, LMStudio, Ollama (if you must),
+or OpenAI itself.
 Local servers need no API key. Claude is reached via `/code` mode instead,
 which drives the `claude` CLI on the proxy host (Claude Code must be
-installed and authenticated there).
+installed and authenticated there). 
 
 ### 2. The C64 side
 
-**Emulator (VICE):** prereqs are `cc65`, `vice` (x64sc), `python3`, and
+**Emulator (VICE):** 
+Nothing beats real hardware (which, arguably, a C64U still is), but VICE
+is a fine way to run this.
+
+You'll need `cc65`, `vice` (x64sc), `python3`, and
 `tcpser` for the Hayes-mode test. VICE can be a distro package or the
-`net.sf.VICE` flatpak — `emu/vice-run.sh` finds either.
+`net.sf.VICE` flatpak
 
 ```bash
-make test-all       # run the automated suites
-make run-live       # interactive TUI against your configured API
+make test-all       # run the automated suites (only needed for development)
+make run-live       # run
 ```
 
-**Real C64 Ultimate:**
+**C64 Ultimate:**
+This is certainly the easiest way to run the program while also being extremely
+authentic. The C64U comes with emulation/recreation of a SwiftLink userport
+MODEM. See **ACIA Setup** below for all settings.
+
+I also recommend enabling the FTP server on the C64U to make it easier to
+deploy the disk image, which you can do like so:
+
+1. Adjust your C64U IP in the Makefile, then
+2. Run:
 
 ```bash
 make deploy-c64u-disk-80   # build, make the d64, mount + run on the U64
 ```
 
+Or use an FTP client to copy the included .d64 disk image to your C64U's
+/Flash storage (or use another method, like putting it on a USB drive).
+
 Everything ships as one disk image: `make -C c64_client disk` produces
 `build/llm64.d64` holding the client (`LOAD"*",8,1` boots it) and the
-overlay modules. Mount it on the Ultimate's 1541 (JiffyDOS fastload applies)
-— or write it to a real floppy. On first boot the config editor asks for the
+overlay modules. On first boot the config editor asks for the
 proxy address and the wire speed, and saves `llm64.cfg` back onto the disk
 itself; from then on the disk carries its own settings (edit any time via
 F1 → E). The baked `SERVER_IP` is only the pre-filled default.
@@ -163,8 +196,8 @@ Note: the overlay modules are linked against their exact PRG — they always
 travel together on the disk, never mix builds.
 
 **ACIA setup** (Ultimate Cartridge/IO settings): SwiftLink-compatible 6551
-at **$DE00**, modem emulation on, and interrupt set to **NMI** (recommended
-— the client's NMI handler keeps draining the ACIA through disk loads and
+at **$DE00**, MODEM emulation on, and interrupt set to **NMI** (recommended, 
+as the client's NMI handler keeps draining the ACIA through disk loads and
 SID playback, which is what makes the higher rates reliable; IRQ works too
 and is what VICE uses). Modem settings that matter: disable *drop connection
 on DTR low* and *RTS handshake RX*, enable *automatic RX pushback* — the
@@ -179,11 +212,13 @@ Ultimate's modem side (it follows the ACIA) or on the proxy (the client
 reports its rate on connect and the proxy tunes its pacing to match). If a
 rate garbles or drops data on your cartridge/firmware, step it down and
 reboot. (On the VICE emulator there is no doubled crystal, so a setting runs
-at half its label; the harness accounts for that.)
+at half its label; the development test harness accounts for that.)
 
 Full checklist: [docs/05-ultimate-setup.md](docs/05-ultimate-setup.md).
 
 ## Configuration (proxy)
+
+Refer also to the included `config.toml.example`.
 
 `config.toml` sections (environment variables override the file):
 
@@ -243,33 +278,32 @@ it to `""` if your ComfyUI workflow carries its own style. Backends
 - **`fixture`** — a fixed local image, for tests.
 
 Minimum to get pictures: install Pillow (it's in requirements.txt), set
-`mode = "ask"`, and supply a Gemini key. Then `/pic a dragon over a burning
-village` on the C64.
+`mode = "ask"`, and supply a Gemini key. Then type `/pic a snake-like
+green dragon with one arm lover a burningi village` on the C64 to test.
 
 ### Music
 
-Music activates automatically when `data/sids/moods.json` exists — no config
-flag. The shipped library was produced by the pipeline in
-`llm64_proxy/tools/` (HVSC scan → `sidreloc` relocation into the protected
-$B000 window → LLM mood-tagging → loudness normalization → `sid_makedb`);
+Music activates automatically when `data/sids/moods.json` exists.
+The shipped library was produced by the pipeline in
+`llm64_proxy/tools/` (HVSC scan -> `sidreloc` relocation into the protected
+$B000 window -> LLM mood-tagging -> loudness normalization -> `sid_makedb`);
 `data/` is not in git, so from a clean clone you run the pipeline (needs an
 HVSC snapshot, `sidreloc`, and for loudness py65 + pyresidfp).
 
 ### Printing
 
-`/print` composes the document on the proxy and puts it on paper. Where the
-paper is depends on `[printer] backend`:
+`/print` composes the document on the proxy and sends it to the 
+`[printer] backend`:
 
-- **`c64`** (default) — the C64 prints it itself, through a printer on IEC
-  device 4: a real MPS-803, the Ultimate's built-in virtual printer, or
-  VICE's device-4 emulation. Nothing to install; on a C64 Ultimate the
-  virtual printer is **off by default** (F2 → Software IEC Settings → IEC
-  Drive and Printer = Enabled, see [docs/05](docs/05-ultimate-setup.md)).
-  Soft-80 client builds only.
-- **`cups`** — the proxy spools the document to a CUPS queue with `lp`
-  instead, and the C64 never touches a printer. This is also the way to
-  get `/print` with no C64 printer hardware at all.
-- **`both`** — one document, delivered to both.
+- **`c64`** (default): the C64 prints it itself, through a printer on IEC
+  device 4: a real MPS-80{1,2,3}, the Ultimate's built-in virtual printer, or
+  VICE's device-4 emulation. On a C64 Ultimate the
+  virtual printer is **off by default** 
+  See [docs/05](docs/05-ultimate-setup.md)).
+- **`cups`**: the proxy spools the document to a CUPS queue with `lp`
+  instead, so any modern printer is supported. I recommend the NDYIN L80
+  thermal A4 printer.
+- **`both`** 
 
 ```toml
 [printer]
