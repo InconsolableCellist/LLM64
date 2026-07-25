@@ -1,0 +1,36 @@
+# LLM64 launcher settings.  Copy to run.conf and edit:
+#
+#     cp run.conf.example run.conf
+#
+# run.conf is gitignored - it holds your addresses, not the project's.
+# Everything here can also be set per-invocation with an environment
+# variable (LLM64_PROXY_HOST=... ./run.sh emu-80), and the emulator
+# target can be overridden with an argument (./run.sh emu-80 host:port).
+# Precedence: argument, then environment, then this file, then defaults.
+
+
+# --- the proxy -------------------------------------------------------
+# Where the proxy is reachable. This is the machine running llm64_proxy,
+# usually the same one running your model. 127.0.0.1 means "this
+# computer" - use that if you run the proxy locally with ./run.sh proxy.
+#
+# The emulator connects here directly; a real C64 Ultimate dials here
+# through its modem, so for hardware it must be an address the C64 can
+# reach on its own network (a tailscale/VPN address will NOT work for
+# the C64 - it has no VPN - but is fine for the emulator).
+PROXY_HOST=127.0.0.1
+PROXY_PORT=6400
+
+
+# --- real C64 hardware (optional) ------------------------------------
+# Your C64 Ultimate's address on the network, used by ./run.sh c64,
+# c64-80 and install to upload and start the client. Leave empty if you
+# only ever run the emulator.
+C64U_HOST=
+
+
+# --- status reporting (optional) -------------------------------------
+# An ssh target for the machine running the proxy. If set, ./run.sh
+# status logs in and checks whether your C64 is actually connected to
+# it. Purely informational; leave empty to skip that check.
+PROXY_SSH=

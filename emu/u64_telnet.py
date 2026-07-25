@@ -186,6 +186,12 @@ def deploy_and_run(path, host='192.168.1.64'):
 
 
 if __name__ == '__main__':
+    import os
     import sys
+    # Address: argv[2], else $C64U_IP (what the Makefile passes down from
+    # run.conf), else the default above.
     deploy_and_run(sys.argv[1] if len(sys.argv) > 1
-                   else 'c64_client/build/llm64.prg')
+                   else 'c64_client/build/llm64.prg',
+                   *([sys.argv[2]] if len(sys.argv) > 2
+                     else [os.environ['C64U_IP']] if os.environ.get('C64U_IP')
+                     else []))

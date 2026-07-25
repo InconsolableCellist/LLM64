@@ -83,13 +83,18 @@ clean:
 	rm -rf emu/artifacts
 
 # Build for real hardware and run it on the C64 Ultimate over the network.
-# The proxy lives on mlboy (192.168.1.21), colocated with llama.cpp.
+#
+# Addresses: the C64 Ultimate to deploy to, and the proxy the client
+# dials (colocate the proxy with your model). ./run.sh reads both from
+# run.conf and passes them down, so set them there rather than editing
+# here; these defaults are only for calling make directly.
 C64U_IP ?= 192.168.1.64
 C64_PROXY_IP ?= 192.168.1.21
+C64_PROXY_PORT ?= 6400
 deploy-c64u:
 	$(MAKE) -C c64_client clean
-	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP)
-	$(PYTHON) emu/u64_telnet.py c64_client/build/llm64.prg
+	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) SERVER_PORT=$(C64_PROXY_PORT)
+	$(PYTHON) emu/u64_telnet.py c64_client/build/llm64.prg $(C64U_IP)
 
 # Soft-80-column variants
 client-tui-direct-80:
@@ -135,8 +140,8 @@ test-emu-diag:
 
 deploy-c64u-80:
 	$(MAKE) -C c64_client clean
-	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
-	$(PYTHON) emu/u64_telnet.py c64_client/build/llm64.prg
+	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) SERVER_PORT=$(C64_PROXY_PORT) MODE80=1
+	$(PYTHON) emu/u64_telnet.py c64_client/build/llm64.prg $(C64U_IP)
 
 # The canonical deploy: one d64 with the client + overlay module,
 # mounted on the Ultimate's 1541 (JiffyDOS fastload applies, config
@@ -150,11 +155,11 @@ deploy-c64u-80:
 deploy-c64u-disk-80: INJECT_CFG ?= 0
 deploy-c64u-disk-80:
 	$(MAKE) -C c64_client clean
-	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
+	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) SERVER_PORT=$(C64_PROXY_PORT) MODE80=1
 	$(MAKE) -C c64_client disk
 	@if [ "$(INJECT_CFG)" = "1" ]; then $(MAKE) inject-cfg; \
 	 else echo "INJECT_CFG=0: cfg-free, first boot opens the config editor"; fi
-	$(PYTHON) emu/u64_telnet.py c64_client/build/llm64.d64
+	$(PYTHON) emu/u64_telnet.py c64_client/build/llm64.d64 $(C64U_IP)
 
 # Write the maintainer's NetConfig into the freshly built disk. NOT for
 # distribution disks - those stay cfg-free by design so a new user meets
@@ -187,26 +192,26 @@ inject-cfg:
 deploy-c64u-disk-80-free: INJECT_CFG ?= 0
 deploy-c64u-disk-80-free:
 	$(MAKE) -C c64_client clean
-	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1
+	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) SERVER_PORT=$(C64_PROXY_PORT) MODE80=1
 	$(MAKE) -C c64_client disk-free
 	@if [ "$(INJECT_CFG)" = "1" ]; then \
 	   $(MAKE) inject-cfg CFG_DISK=c64_client/build/llm64-free.d64; \
 	 else echo "cfg-free: first boot opens the config editor (the new-user path)"; fi
-	$(PYTHON) emu/u64_telnet.py c64_client/build/llm64-free.d64
+	$(PYTHON) emu/u64_telnet.py c64_client/build/llm64-free.d64 $(C64U_IP)
 
 # Same disk, built DIAG=1 (crash post-mortem block at $02A7, see
 # docs/07-crash-postmortem.md) and with a config already on it, so it
 # boots straight to the chat instead of the first-run config editor.
 C64_CFG_HOST ?= $(C64_PROXY_IP)
-C64_CFG_PORT ?= 6400
+C64_CFG_PORT ?= $(C64_PROXY_PORT)
 
 deploy-c64u-disk-80-diag:
 	$(MAKE) -C c64_client clean
-	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) MODE80=1 DIAG=1
+	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) SERVER_PORT=$(C64_PROXY_PORT) MODE80=1 DIAG=1
 	$(MAKE) -C c64_client disk
 	@# NetConfig blob: 2 dummy bytes for the PRG header cbm_load skips,
 	@# magic C6 01, then host[32] and port[6], NUL-padded. Digits and
 	@# dots are identical in PETSCII and ASCII, so no conversion needed.
 	$(PYTHON) -c "open('c64_client/build/user.cfg','wb').write(b'\x00\x10\xc6\x01'+b'$(C64_CFG_HOST)'.ljust(32,b'\0')+b'$(C64_CFG_PORT)'.ljust(6,b'\0'))"
 	$(VICE_RUN) c1541 c64_client/build/llm64.d64 -write c64_client/build/user.cfg llm64.cfg
-	$(PYTHON) emu/u64_telnet.py c64_client/build/llm64.d64
+	$(PYTHON) emu/u64_telnet.py c64_client/build/llm64.d64 $(C64U_IP)

@@ -18,3 +18,6 @@ llm64_proxy/cards/
 
 # Scratch working notes
 *.tmp.txt
+
+# Launcher settings (addresses are yours, not the project's)
+run.conf
