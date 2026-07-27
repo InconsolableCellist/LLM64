@@ -6,6 +6,10 @@ sid_mood.py and emits moods.json — the proxy's music database. The PSID
 header is parsed for the relocated init/play/load addresses; the C64 data
 payload (what actually gets streamed to the client) stays in the .sid file
 and is extracted at send time.
+
+Human verdicts from tools/sid_review.py (src/sid_overrides.json) are applied
+last, so a rebuild never resurrects a tune someone blocked by ear or undoes
+a tag someone corrected.
 """
 
 import argparse
@@ -15,7 +19,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sid_reloc_batch import unique_name  # noqa: E402
+from src import sid_overrides  # noqa: E402
 
 
 def sid_header(path: Path) -> dict:
@@ -45,6 +51,9 @@ def main():
     ap.add_argument("--songlengths", type=Path,
                     help="durations JSON from sid_songlengths.py: adds a "
                          "'secs' field for the sound window's progress bar")
+    ap.add_argument("--overrides", type=Path,
+                    help="human verdicts from tools/sid_review.py "
+                         "(default: src/sid_overrides.json)")
     ap.add_argument("-o", "--output", type=Path, required=True)
     args = ap.parse_args()
 
@@ -121,10 +130,18 @@ def main():
                 tunes[-1]["vol_byte"] = filt | vol
             tunes[-1]["rms_db"] = lr["rms_db"]
 
+    # Human verdicts win over the tagger, and win here rather than only
+    # at runtime so the shipped database itself is the corrected one.
+    entries = sid_overrides.load(args.overrides)
+    before = len(tunes)
+    tunes = sid_overrides.apply_all(tunes, entries)
+    reviewed = sum(1 for t in tunes if t.get("source") == "manual")
+
     moods = sorted({m for t in tunes for m in t["moods"]})
     db = {"version": 1, "moods": moods, "tunes": tunes}
     args.output.write_text(json.dumps(db, indent=1))
-    print(f"{len(tunes)} tunes, moods: {', '.join(moods)}")
+    print(f"{len(tunes)} tunes ({before - len(tunes)} blocked by hand, "
+          f"{reviewed} hand-tagged), moods: {', '.join(moods)}")
 
 
 if __name__ == "__main__":
