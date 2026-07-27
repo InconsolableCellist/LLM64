@@ -19,6 +19,7 @@ from .advsetup import (AdventureSetup, STAGES, ACT_QUICK,
                        ACT_THEME, ACT_BEGIN, ACT_LOAD)
 from .advtemplates import TemplateStore
 from . import advmap
+from . import chargen
 from . import printdoc
 from . import printcups
 from . import printpic
@@ -947,8 +948,10 @@ class ProtocolHandler:
     # chars/s - still several times faster than reading speed - with
     # comfortable headroom for both screen modes.
     CHUNK_TEXT_MAX = 60
-    CHUNK_PACE_BASE = 0.016       # per frame
-    CHUNK_PACE_PER_BYTE = 0.0018  # per payload byte
+    # Defaults live in config.py now ([serial] chunk_pace_*) so the
+    # ceiling can be dialled in against real hardware without a redeploy.
+    CHUNK_PACE_BASE = 0.016       # per frame (fallback)
+    CHUNK_PACE_PER_BYTE = 0.0018  # per payload byte (fallback)
 
     # Bulk frames (conversation list/load) are wire-bound: pace each frame
     # at just over its 9600-baud transmit time so the burst never piles up
@@ -1243,6 +1246,20 @@ class ProtocolHandler:
             # render_ascii opens with its own "THE MAP - n places".
             def body(width, _m=m):
                 return "\n".join(advmap.render_ascii(_m, width=width))
+            wrap = False
+        elif printdoc.wants_catalog(arg) and self._adv_setup is not None:
+            # ONLY while character creation is open. A roleplay scene can
+            # easily put a catalogue in front of the player - a fence's
+            # stock list, a ship's manifest - and answering "/print the
+            # catalog" with the adventure kit shop would be baffling.
+            # Outside setup this falls through to the model, which is the
+            # right answer for a catalogue that exists in the fiction.
+            title = 'The supply houses'
+            body = printdoc.render_catalog(
+                self._adv_setup.rules,
+                chargen.gear_options(
+                    self._adv_setup.rules,
+                    self._adv_setup.answers.get('class', '')))
             wrap = False
         elif printdoc.wants_sheet(arg) and adv_state:
             title = 'Character sheet'
@@ -1751,8 +1768,8 @@ class ProtocolHandler:
         payload.extend(piece)
         payload.append(0x00)
         await self.send_message(MessageType.CHAT_CHUNK, bytes(payload))
-        await asyncio.sleep(self.CHUNK_PACE_BASE
-                            + len(piece) * self.CHUNK_PACE_PER_BYTE)
+        await asyncio.sleep(self.config.chunk_pace_base
+                            + len(piece) * self.config.chunk_pace_per_byte)
         return (seq + 1) % 256
 
     # Heartbeats keep the client's ~43s response watchdog fed during a

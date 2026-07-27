@@ -358,6 +358,59 @@ s.feed('b'); s.feed('d')
 if 'a bone-handled cleaver' not in s.stage_screen():
     failures.append("an invented item is missing from the approve screen")
 
+# Numbers are CATALOGUE-wide, not per-shelf, so one number means one
+# thing on every screen and a player can type a kit from memory.
+s = to_gear()
+nums = s._gear_numbers()
+check("numbering covers the whole catalogue",
+      sorted(nums.values()), list(range(1, len(s._gear_items()) + 1)))
+_cats = s._gear_cats()
+_first_of_second = _cats[1][1][0]['name']
+if nums[_first_of_second] <= len(_cats[0][1]):
+    failures.append("the second shelf restarts its numbering")
+
+# Several numbers at the OVERVIEW take those items without opening
+# anything; one number is still navigation.
+s = to_gear()
+s.feed('1')
+check("a single number still opens a shelf", s.cat, _cats[0][0]['slug'])
+s.feed('b')
+_want = [s._gear_by_number()[n]['name'] for n in (1, 40, 60)]
+s.feed('1 40 60')
+check("several numbers buy straight off the catalogue", s.kit, _want)
+check("...without opening a shelf", s.cat, None)
+
+# A number from another shelf works while standing somewhere else
+s = to_gear()
+jewel = next(i for i, (c, _) in enumerate(_cats, 1) if c['slug'] == 'jewelry')
+s.feed(str(jewel))
+s.feed('8')
+check("a far number works from any shelf",
+      s.kit, [s._gear_by_number()[8]['name']])
+if str(s._gear_numbers()[_cats[jewel - 1][1][0]['name']]) not in \
+        s.stage_screen():
+    failures.append("a shelf does not show its catalogue numbers")
+
+# Typing an invented item must NOT repaint the shelf - that is the whole
+# point of typing it
+s = to_gear()
+s.feed('1')
+reply, _ = s.feed('a bone-handled cleaver')
+check("the item lands", s.kit_own, ['a bone-handled cleaver'])
+if 'Taken' not in reply:
+    failures.append("adding an item says nothing")
+if 'points spent' not in reply:
+    failures.append("the confirmation does not carry the purse")
+if '\n +' in reply or 'b = back' in reply:
+    failures.append(f"adding an item repainted the shelf: {reply!r}")
+
+# Words at the overview are an invented item too
+s = to_gear()
+reply, _ = s.feed('a letter from home')
+check("words at the overview are an item", s.kit_own, ['a letter from home'])
+check("...filed under Your own things",
+      s.own_at['a letter from home'], 'own')
+
 # Every catalogue item must live on a shelf, or it is unreachable
 _kinds = set()
 for c in GEAR['categories']:

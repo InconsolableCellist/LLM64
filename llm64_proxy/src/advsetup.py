@@ -101,6 +101,14 @@ CUSTOM_OK = ('race', 'class')
 # own, where a skill is just a claim about who you used to be.
 CUSTOM_MULTI_OK = ('skills',)
 
+# Kit-shop nav hints. Item numbers are GLOBAL across the whole catalogue
+# (see _gear_cat_body), so they mean the same thing on every screen and a
+# player who knows the book can type a whole kit from memory without
+# opening a single shelf.
+MSG_OVERVIEW = ("One number opens that shelf. Several numbers take those "
+                "items straight off the catalogue.")
+MSG_SHELF = "Numbers take or put back, or b to go back."
+
 
 class AdventureSetup:
     """One player's trip through the front door."""
@@ -304,6 +312,31 @@ class AdventureSetup:
                 out.append((c, n))
         return out
 
+    def _gear_numbers(self) -> dict:
+        """name -> its number in the WHOLE catalogue.
+
+        Numbering is global rather than per-shelf so a number means one
+        thing everywhere: a player who knows the book can type a kit
+        straight in ("1 13 45 23 11") without opening a shelf at all,
+        and a number remembered from one screen still works on the next.
+        Shelf order drives it, so the numbers a shelf shows are always
+        contiguous."""
+        n, out = 0, {}
+        for _c, items in self._gear_cats():
+            for it in items:
+                n += 1
+                out[it['name']] = n
+        return out
+
+    def _gear_by_number(self) -> dict:
+        """The inverse: number -> item."""
+        n, out = 0, {}
+        for _c, items in self._gear_cats():
+            for it in items:
+                n += 1
+                out[n] = it
+        return out
+
     def _gear_spent(self) -> int:
         return chargen.gear_cost(self.rules, self.kit + self.kit_own)
 
@@ -327,15 +360,20 @@ class AdventureSetup:
     def _gear_overview_body(self) -> list:
         cats = self._gear_cats()
         out = ["", self._gear_purse(), ""]
+        lo = 1
         for i, (c, items) in enumerate(cats, 1):
             n = len([it for it in items if it['name'] in self.kit])
-            out.append(("  %2d  %s %s" % (i, c['label'].ljust(20, '.'),
-                                          n or '')).rstrip())
+            hi = lo + len(items) - 1
+            out.append(("  %2d  %s items %d-%d %s"
+                        % (i, c['label'].ljust(20, '.'), lo, hi,
+                           '*' * n)).rstrip())
+            lo = hi + 1
         out.append(("  %2d  %s %s" % (len(cats) + 1,
                                       "Your own things".ljust(20, '.'),
                                       len(self.kit_own) or '')).rstrip())
         out += ["",
-                "number = open a shelf,  d = done,  x = put it all back"]
+                "number = open a shelf,  d = done,  x = put it all back",
+                "or type item numbers straight in: 1 13 45 23 11"]
         return out
 
     def _gear_cat_body(self, slug) -> list:
@@ -357,14 +395,15 @@ class AdventureSetup:
         self.page = min(self.page, pages - 1)
         lo = self.page * self.PAGE
         window = items[lo:lo + self.PAGE]
+        nums = self._gear_numbers()
         title = f"{c['label']} - {self._gear_purse()}"
         if pages > 1:
             title += f"   (page {self.page + 1} of {pages})"
         out = ["", title, ""]
-        for i, it in enumerate(window, lo + 1):
+        for it in window:
             mark = '+' if it['name'] in self.kit else ' '
             out.append(" %s %2d  %-22s %d  %s"
-                       % (mark, i, it['name'], it['cost'],
+                       % (mark, nums[it['name']], it['name'], it['cost'],
                           it.get('blurb', '')))
         # Own things belonging to THIS shelf are listed here too, so a
         # cleaver you invented sits with the weapons instead of only
@@ -372,9 +411,15 @@ class AdventureSetup:
         mine = [n for n in self.kit_own if self.own_at.get(n) == c['slug']]
         for name in mine:
             out.append(" +  -  %s" % name)
-        nav = "numbers take or put back (e.g. 1 3),  b = back"
+        # The example is deliberately not "1 3": numbers are catalogue-
+        # wide, so a low number typed on a high shelf takes something
+        # from another one, and an example implying otherwise would set
+        # the wrong expectation.
+        nav = "numbers take or put back (any item, 1-%d),  b = back" % len(
+            self._gear_items())
         if pages > 1:
-            nav = "numbers take or put back,  n = more,  b = back"
+            nav = ("numbers take or put back (1-%d),  n = more,  b = back"
+                   % len(self._gear_items()))
         out += ["", nav,
                 "or just describe your own %s (%d point each)"
                 % (c['label'].lower(), self._gear_conf().get(
@@ -546,10 +591,14 @@ class AdventureSetup:
                 return self.stage_screen(), ACT_NONE
             self._record('scores', self.answers.get('scores'))
         elif kind == 'spend':
-            done, err = self._spend_feed(text)
+            done, err, redraw = self._spend_feed(text)
             if not done:
-                return ((err + "\n\n" if err else "")
-                        + self.stage_screen()), ACT_NONE
+                # Adding an invented item does NOT redraw: repainting a
+                # 20-line shelf down a 9600 baud wire to show one new
+                # line is the slowest possible way to say "noted".
+                parts = [x for x in (err, self.stage_screen()
+                                     if redraw else None) if x]
+                return "\n\n".join(parts), ACT_NONE
             self._record(key, self.kit + self.kit_own)
         elif kind == 'choice':
             opts = self.options(st)
@@ -706,16 +755,17 @@ class AdventureSetup:
     def _spend_feed(self, text):
         """One keystroke-batch through the kit shop.
 
-        Returns (done, error). done=True only when the player has
-        approved the kit on the confirm screen - every other answer just
-        moves them around and the caller re-renders."""
+        Returns (done, message, redraw). done=True only when the
+        player has approved the kit on the confirm screen; redraw=False
+        asks the caller NOT to repaint, which is what makes typing an
+        invented item cheap."""
         t = (text or '').strip()
         low = t.lower()
         if self.cat == 'done':
             if low.startswith('y'):
-                return True, None
+                return True, None, True
             self.cat = None
-            return False, None
+            return False, None, True
         if self.cat is None:
             return self._spend_overview(t, low)
         if self.cat == 'own':
@@ -726,20 +776,31 @@ class AdventureSetup:
         cats = self._gear_cats()
         if low == 'd':
             self.cat = 'done'
-            return False, None
+            return False, None, True
         if low == 'x':
             self.kit, self.kit_own, self.own_at = [], [], {}
-            return False, "Back on the shelves."
-        if t.isdigit():
-            n = int(t)
-            if 1 <= n <= len(cats):
-                self.cat = cats[n - 1][0]['slug']
-                self.page = 0
-                return False, None
-            if n == len(cats) + 1:
-                self.cat = 'own'
-                return False, None
-        return False, "Open a shelf by number, or d when you are done."
+            return False, "Back on the shelves.", True
+        toks = t.replace(',', ' ').split()
+        if toks and all(tok.isdigit() for tok in toks):
+            # ONE number is navigation, several are a shopping list.
+            # "open shelf 3 and shelf 7" means nothing, so a multi-number
+            # answer can only be items - which is what lets a player who
+            # knows the book type a whole kit without opening anything.
+            if len(toks) == 1:
+                n = int(toks[0])
+                if 1 <= n <= len(cats):
+                    self.cat = cats[n - 1][0]['slug']
+                    self.page = 0
+                    return False, None, True
+                if n == len(cats) + 1:
+                    self.cat = 'own'
+                    return False, None, True
+            return self._toggle(toks)
+        if toks:
+            # Words at the overview are an invented item too, filed under
+            # Your own things since no shelf was open to claim it.
+            return self._add_own(t, 'own')
+        return False, MSG_OVERVIEW, True
 
     PAGE = 12            # items per shelf screen (19-line chat area)
 
@@ -747,7 +808,7 @@ class AdventureSetup:
         if low == 'b':
             self.cat = None
             self.page = 0
-            return False, None
+            return False, None, True
         if low in ('n', 'p'):
             match = [items for c, items in self._gear_cats()
                      if c['slug'] == self.cat]
@@ -755,31 +816,40 @@ class AdventureSetup:
                 if match else 1
             self.page = ((self.page + (1 if low == 'n' else -1))
                          % pages)
-            return False, None
+            return False, None, True
         match = [(c, items) for c, items in self._gear_cats()
                  if c['slug'] == self.cat]
         if not match:
             self.cat = None
-            return False, None
-        items = match[0][1]
+            return False, None, True
         toks = t.replace(',', ' ').split()
         if not toks:
-            return False, "Numbers to take or put back, or b to go back."
+            return False, MSG_SHELF, True
         if not all(tok.isdigit() for tok in toks):
             # Words on a shelf mean "I want one of these, but mine":
             # numbers already mean toggle, so there is nothing to
             # disambiguate and no extra keystroke to reach it.
             return self._add_own(t, self.cat)
-        # Dropping is always allowed; taking is checked against the purse
-        # ONE AT A TIME so a batch that only partly fits still does what
-        # it can and says plainly what it could not.
+        return self._toggle(toks)
+
+    def _toggle(self, toks):
+        """Take or put back by catalogue number. Numbers are global, so
+        this is deliberately NOT limited to the open shelf: typing 45
+        while standing in Weapons takes item 45 wherever it lives, which
+        is the whole point of numbering the book rather than the page.
+
+        Dropping is always allowed; taking is checked against the purse
+        ONE AT A TIME so a batch that only partly fits still does what it
+        can and says plainly what it could not - refusing the lot would
+        make the player work out which item was the problem."""
+        book = self._gear_by_number()
         refused = []
         for tok in toks:
             n = int(tok)
-            if not 1 <= n <= len(items):
+            it = book.get(n)
+            if it is None:
                 refused.append(tok[:12])
                 continue
-            it = items[n - 1]
             if it['name'] in self.kit:
                 self.kit.remove(it['name'])
             elif it['cost'] > self._gear_left():
@@ -788,8 +858,8 @@ class AdventureSetup:
                 self.kit.append(it['name'])
         if refused:
             return False, ("No room for " + "; ".join(refused)
-                           + f" ({self._gear_left()} left).")
-        return False, None
+                           + f" ({self._gear_left()} left)."), True
+        return False, None, True
 
     def _spend_own(self, t, low):
         """Numbers remove, words add. Unambiguous because a thing you
@@ -800,13 +870,13 @@ class AdventureSetup:
         cap = conf.get('custom_max', 6)
         if low == 'b':
             self.cat = None
-            return False, None
+            return False, None, True
         if t.isdigit():
             n = int(t)
             if 1 <= n <= len(self.kit_own):
                 self.own_at.pop(self.kit_own.pop(n - 1), None)
-                return False, None
-            return False, "No such thing on the list."
+                return False, None, True
+            return False, "No such thing on the list.", True
         toks = t.replace(',', ' ').split()
         if toks and all(tok.isdigit() for tok in toks):
             for name in [self.kit_own[int(x) - 1] for x in sorted(
@@ -814,7 +884,7 @@ class AdventureSetup:
                     if 1 <= int(x) <= len(self.kit_own)]:
                 self.kit_own.remove(name)
                 self.own_at.pop(name, None)
-            return False, None
+            return False, None, True
         return self._add_own(t, 'own')
 
     def _add_own(self, text, slug):
@@ -844,15 +914,15 @@ class AdventureSetup:
             self.own_at[name] = slug
             added.append(name)
         if refused:
-            return False, refused[0].capitalize() + "."
+            return False, refused[0].capitalize() + ".", True
         if not added:
-            return False, "Describe it, or b to go back."
-        # On a shelf, say plainly what was taken: the item shows up in
-        # the list below, but a silent redraw of a 20-line screen is easy
-        # to miss.
-        if slug != 'own':
-            return False, "Taken: " + ", ".join(added) + "."
-        return False, None
+            return False, "Describe it, or b to go back.", True
+        # No repaint. The whole point of typing an item is that it is
+        # quick, and redrawing the shelf to show one added line is the
+        # slowest possible acknowledgement - so the confirmation carries
+        # the purse instead, which is the only thing that changed.
+        return False, ("Taken: " + ", ".join(added)
+                       + f".  ({self._gear_purse()})"), False
 
     def _advance(self):
         self.stage += 1
