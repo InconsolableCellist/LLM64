@@ -55,6 +55,35 @@ def _roll_one(m, rng) -> str:
     return f"[you rolled {spec}: {detail}]"
 
 
+# --- the narrator's own dice ------------------------------------------
+#
+# A pool of real rolls handed to the model with every adventure turn, so
+# it can resolve a check ITSELF instead of stopping the story to ask the
+# player for one. The player's [roll:...] macro still exists and still
+# wins when they choose to use it; this is for the far more common case
+# where the narrator should just roll and get on with it.
+#
+# Pre-generated rather than round-tripped: a model that emits a roll
+# REQUEST needs a second call to resolve it, doubling the latency of
+# every fight over a 9600 baud link. These cost nothing - they ride
+# along in the prompt that was going to be sent anyway.
+#
+# Rolled by the proxy for the same reason the macro is: a model asked to
+# roll invents a number, and invents a flattering one.
+POOL_SPEC = (('d20', 20, 6), ('d6', 6, 6), ('d100', 100, 2))
+
+
+def pool(rng=None) -> str:
+    """One turn's worth of dice, as a prompt block. Deterministic given
+    an rng, so the e2e can assert on it."""
+    rng = rng or random
+    lines = []
+    for label, sides, count in POOL_SPEC:
+        rolls = [rng.randint(1, sides) for _ in range(count)]
+        lines.append(f"  {label}: " + ", ".join(str(r) for r in rolls))
+    return "\n".join(lines)
+
+
 def expand(text: str, rng=None):
     """(expanded_text, [roll descriptions]) - the list is empty when the
     message contained no macros, which is the common case and lets the

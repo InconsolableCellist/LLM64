@@ -14,6 +14,7 @@ from .modes import (Mode, AdventureMode, RoleplayMode, ClaudeMode,
 from .claude_session import ClaudeSession
 from .music import MusicLibrary, MusicDirectiveFilter
 from .dice import expand as expand_dice
+from .dice import pool as dice_pool
 from .advsetup import (AdventureSetup, STAGES, ACT_QUICK,
                        ACT_THEME, ACT_BEGIN, ACT_LOAD)
 from .advtemplates import TemplateStore
@@ -885,12 +886,27 @@ class ProtocolHandler:
         return sorted(cards, key=lambda c: c[0].lower())
 
     def _find_card(self, query: str):
-        """Match a card by name prefix/substring: (name, path) or None."""
+        """Match a card by name - exact, then prefix, then substring -
+        returning (name, path) or None.
+
+        RANKED rather than first-hit. First-hit meant a merely-containing
+        name could beat an exact one purely by sort order: a user card
+        called 'AI Assistant (By Character AI)' CONTAINS 'Assistant', so
+        /assist landed there and the bundled Assistant card was
+        unreachable. Exact-first also keeps the documented shadowing rule
+        intact - _all_cards lists the user's folder first, so a user card
+        named exactly 'Assistant' still wins over the bundled one."""
         q = query.lower()
+        prefix = substring = None
         for name, path in self._all_cards():
-            if name.lower().startswith(q) or q in name.lower():
+            low = name.lower()
+            if low == q:
                 return (name, path)
-        return None
+            if prefix is None and low.startswith(q):
+                prefix = (name, path)
+            elif substring is None and q in low:
+                substring = (name, path)
+        return prefix or substring
 
     async def _start_roleplay(self, query: str):
         if not query:
@@ -2001,6 +2017,18 @@ class ProtocolHandler:
                     self.conv_manager.get_meta('adv_map') or {})
                 if block:
                     sys_prompt += "\n\n" + block
+                # This turn's dice, so the narrator can resolve a check
+                # itself rather than stopping to ask. Last, because it
+                # changes every single turn and everything after it would
+                # miss the prefix cache.
+                sys_prompt += (
+                    "\n\nDICE FOR THIS TURN - real rolls, already made, "
+                    "yours to use:\n" + dice_pool() +
+                    "\nTake them in order, and say what you rolled "
+                    "(\"you swing - 14 against its guard\"). They are "
+                    "OPTIONAL: leave them unused if nothing this turn is "
+                    "genuinely uncertain. Never invent a check just to "
+                    "spend one.")
             if (mfilter and self.music.available and self.music.stale()
                     and sys_prompt):
                 sys_prompt += ("\n(The background music has been looping "
