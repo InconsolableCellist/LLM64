@@ -77,7 +77,9 @@ STAGES = [
     dict(key='spells', label='Spells', kind='multi', needs=('class',),
          q='What spells have you learned?', applies=_has_spells),
     dict(key='gear', label='Gear', kind='spend', needs=('class',),
-         q='What are you carrying?'),
+         q='You prepare for your journey by visiting various supply\n'
+           'houses. You walk the shelves and carefully pick the\n'
+           'following items.'),
     dict(key='name', label='Name', kind='text', needs=('race', 'class'),
          q='Your name, and how you look. "?" to be named by the narrator.'),
     dict(key='opening', label='Opening', kind='text', needs=('world',),
@@ -128,6 +130,8 @@ class AdventureSetup:
         self.cat = None
         self.kit = []        # catalogue items, by name
         self.kit_own = []    # things the player typed
+        self.own_at = {}     # own item -> the shelf it was invented on
+        self.page = 0        # which page of a long shelf is showing
 
     # --- stage helpers ------------------------------------------------
 
@@ -341,13 +345,40 @@ class AdventureSetup:
             self.cat = None
             return self._gear_overview_body()
         c, items = match[0]
-        out = ["", f"{c['label']} - {self._gear_purse()}", ""]
-        for i, it in enumerate(items, 1):
+        # The chat area is 19 lines and this screen spends 7 on its own
+        # furniture, so a long shelf PAGES rather than scrolling off the
+        # top - the client appends at the bottom, so an over-long list
+        # would push its first items out of sight while leaving the
+        # footer visible, which is exactly backwards. Numbers stay
+        # ABSOLUTE across pages: item 17 is 17 wherever you are standing,
+        # so a player who remembers a number never has to hunt for the
+        # page it lives on.
+        pages = max(1, (len(items) + self.PAGE - 1) // self.PAGE)
+        self.page = min(self.page, pages - 1)
+        lo = self.page * self.PAGE
+        window = items[lo:lo + self.PAGE]
+        title = f"{c['label']} - {self._gear_purse()}"
+        if pages > 1:
+            title += f"   (page {self.page + 1} of {pages})"
+        out = ["", title, ""]
+        for i, it in enumerate(window, lo + 1):
             mark = '+' if it['name'] in self.kit else ' '
             out.append(" %s %2d  %-22s %d  %s"
                        % (mark, i, it['name'], it['cost'],
                           it.get('blurb', '')))
-        out += ["", "numbers take or put back (e.g. 1 3),  b = back"]
+        # Own things belonging to THIS shelf are listed here too, so a
+        # cleaver you invented sits with the weapons instead of only
+        # showing up two screens away.
+        mine = [n for n in self.kit_own if self.own_at.get(n) == c['slug']]
+        for name in mine:
+            out.append(" +  -  %s" % name)
+        nav = "numbers take or put back (e.g. 1 3),  b = back"
+        if pages > 1:
+            nav = "numbers take or put back,  n = more,  b = back"
+        out += ["", nav,
+                "or just describe your own %s (%d point each)"
+                % (c['label'].lower(), self._gear_conf().get(
+                    'custom_cost', 1))]
         return out
 
     def _gear_own_body(self) -> list:
@@ -484,6 +515,11 @@ class AdventureSetup:
             chosen = self.answers.get(st['key']) or []
             self.kit = [n for n in chosen if n in catalogue]
             self.kit_own = [n for n in chosen if n not in catalogue]
+            # Which shelf each own item came from is display-only and
+            # is not persisted in the answer, so a resumed kit shows
+            # them all under 'Your own things' rather than guessing.
+            self.own_at = {n: 'own' for n in self.kit_own}
+            self.page = 0
 
     def _record(self, key, value):
         self.answers[key] = value
@@ -692,21 +728,33 @@ class AdventureSetup:
             self.cat = 'done'
             return False, None
         if low == 'x':
-            self.kit, self.kit_own = [], []
+            self.kit, self.kit_own, self.own_at = [], [], {}
             return False, "Back on the shelves."
         if t.isdigit():
             n = int(t)
             if 1 <= n <= len(cats):
                 self.cat = cats[n - 1][0]['slug']
+                self.page = 0
                 return False, None
             if n == len(cats) + 1:
                 self.cat = 'own'
                 return False, None
         return False, "Open a shelf by number, or d when you are done."
 
+    PAGE = 12            # items per shelf screen (19-line chat area)
+
     def _spend_category(self, t, low):
         if low == 'b':
             self.cat = None
+            self.page = 0
+            return False, None
+        if low in ('n', 'p'):
+            match = [items for c, items in self._gear_cats()
+                     if c['slug'] == self.cat]
+            pages = max(1, (len(match[0]) + self.PAGE - 1) // self.PAGE) \
+                if match else 1
+            self.page = ((self.page + (1 if low == 'n' else -1))
+                         % pages)
             return False, None
         match = [(c, items) for c, items in self._gear_cats()
                  if c['slug'] == self.cat]
@@ -715,8 +763,13 @@ class AdventureSetup:
             return False, None
         items = match[0][1]
         toks = t.replace(',', ' ').split()
-        if not toks or not all(tok.isdigit() for tok in toks):
+        if not toks:
             return False, "Numbers to take or put back, or b to go back."
+        if not all(tok.isdigit() for tok in toks):
+            # Words on a shelf mean "I want one of these, but mine":
+            # numbers already mean toggle, so there is nothing to
+            # disambiguate and no extra keystroke to reach it.
+            return self._add_own(t, self.cat)
         # Dropping is always allowed; taking is checked against the purse
         # ONE AT A TIME so a batch that only partly fits still does what
         # it can and says plainly what it could not.
@@ -751,7 +804,7 @@ class AdventureSetup:
         if t.isdigit():
             n = int(t)
             if 1 <= n <= len(self.kit_own):
-                self.kit_own.pop(n - 1)
+                self.own_at.pop(self.kit_own.pop(n - 1), None)
                 return False, None
             return False, "No such thing on the list."
         toks = t.replace(',', ' ').split()
@@ -760,13 +813,22 @@ class AdventureSetup:
                     {int(x) for x in toks}, reverse=True)
                     if 1 <= int(x) <= len(self.kit_own)]:
                 self.kit_own.remove(name)
+                self.own_at.pop(name, None)
             return False, None
-        # EVERY '+' starts a new item, not just the first. Splitting on
-        # only the first one turned "rope + a lucky coin" into a single
-        # item named "rope + a lucky coin", charged once and cut off at
-        # 40 characters - wrong, and silently so.
-        added, refused = 0, []
-        for part in t.split('+'):
+        return self._add_own(t, 'own')
+
+    def _add_own(self, text, slug):
+        """Bring along something the catalogue does not stock.
+
+        EVERY '+' starts a new item, not just the first. Splitting on
+        only the first one turned "rope + a lucky coin" into a single
+        item named "rope + a lucky coin", charged once and cut off at
+        40 characters - wrong, and silently so."""
+        conf = self._gear_conf()
+        cost = conf.get('custom_cost', 1)
+        cap = conf.get('custom_max', 6)
+        added, refused = [], []
+        for part in text.split('+'):
             name = ' '.join(part.split())[:40]
             if not name:
                 continue
@@ -779,11 +841,17 @@ class AdventureSetup:
                 refused.append(f"no points left for \"{name}\"")
                 break
             self.kit_own.append(name)
-            added += 1
+            self.own_at[name] = slug
+            added.append(name)
         if refused:
             return False, refused[0].capitalize() + "."
         if not added:
             return False, "Describe it, or b to go back."
+        # On a shelf, say plainly what was taken: the item shows up in
+        # the list below, but a silent redraw of a 20-line screen is easy
+        # to miss.
+        if slug != 'own':
+            return False, "Taken: " + ", ".join(added) + "."
         return False, None
 
     def _advance(self):

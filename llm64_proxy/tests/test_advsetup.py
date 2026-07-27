@@ -291,6 +291,73 @@ for c in RULES['classes']:
     if min(i['cost'] for i in items) > GEAR['points']:
         failures.append(f"{c['name']} cannot afford anything")
 
+# The shop opens with flavour, not a bare question: the shelf metaphor
+# is the whole conceit of the screen.
+_screen = to_gear().stage_screen()
+if 'supply' not in _screen or 'walk the shelves' not in _screen:
+    failures.append("the kit overview lost its opening flavour")
+
+# A class the rules never heard of gets the WHOLE catalogue. Filtering it
+# to unrestricted items only left ONE weapon in the book (a dagger),
+# which is how this was found.
+_custom = chargen.gear_options(RULES, 'Vault Technician')
+check("a custom class sees everything",
+      len(_custom), len(GEAR['items']))
+_weapons = [i for i in _custom if i['kind'] == 'weapon']
+if len(_weapons) < 5:
+    failures.append(f"a custom class sees {len(_weapons)} weapons")
+# ...and a known class is still filtered
+_wiz = chargen.gear_options(RULES, 'Wizard')
+if len(_wiz) >= len(GEAR['items']):
+    failures.append("a known class stopped being filtered")
+if any(i['name'] == 'Plate Harness' for i in _wiz):
+    failures.append("a Wizard was offered plate")
+
+# Every class must find a real choice on the weapon shelf, not a dagger
+for c in RULES['classes']:
+    n = len([i for i in chargen.gear_options(RULES, c['name'])
+             if i['kind'] == 'weapon'])
+    if n < 5:
+        failures.append(f"{c['name']} sees only {n} weapons")
+
+# Long shelves page rather than scrolling off the top, and the numbers
+# stay ABSOLUTE so a remembered number always works
+s = to_gear()
+cats = s._gear_cats()
+w = next(i for i, (c, _) in enumerate(cats, 1) if c['slug'] == 'weapon')
+s.feed(str(w))
+n_weapons = len([i for i in s._gear_items() if i['kind'] == 'weapon'])
+if n_weapons > s.PAGE:
+    if 'page 1 of' not in s.stage_screen():
+        failures.append("a long shelf does not say it has pages")
+    s.feed('n')
+    if 'page 2 of' not in s.stage_screen():
+        failures.append("n does not turn the page")
+    # a number from page ONE still works while page two is showing
+    s.feed('1')
+    check("numbers are absolute across pages",
+          s.kit, [[i for i in s._gear_items()
+                   if i['kind'] == 'weapon'][0]['name']])
+    s.feed('n')          # wraps back to page 1
+    if 'page 1 of' not in s.stage_screen():
+        failures.append("paging does not wrap")
+
+# Every shelf takes your own things, not just the 'Your own' one
+s = to_gear()
+s.feed(str(w))
+reply, _ = s.feed('a bone-handled cleaver')
+check("a shelf accepts a described item", s.kit_own, ['a bone-handled cleaver'])
+if 'Taken' not in reply:
+    failures.append("adding on a shelf says nothing")
+check("...and remembers which shelf", s.own_at['a bone-handled cleaver'],
+      'weapon')
+if 'a bone-handled cleaver' not in s.stage_screen():
+    failures.append("an invented item is not shown on its own shelf")
+# it is still one kit: the approve screen carries it
+s.feed('b'); s.feed('d')
+if 'a bone-handled cleaver' not in s.stage_screen():
+    failures.append("an invented item is missing from the approve screen")
+
 # Every catalogue item must live on a shelf, or it is unreachable
 _kinds = set()
 for c in GEAR['categories']:
