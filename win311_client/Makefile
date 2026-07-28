@@ -55,7 +55,7 @@ build/%.obj: src/%.c | build
 
 $(EXE): $(OBJ) $(RC) | build
 	$(OWBIN)/wcl $(LFLAGS) -fe=$@ $(OBJ) winsock.lib
-	$(OWBIN)/wrc -q -bt=windows -i=$(WATCOM)/h/win -fo=build/llm64.res $(RC) $@
+	$(OWBIN)/wrc -q -bt=windows -i=$(WATCOM)/h/win -i=include -fo=build/llm64.res $(RC) $@
 	@rm -f __wcl_*.lnk
 
 run: $(EXE)

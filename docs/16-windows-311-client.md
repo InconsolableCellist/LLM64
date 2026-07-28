@@ -573,7 +573,7 @@ emulator anywhere in the loop.
 |---|---|---|
 | **0 — spike** ✅ | Win16 app: connect, `PING`, streamed chat, colour markers, menu bar, status strip | the *whole* toolchain risk (see below) |
 | **1 — MVP** ◐ | Far-memory scrollback with re-flow ✅, bold ✅, MDI frame and document windows ✅; editor keys, `HINT` chrome, `MENU_LIST`, help still to do | it is a usable client |
-| **2 — dialogs** | Conversation manager, settings, model picker, find/history | feature parity with the F-keys |
+| **2 — dialogs** ◐ | Server settings ✅; conversation manager, model picker, fonts/colours, find/history still to do | feature parity with the F-keys |
 | **3 — pictures** | Blob → DIB modal viewer (Path A, no proxy change) | media transfer end-to-end |
 | **4 — profiles** | `CLIENT_HELLO`, the proxy's `ClientProfile`, negotiated widths and payloads, per-profile art (§7) | the proxy is multi-client, not C64-with-exceptions |
 | **5 — MIDI** | `MIDI_*` frames, a mood-tagged GM corpus, MCI playback, jukebox dialog | the era's music, and the last new subsystem |
@@ -670,6 +670,33 @@ One open question, and the Win95 VM is the place to answer it: Wine's
 route worked. `TranslateMDISysAccel` is in the message loop where it
 belongs, so this looks like the emulator rather than the client — but it
 is unproven either way.
+
+### The first real-machine run, and what it asked for
+
+The client runs on Windows 95 OSR2 under QEMU. The first thing that went
+wrong there was not the client: it was not knowing which address the
+program was dialling, and having no way to change it without rebuilding
+the floppy it booted from. Both are now answered:
+
+- **Settings ▸ Server…** — a modal dialog for host and port, saved back
+  to `LLM64.INI` and optionally reconnecting. On a machine with no
+  command line this is the only route, which makes it the first dialog
+  worth building rather than the fourth.
+- **The status strip already names the failure** — the address while
+  connecting, and `Connection refused or unreachable (Winsock error
+  10061)` after. Worth saying out loud in the README, because the
+  distinction between "reached the host, nothing listening" and "never
+  reached the host" is the whole diagnosis.
+- **`devproxy.sh` takes a bind address**, for a bridged VM or a real
+  machine. Under user-mode networking it is unnecessary: a guest reaches
+  the host at **10.0.2.2**, and slirp rewrites that to the host's
+  loopback, so a proxy on 127.0.0.1 is already reachable. The addresses
+  that are *not* the host are worth naming too — a `10.8.x` or `100.x`
+  address belongs to WireGuard or Tailscale, not to the VM's host.
+
+The dialog also fixes the reconnect ordering trap: it returns its intent
+as a result code rather than calling into the socket from inside a modal
+proc that is already half torn down.
 
 ---
 

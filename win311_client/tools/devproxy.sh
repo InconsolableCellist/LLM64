@@ -5,14 +5,22 @@
 # No VICE, no emulator, no GPU - this is the loop for working on the
 # client itself. Ctrl-C stops both.
 #
-#   ./tools/devproxy.sh [port]
+#   ./tools/devproxy.sh [port] [bind-address]
 #
 # Then, in another shell:   make run PORT=<port>
+#
+# The bind address is there for VMs and real machines. A QEMU guest on
+# user-mode networking reaches the host at 10.0.2.2, and slirp rewrites
+# that to the host's loopback, so the 127.0.0.1 default is enough. A
+# bridged VM, a second box on the LAN, or a real 3.11 machine is not on
+# the loopback and needs 0.0.0.0 - at which point the proxy is exposed
+# to the whole network, which is why it is not the default.
 
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 port="${1:-6410}"
+bind="${2:-127.0.0.1}"
 art="$here/../build/dev"
 mkdir -p "$art/data"
 
@@ -43,7 +51,7 @@ for _ in $(seq 50); do
     sleep 0.1
 done
 
-echo "proxy on :$port  (data in $art/data)"
+echo "proxy on $bind:$port  (data in $art/data)"
 cd "$repo/llm64_proxy"
 OPENAI_API_KEY=mock-key \
 OPENAI_API_BASE="http://127.0.0.1:$mock_port/v1" \
@@ -52,7 +60,7 @@ LLM64_DATA_DIR="$art/data" \
 LLM64_CARDS_DIR="$repo/emu/fixtures" \
 LLM64_IMG_FIXTURE="$repo/emu/fixtures/scene.png" \
 LLM64_PRINTER_BACKEND=c64 \
-    "$py" -m src.main --host 127.0.0.1 --port "$port" -v \
+    "$py" -m src.main --host "$bind" --port "$port" -v \
     2>&1 | tee "$art/proxy.log" &
 proxy_pid=$!
 

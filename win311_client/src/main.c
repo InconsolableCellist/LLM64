@@ -39,32 +39,13 @@
 #include "wire.h"
 #include "net.h"
 #include "scroll.h"
+#include "resource.h"
 
 #define APP_CLASS   "LLM64Main"
 #define CONV_CLASS  "LLM64Conv"
 #define PANE_CLASS  "LLM64Pane"
 #define APP_TITLE   "LLM64"
 #define INI_FILE    "LLM64.INI"
-
-#define IDM_CONNECT     101
-#define IDM_DISCONNECT  102
-#define IDM_NEWCONV     103
-#define IDM_EXIT        104
-#define IDM_PING        105
-#define IDM_CANCEL      106
-#define IDM_ABOUT       107
-#define IDM_CASCADE     108
-#define IDM_TILE        109
-#define IDM_ARRANGE     110
-#define IDM_NEWWINDOW   111
-
-/* Where the MDI client starts numbering its document windows on the
-   Window menu. It has to sit above every command id above, because the
-   frame routes anything at or over it straight to DefFrameProc. */
-#define IDM_FIRSTCHILD  200
-
-/* Position of the &Window popup in the menu bar: File, Link, Window. */
-#define WINDOW_MENU_POS 2
 
 #define ID_PANE     1000
 #define ID_INPUT    1001
@@ -601,6 +582,54 @@ static void start_session(HWND hwnd)
     do_connect();
 }
 
+static void save_ini(void);
+
+/* Server settings. The one dialog the client cannot do without on a real
+   machine: there is no command line there, so without this the only way
+   to change the address is to rebuild the disk the program came on. */
+BOOL FAR PASCAL _export ServerDlgProc(HWND dlg, UINT msg, UINT wParam,
+                                      LONG lParam)
+{
+    char buf[64];
+    unsigned port;
+
+    (void)lParam;
+    switch (msg) {
+    case WM_INITDIALOG:
+        SetDlgItemText(dlg, IDC_HOST, g_host);
+        SetDlgItemInt(dlg, IDC_PORT, g_port, FALSE);
+        CheckDlgButton(dlg, IDC_RECONNECT, 1);
+        return TRUE;
+
+    case WM_COMMAND:
+        switch (wParam) {
+        case IDOK:
+            GetDlgItemText(dlg, IDC_HOST, buf, sizeof(buf) - 1);
+            port = GetDlgItemInt(dlg, IDC_PORT, NULL, FALSE);
+            if (!buf[0] || port == 0) {
+                MessageBox(dlg, "A host and a port are both needed.",
+                           APP_TITLE, MB_OK | MB_ICONEXCLAMATION);
+                return TRUE;
+            }
+            lstrcpyn(g_host, buf, sizeof(g_host) - 1);
+            g_port = port;
+            save_ini();
+            /* Reconnecting is the caller's job, not this proc's: doing
+               it here would re-enter the socket code from inside a
+               modal dialog that is already half torn down. The result
+               code carries the intent out instead. */
+            EndDialog(dlg, IsDlgButtonChecked(dlg, IDC_RECONNECT) ? 2 : 1);
+            return TRUE;
+
+        case IDCANCEL:
+            EndDialog(dlg, 0);
+            return TRUE;
+        }
+        break;
+    }
+    return FALSE;
+}
+
 /* Open the conversation document. One today; the same call is how a
    picture viewer or a jukebox will arrive. */
 static HWND conv_create(HWND frame)
@@ -749,6 +778,26 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
             PostMessage(hwnd, WM_CLOSE, 0, 0L);
             return 0;
 
+        case IDM_SERVER: {
+            HINSTANCE inst = (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE);
+            /* MakeProcInstance is not optional in Win16: the dialog is
+               called back through a thunk that reloads DS for this
+               instance. */
+            FARPROC fn = MakeProcInstance((FARPROC)ServerDlgProc, inst);
+            int r = DialogBox(inst, "LLM64SERVER", hwnd, (DLGPROC)fn);
+            FreeProcInstance(fn);
+            if (r == 2) {
+                net_disconnect();
+                do_connect();
+            } else if (r == 1) {
+                char msg2[160];
+                wsprintf(msg2, "Server set to %s:%u - connect when ready.",
+                         (LPSTR)g_host, g_port);
+                set_status(msg2);
+            }
+            return 0;
+        }
+
         case IDM_NEWWINDOW:
             /* Closing the last document leaves an empty workspace, as
                it should in an MDI app - this is the way back. The
@@ -804,6 +853,15 @@ static void load_ini(void)
     GetPrivateProfileString("Server", "Host", "127.0.0.1",
                             g_host, sizeof(g_host), g_ini);
     g_port = GetPrivateProfileInt("Server", "Port", 6400, g_ini);
+}
+
+static void save_ini(void)
+{
+    char num[16];
+
+    WritePrivateProfileString("Server", "Host", g_host, g_ini);
+    wsprintf(num, "%u", g_port);
+    WritePrivateProfileString("Server", "Port", num, g_ini);
 }
 
 int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)

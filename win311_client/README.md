@@ -26,6 +26,9 @@ Verified against a real proxy, running under Wine's 16-bit subsystem:
   it, a Window menu that cascades, tiles and lists the open documents
 - menu bar, transcript pane with scroll bar, input box, status strip
 - reads `LLM64.INI`; the command line overrides it
+- **Settings ▸ Server…** retypes the host and port and reconnects,
+  saving both back to the INI — the only way to change the address on a
+  machine with no command line
 - **the transcript re-flows on a resize**, and lives outside the 64 KB
   default data segment (see below)
 
@@ -95,6 +98,28 @@ automatically" is enough. Windows 95 and 98 run the NE binary natively
 and ship their own 16-bit `WINSOCK.DLL`, so nothing else is required
 there. Windows 3.1 needs Trumpet Winsock; WfW 3.11 wants Microsoft's
 TCP/IP-32.
+
+### When it does not connect
+
+**Read the status strip.** It names the address it dialled while
+connecting, and the failure afterwards — `Connection refused or
+unreachable (Winsock error 10061)` means the address was reached and
+nothing was listening; a timeout means it was not reached at all. The
+same text is in the transcript, in red.
+
+Then, in order:
+
+- **Settings ▸ Server…** — retype the address without rebuilding the
+  floppy. It saves to the INI, so it sticks.
+- **10.0.2.2 is the host**, from inside a QEMU user-mode guest. Not the
+  host's LAN address, and not a VPN address — a `10.8.x` or `100.x`
+  address belongs to WireGuard or Tailscale and is not where the proxy
+  is. `ping 10.0.2.2` from a DOS box in the guest settles reachability.
+- **Is the proxy up?** `ss -ltn | grep 6410` on the host.
+- **Bridged VM or real hardware** is not on the host's loopback, so the
+  proxy has to bind wider: `./tools/devproxy.sh 6410 0.0.0.0`. Under
+  slirp this is unnecessary — connections to 10.0.2.2 are rewritten to
+  the host's loopback.
 
 ## Layout
 
