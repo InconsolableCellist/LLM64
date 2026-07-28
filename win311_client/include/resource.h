@@ -27,6 +27,7 @@
 #define IDM_THEME_SCREEN 114
 #define IDM_CLOSEPAPER  115
 #define IDM_MENU        116
+#define IDM_SHOWBAR     117
 
 #define IDM_FIRSTCHILD  200
 
@@ -44,5 +45,9 @@
 #define IDC_MENUTITLE   1200
 #define IDC_MENUBASE    1210
 #define MAX_MENU        16
+
+/* The menu panel down the right-hand side of the frame. Same entries,
+   same actions, always visible. */
+#define IDC_BARBASE     1300
 
 #endif /* RESOURCE_H */

@@ -32,6 +32,8 @@ BEGIN
            wins - so the theme item is C for C64. */
         MENUITEM "&Paper (black on white)",   IDM_THEME_PAPER
         MENUITEM "&C64 Screen (light on black)", IDM_THEME_SCREEN
+        MENUITEM SEPARATOR
+        MENUITEM "Menu &Bar",                 IDM_SHOWBAR
     END
     /* The MDI window menu. It has to be a real popup that the frame can
        hand to the MDI client, which appends the child list to it. Its

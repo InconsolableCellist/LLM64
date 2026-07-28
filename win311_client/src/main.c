@@ -89,6 +89,11 @@ static HFONT    g_font, g_font_bold;
 static int      g_cw = 8, g_ch = 16;    /* character cell */
 static FARPROC  g_old_edit_proc;
 static char     g_status[128] = "Not connected.";
+/* The proxy composes its own right-hand chrome - place, now playing,
+   pictures waiting - and sends it in HINT. It gets its own half of the
+   strip rather than overwriting the status, which is what it used to do:
+   an empty chrome then wiped whatever the client had just said. */
+static char     g_chrome[64];
 static char     g_host[64];
 static unsigned g_port;
 static char     g_ini[160];     /* full path to LLM64.INI */
@@ -473,6 +478,94 @@ static struct {
 static int g_menu_count;
 static int g_menu_choice;
 
+/* The menu panel: the same entries as a column of buttons down the
+   right-hand side of the frame, so the server-fed menu is something you
+   can see rather than something you have to know a key for. The buttons
+   belong to the frame, which is where the socket and the menu live -
+   they are the application's, not any one document's. */
+#define BAR_W       164
+#define BAR_PAD     6
+
+static HWND g_bar_btn[MAX_MENU];
+static int  g_bar_count;
+static int  g_bar_show = 1;
+static char g_bar_sig[MAX_MENU + 2];    /* what the buttons were built from */
+
+static int bar_width(void)
+{
+    return (g_bar_show && g_menu_count) ? BAR_W : 0;
+}
+
+static void bar_layout(HWND frame)
+{
+    RECT rc;
+    int i, x, y, bh, avail, statush = g_ch + 6;
+
+    if (!g_bar_count)
+        return;
+    GetClientRect(frame, &rc);
+    x = (int)rc.right - BAR_W + BAR_PAD;
+    avail = (int)rc.bottom - statush - BAR_PAD * 2;
+    /* Squeeze rather than overflow: a thirteen-entry menu on a 480-line
+       screen has less room per button than a four-entry one. */
+    bh = (g_ch + 12);
+    if (g_bar_count > 0 && bh * g_bar_count > avail)
+        bh = avail / g_bar_count;
+    if (bh < 14) bh = 14;
+    y = BAR_PAD;
+    for (i = 0; i < g_bar_count; i++) {
+        MoveWindow(g_bar_btn[i], x, y, BAR_W - BAR_PAD * 2, bh - 2, TRUE);
+        y += bh;
+    }
+}
+
+static void bar_destroy(void)
+{
+    int i;
+    for (i = 0; i < g_bar_count; i++)
+        if (g_bar_btn[i]) {
+            DestroyWindow(g_bar_btn[i]);
+            g_bar_btn[i] = NULL;
+        }
+    g_bar_count = 0;
+}
+
+/* Rebuild only when the menu actually changed - it is re-fetched every
+   time the F1 box opens, and tearing down a column of buttons to build
+   the identical one back flickers for nothing. */
+static void bar_rebuild(HWND frame)
+{
+    char sig[MAX_MENU + 2];
+    HINSTANCE inst;
+    int i;
+
+    sig[0] = (char)(g_bar_show ? g_menu_count : 0);
+    for (i = 0; i < g_menu_count && i < MAX_MENU; i++)
+        sig[i + 1] = g_menu[i].key;
+    sig[i + 1] = '\0';
+    if (g_bar_count && memcmp(sig, g_bar_sig, (size_t)i + 2) == 0)
+        return;
+    memcpy(g_bar_sig, sig, (size_t)i + 2);
+
+    bar_destroy();
+    if (!g_bar_show || !g_menu_count)
+        return;
+    inst = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
+    for (i = 0; i < g_menu_count && i < MAX_MENU; i++) {
+        g_bar_btn[i] = CreateWindow("BUTTON", g_menu[i].label,
+                                    WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                    0, 0, 10, 10, frame,
+                                    (HMENU)(IDC_BARBASE + i), inst, NULL);
+        if (!g_bar_btn[i])
+            break;
+    }
+    g_bar_count = i;
+}
+
+/* Defined with the other window layout, but needed as soon as a menu
+   arrives: the panel changes how much room the documents get. */
+static void frame_layout(HWND hwnd);
+
 static void menu_parse(const unsigned char *p, unsigned len)
 {
     unsigned i = 2, s;
@@ -652,14 +745,23 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
         break;
 
     case MSG_MENU_LIST:
+        /* The menu changes with the mode, so the panel follows it: enter
+           an adventure and Map and Picture of this scene appear on the
+           side without a rebuild of anything. */
         menu_parse(p, len);
+        bar_rebuild(g_frame);
+        frame_layout(g_frame);
         break;
 
     case MSG_HINT:
-        /* [flags][pics][chrome\0] - the proxy-composed right-hand
-           status text. Phase 1 gives it its own half of the strip. */
+        /* [flags][pics][chrome\0] - the proxy-composed right-hand status
+           text, already laid out by the proxy to 40 characters. */
         if (len > 2)
-            set_status((const char *)(p + 2));
+            lstrcpyn(g_chrome, (const char *)(p + 2), sizeof(g_chrome) - 1);
+        else
+            g_chrome[0] = '\0';
+        if (g_frame)
+            InvalidateRect(g_frame, NULL, FALSE);
         break;
 
     /* Printing. The proxy composes and lays out the document (docs/14)
@@ -861,14 +963,19 @@ static void frame_layout(HWND hwnd)
 {
     RECT rc;
     int statush = g_ch + 6;
-    int h;
+    int h, w;
 
     if (!g_mdi)
         return;
     GetClientRect(hwnd, &rc);
     h = rc.bottom - statush;
     if (h < g_ch) h = g_ch;
-    MoveWindow(g_mdi, 0, 0, rc.right, h, TRUE);
+    /* The documents get everything except the status strip and the menu
+       panel: text area big, actions down the side. */
+    w = (int)rc.right - bar_width();
+    if (w < g_cw * 20) w = (int)rc.right;
+    MoveWindow(g_mdi, 0, 0, w, h, TRUE);
+    bar_layout(hwnd);
 }
 
 long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
@@ -1021,10 +1128,21 @@ static void paint_status(HWND hwnd)
     /* The sunken top edge every 3.1 status strip had */
     MoveTo(hdc, sr.left, sr.top);
     LineTo(hdc, sr.right, sr.top);
+    /* And the same edge down the side of the menu panel, so it reads as
+       a panel rather than as buttons loose on the background. */
+    if (bar_width()) {
+        MoveTo(hdc, rc.right - bar_width(), 0);
+        LineTo(hdc, rc.right - bar_width(), sr.top);
+    }
     SetBkMode(hdc, TRANSPARENT);
     SelectObject(hdc, GetStockObject(SYSTEM_FONT));
     SetTextColor(hdc, RGB(0, 0, 0));
     TextOut(hdc, 4, sr.top + 3, g_status, lstrlen(g_status));
+    if (g_chrome[0]) {
+        int n = lstrlen(g_chrome);
+        int w = LOWORD(GetTextExtent(hdc, g_chrome, n));
+        TextOut(hdc, (int)sr.right - w - 6, sr.top + 3, g_chrome, n);
+    }
     EndPaint(hwnd, &ps);
 }
 
@@ -1309,6 +1427,8 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         /* Colours before anything can paint: the background brush lives
            with the theme, and WM_CTLCOLOR hands it out. */
         theme_apply(g_theme);
+        CheckMenuItem(GetMenu(hwnd), IDM_SHOWBAR, MF_BYCOMMAND
+            | (g_bar_show ? MF_CHECKED : MF_UNCHECKED));
         if (!sb_init(&g_conv_view.sb)) {
             MessageBox(hwnd, "Not enough memory for the transcript.",
                        APP_TITLE, MB_OK | MB_ICONSTOP);
@@ -1458,6 +1578,16 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                 g_conv = conv_create(hwnd);
             return 0;
 
+        case IDM_SHOWBAR:
+            g_bar_show = !g_bar_show;
+            CheckMenuItem(GetMenu(hwnd), IDM_SHOWBAR, MF_BYCOMMAND
+                | (g_bar_show ? MF_CHECKED : MF_UNCHECKED));
+            bar_rebuild(hwnd);
+            frame_layout(hwnd);
+            InvalidateRect(hwnd, NULL, TRUE);
+            save_ini();
+            return 0;
+
         case IDM_THEME_PAPER:
         case IDM_THEME_SCREEN:
             theme_apply(wParam == IDM_THEME_SCREEN ? THEME_SCREEN
@@ -1477,6 +1607,12 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         case IDM_CASCADE: SendMessage(g_mdi, WM_MDICASCADE, 0, 0L); return 0;
         case IDM_TILE:    SendMessage(g_mdi, WM_MDITILE, 0, 0L); return 0;
         case IDM_ARRANGE: SendMessage(g_mdi, WM_MDIICONARRANGE, 0, 0L); return 0;
+        }
+        /* The menu panel's buttons are children of the frame, so their
+           clicks arrive here. */
+        if (wParam >= IDC_BARBASE && wParam < IDC_BARBASE + MAX_MENU) {
+            menu_run(hwnd, (int)(wParam - IDC_BARBASE));
+            return 0;
         }
         /* Anything else is either a document window being picked off the
            Window menu or a control notification: both belong to
@@ -1531,6 +1667,7 @@ static void load_ini(void)
     GetPrivateProfileString("Display", "Theme", "paper",
                             buf, sizeof(buf), g_ini);
     g_theme = (buf[0] == 's' || buf[0] == 'S') ? THEME_SCREEN : THEME_PAPER;
+    g_bar_show = GetPrivateProfileInt("Display", "MenuBar", 1, g_ini) ? 1 : 0;
 }
 
 static void save_ini(void)
@@ -1543,6 +1680,8 @@ static void save_ini(void)
     WritePrivateProfileString("Display", "Theme",
                               g_theme == THEME_SCREEN ? "screen" : "paper",
                               g_ini);
+    WritePrivateProfileString("Display", "MenuBar",
+                              g_bar_show ? "1" : "0", g_ini);
 }
 
 int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)

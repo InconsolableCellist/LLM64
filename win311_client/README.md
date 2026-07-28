@@ -24,6 +24,12 @@ Verified against a real proxy, running under Wine's 16-bit subsystem:
 - renders the proxy's in-band colour markers, and bold in a real bold face
 - **MDI**: one frame window, documents inside it, a Window menu that
   cascades, tiles and lists them
+- **The default layout**: a big text area with the server-fed menu as a
+  column of buttons down the right, which follows the mode — enter an
+  adventure and Map and Picture of this scene appear on it. F1 opens the
+  same menu as a modal box. Settings ▸ Menu Bar hides the column
+- **Status strip in two halves**: the client's own status on the left,
+  the proxy's `HINT` chrome (place, now playing) right-aligned
 - **`/print` lands on virtual paper** — the proxy composes the document
   and ships it as `PRINT_*` frames; instead of a printer, the client
   catches it in a document window. Up to four sheets at once, and no new
@@ -270,12 +276,13 @@ arriving with no window open is still appended, because the transcript
 belongs to the application and not to any window. Window > New
 Conversation Window opens one on it again, scrollback intact.
 
-**Wine's 16-bit layer does not honour the MDI system accelerators, and
-real Windows does.** Ctrl+F4 (close document) and Ctrl+F5 (restore) do
-nothing under Wine 11.0, while every mouse route works — close box,
-minimize, restore, and the Window menu's Cascade and Tile. On Windows 95
-OSR2 Ctrl+F4 closes the document and leaves the frame up, as it should.
-So `TranslateMDISysAccel` is doing its job and Wine is the gap.
+**Wine's 16-bit layer does not do accelerators at all, and real Windows
+does.** Ctrl+F4 and Ctrl+F5 (MDI system accelerators) do nothing under
+Wine 11.0, and neither do F1/F2/F3 from the app's own table —
+`LoadAccelerators` succeeds there and `TranslateAccelerator` is simply
+inert. Every mouse route works. On Windows 95 OSR2 both Ctrl+F4 and F1
+work as they should. So the client is right and Wine is the gap; every
+accelerator here is also on a menu, which works everywhere.
 
 The lesson generalises past this one key: **Wine proves the protocol and
 the drawing; it does not prove the shell.** Anything that depends on
