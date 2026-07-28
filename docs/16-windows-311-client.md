@@ -618,3 +618,91 @@ chip through a VIC-II picture, the other a General MIDI score over VGA
 art, each rendered for the machine it is on. That is a better demo than
 either client alone, and it costs nothing extra: it falls out of the
 profile table, which is the only structural change the proxy needs.
+
+---
+
+## 14. Handoff
+
+*Written 2026-07-27 for picking this up on another machine. Note that
+the repo's `HANDOFF.md` is a different, still-live handoff about the
+client performance / baud batch — it is not this work.*
+
+### Where the work is
+
+| | |
+|---|---|
+| Branch | `worktree-win311-client`, one commit, tree clean |
+| Base | `origin/master` — **not** the author's local master, which was 8 commits ahead when this branched |
+| Worktree | `.claude/worktrees/win311-client` (nothing in it is special; it is an ordinary branch) |
+| Code | `win311_client/` — see its README for the per-file map |
+| Merged? | No. Not rebased onto the newer master either. |
+
+### What has to exist on the new machine
+
+Everything the repo needs is tracked, including `emu/fixtures` and the
+whole proxy. Three things are not:
+
+1. **Open Watcom V2** — 522 MB extracted, so re-fetch rather than copy:
+   ```sh
+   mkdir -p ~/opt && cd ~/opt
+   curl -LO https://github.com/open-watcom/open-watcom-v2/releases/download/Current-build/ow-snapshot.tar.xz
+   mkdir open-watcom-v2 && tar -xf ow-snapshot.tar.xz -C open-watcom-v2
+   ```
+   The Makefile defaults to `~/opt/open-watcom-v2`; `make WATCOM=...`
+   overrides. `Current-build` is a rolling tag — pin a dated build if
+   two machines need identical output.
+2. **The proxy venv**, because `tools/devproxy.sh` borrows it for
+   Pillow: `cd llm64_proxy && python -m venv .venv && .venv/bin/pip
+   install -r requirements.txt`.
+3. **Wine, xdotool, imagemagick** — only to *run* the client. Headless
+   needs a display: `Xvfb :99 &` and `DISPLAY=:99`.
+
+No `config.toml` is required: `main.py` skips it when absent
+(`main.py:63`) and `devproxy.sh` supplies everything by environment.
+
+### Resuming
+
+```sh
+cd win311_client
+make test                      # host unit test - no Watcom, no Wine, no proxy
+make                           # -> build/LLM64.EXE
+./tools/devproxy.sh 6410 &
+./tools/wine_smoke.sh 6410     # screenshots into build/
+```
+
+`make test` first: it is the one signal that needs no toolchain at all,
+so a green run means the checkout is good before any environment fight.
+
+### Next task, and why it is first
+
+**Phase 1's scrollback rewrite** (§12 risk 2). The transcript is
+currently a 200 × 160 fixed array in the 64 KB default data segment, and
+lines are wrapped *as they are appended* — so a window resize does not
+re-flow anything already on screen, and 32 KB of DGROUP is the ceiling.
+The replacement is known: logical (unwrapped) lines in `GlobalAlloc`'d
+far blocks, wrapped into a small display array at paint time. Doing it
+before the dialogs land means the client does not grow around the wrong
+data structure.
+
+### Decisions still open
+
+- **Per-profile art** (§6.1): the same scene wants two *generations*,
+  not two encodings, once the art prompt is per-profile. Recommendation
+  on file is generate-for-whoever-asked and convert for everyone else,
+  but it is a flag either way.
+- **Where the MIDI corpus comes from** (§6.2, §12 risk 4) — the long
+  pole in Phase 5, and unstarted.
+
+### Traps already paid for
+
+- `wlink` wants directive syntax, not switches; the Makefile links
+  through `wcl`, which needs `binl64` on `PATH` or it cannot find
+  `wlink` at all.
+- Win16 callbacks need `_export` (and `-zu`, since DS != SS in one).
+- `pkill -f LLM64.EXE` matches the *shell running it* and kills the
+  session. Kill by PID, from a script file.
+- `xdotool search --name LLM64` also matches a file manager or editor
+  with the project open; match on the `winevdm.exe` window class too.
+- Anything written to the transcript before the first `WM_SIZE` wraps at
+  the placeholder pane width. That is why the banner is emitted from
+  `start_session()` and not `WM_CREATE`.
