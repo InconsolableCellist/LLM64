@@ -584,3 +584,6 @@ docs/           design docs + setup guides
   [02-c64-client-design.md](docs/02-c64-client-design.md),
   [03-linux-proxy-design.md](docs/03-linux-proxy-design.md) — original design
 - [05-ultimate-setup.md](docs/05-ultimate-setup.md) — real hardware setup
+- [16-windows-311-client.md](docs/16-windows-311-client.md) — a Windows
+  3.11 client for the same proxy, and the multi-client profile design it
+  wants ([win311_client/](win311_client/))

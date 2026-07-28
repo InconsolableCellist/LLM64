@@ -1,0 +1,23 @@
+#include <windows.h>
+
+LLM64MENU MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&Connect",              101
+        MENUITEM "&Disconnect",           102
+        MENUITEM SEPARATOR
+        MENUITEM "&New Conversation\tF2", 103
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit",                 104
+    END
+    POPUP "&Link"
+    BEGIN
+        MENUITEM "&Ping",                 105
+        MENUITEM "&Cancel Reply\tF3",     106
+    END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&About LLM64...",       107
+    END
+END
