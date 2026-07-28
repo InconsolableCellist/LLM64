@@ -73,6 +73,40 @@ make run PORT=6410            # launch under Wine
 ./tools/wine_smoke.sh 6410    # or: drive it and photograph the result
 ```
 
+### The mock, and the real model
+
+`devproxy.sh` deliberately runs the repo's **mock** model
+(`emu/mock_llm.py`) against a real proxy on a scratch port with a scratch
+data directory. That is the loop for working on the client: no API key,
+no GPU, deterministic replies, and `LONGTEST` / `PICTEST` / `MUSICTEST`
+on tap. It will never talk to a real model, by design.
+
+For the real thing, do not start a proxy here at all — point the client
+at the same one the C64 uses. `run.conf` at the repo root already names
+it (`PROXY_HOST` / `PROXY_PORT`), and it is often on another machine:
+
+```sh
+make run HOST=<PROXY_HOST> PORT=<PROXY_PORT>
+make floppy VMHOST=<PROXY_HOST> VMPORT=<PROXY_PORT>   # for a VM
+```
+
+A QEMU guest on user-mode networking reaches an outside address through
+the host's stack, so a proxy over Tailscale or a LAN works from the VM
+as long as the host can reach it.
+
+Running a proxy *locally* against a real model needs
+`llm64_proxy/config.toml` (copy `config.toml.example` and set the model
+endpoint and API key) and then `./run.sh proxy` from the repo root.
+Without that file the proxy starts, accepts the client, and fails every
+reply with an API 401.
+
+**`/print` needs the proxy's printer backend to be `c64`** — the
+shipped default, and the one that sends `PRINT_*` frames to the client.
+A proxy configured for `cups` spools the document to a real print queue
+instead and the client never sees it; `both` does both. It is
+`[printer] backend` in `config.toml`, or `LLM64_PRINTER_BACKEND=c64` in
+the environment.
+
 On a real machine there is no command line, so it reads `LLM64.INI` from
 its own directory — *beside the EXE*, which is not what an unqualified
 name means to `GetPrivateProfileString` (that resolves against the
@@ -202,6 +236,20 @@ draw the transcript and every sheet of paper. The transcript re-flows
 because it is a conversation; paper does not, because the proxy already
 laid it out to a printer width and re-wrapping it would be re-typesetting
 someone else's document.
+
+**An MDI child wanted maximized must still be created with a real size.**
+`WS_MAXIMIZE` in the `MDICREATESTRUCT` together with `CW_USEDEFAULT`
+leaves the *normal* rect degenerate, so the first un-maximize restores
+the window to no area at all — squashed flat on Windows, and gone
+entirely under Wine. Create it with explicit `x/y/cx/cy` and unmaximized,
+then send `WM_MDIMAXIMIZE`: that records the created rect as the one to
+come back to.
+
+**The frame's caption is not a constant.** An MDI frame appends its
+maximized document's title, so the window is really called
+`LLM64 - [Conversation]`. `wine_smoke.sh` matches on the `LLM64` prefix;
+an exact match silently finds nothing and reports that the client never
+started.
 
 **Mnemonics inside one popup must be distinct.** `&Server...` and a
 `&Screen` item beside it both answer to Alt+S, the first one wins, and

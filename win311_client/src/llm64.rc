@@ -5,6 +5,8 @@ LLM64MENU MENU
 BEGIN
     POPUP "&File"
     BEGIN
+        MENUITEM "&Menu...\tF1",          IDM_MENU
+        MENUITEM SEPARATOR
         MENUITEM "&Connect",              IDM_CONNECT
         MENUITEM "&Disconnect",           IDM_DISCONNECT
         MENUITEM SEPARATOR
@@ -47,6 +49,28 @@ BEGIN
     BEGIN
         MENUITEM "&About LLM64...",       IDM_ABOUT
     END
+END
+
+/* F2 and F3 have been on the menu since the spike without an accelerator
+   table behind them, so they never did anything. F1 is the C64's main
+   menu key and stays that here. */
+LLM64ACC ACCELERATORS
+BEGIN
+    VK_F1, IDM_MENU,    VIRTKEY
+    VK_F2, IDM_NEWCONV, VIRTKEY
+    VK_F3, IDM_CANCEL,  VIRTKEY
+END
+
+/* The server-fed menu, as a 1993 program would have shown it: a modal
+   box of pushbuttons you click. The buttons are made at run time
+   because the proxy decides what is on it - so this resource holds only
+   the frame and the way out. */
+LLM64ACTIONS DIALOG 20, 20, 260, 170
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Menu"
+BEGIN
+    LTEXT       "", IDC_MENUTITLE, 10, 6, 240, 9
+    PUSHBUTTON  "Close", IDCANCEL, 105, 150, 50, 14
 END
 
 /* Where the proxy is. On a machine with no command line this is the only

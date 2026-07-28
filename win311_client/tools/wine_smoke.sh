@@ -65,16 +65,18 @@ trap 'kill $wine_pid 2>/dev/null
       [ -n "$wm_pid" ] && kill $wm_pid 2>/dev/null
       [ -n "$xvfb_pid" ] && kill $xvfb_pid 2>/dev/null' EXIT
 
-# The window is the one owned by the 16-bit VDM and titled LLM64 - the
-# title alone matches file managers and editors that happen to have the
-# project open.
+# The window is the one owned by the 16-bit VDM whose title starts with
+# LLM64 - the title alone matches file managers and editors that happen
+# to have the project open. Match on the prefix, not the whole caption:
+# an MDI frame appends its maximized document's title, so this window is
+# really called "LLM64 - [Conversation]" most of the time.
 wid=""
 for _ in $(seq 40); do
     for w in $(xdotool search --classname winevdm.exe 2>/dev/null); do
         case "$before" in *" $w "*) continue;; esac
-        if [ "$(xdotool getwindowname "$w" 2>/dev/null)" = "LLM64" ]; then
-            wid="$w"; break 2
-        fi
+        case "$(xdotool getwindowname "$w" 2>/dev/null)" in
+            LLM64*) wid="$w"; break 2;;
+        esac
     done
     sleep 0.5
 done

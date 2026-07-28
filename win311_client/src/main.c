@@ -254,7 +254,7 @@ static void view_touch(View *v)
 {
     view_bottom(v);
     if (v->pane)
-        InvalidateRect(v->pane, NULL, TRUE);
+        InvalidateRect(v->pane, NULL, FALSE);
 }
 
 static void say(unsigned char color, const char *s)
@@ -285,16 +285,30 @@ static void set_status(const char *s)
 /* Painting                                                          */
 /* ---------------------------------------------------------------- */
 
-/* Draw one display row. The markers are still in the text - they are
-   what the runs are split on, and the row arrives already knowing the
-   colour and weight in force at its first cell, which is what makes a
-   span that survives a wrap render the same on both rows. */
-static void paint_row(HDC hdc, int x0, int y, const SbRow *r)
+/* The markers are still in the text - they are what the runs are split
+   on, and the row arrives already knowing the colour and weight in force
+   at its first cell, which is what makes a span that survives a wrap
+   render the same on both rows.
+
+   Draw one row and everything to the left and right of it, leaving no
+   pixel of the row touched twice. That is the whole trick to a pane that
+   does not flash: a streamed reply repaints many times a second, and
+   filling the pane first and drawing text after means the eye catches
+   the blank. Each run is drawn with ETO_OPAQUE, which lays down the
+   background and the glyphs in one operation, and only the margins -
+   which never hold text - are filled separately. */
+static void paint_row(HDC hdc, int x0, int y, int right, const SbRow *r)
 {
     unsigned i, run_start = 0;
     int x = x0, n;
     unsigned char color = r->color;
     unsigned char bold = r->bold;
+    RECT rr;
+
+    if (x0 > 0) {
+        rr.left = 0; rr.top = y; rr.right = x0; rr.bottom = y + g_ch;
+        ExtTextOut(hdc, 0, y, ETO_OPAQUE, &rr, "", 0, NULL);
+    }
 
     /* i == r->len closes the last run, and at that point there is no
        byte to read: a row can end flush against the end of an arena
@@ -310,7 +324,10 @@ static void paint_row(HDC hdc, int x0, int y, const SbRow *r)
             if (n > 0) {
                 SetTextColor(hdc, g_pal[color & 0x0F]);
                 SelectObject(hdc, bold ? g_font_bold : g_font);
-                TextOut(hdc, x, y, (LPSTR)(r->text + run_start), n);
+                rr.left = x; rr.top = y;
+                rr.right = x + n * g_cw; rr.bottom = y + g_ch;
+                ExtTextOut(hdc, x, y, ETO_OPAQUE, &rr,
+                           (LPSTR)(r->text + run_start), n, NULL);
                 x += n * g_cw;
             }
             if (is_marker) {
@@ -321,6 +338,12 @@ static void paint_row(HDC hdc, int x0, int y, const SbRow *r)
             }
             run_start = i + 1;
         }
+    }
+
+    /* The rest of the row, past the end of the text. */
+    if (x < right) {
+        rr.left = x; rr.top = y; rr.right = right; rr.bottom = y + g_ch;
+        ExtTextOut(hdc, x, y, ETO_OPAQUE, &rr, "", 0, NULL);
     }
 }
 
@@ -339,25 +362,33 @@ static void pane_paint(HWND hwnd)
     SbView it;
     SbRow  r;
     int row, rows;
-    HBRUSH bg;
     View *v = pane_view(hwnd);
 
     hdc = BeginPaint(hwnd, &ps);
     GetClientRect(hwnd, &rc);
-    bg = CreateSolidBrush(g_bg);
-    FillRect(hdc, &rc, bg);
-    DeleteObject(bg);
 
     if (!v || !v->live) {
+        FillRect(hdc, &rc, g_bg_brush);
         EndPaint(hwnd, &ps);
         return;
     }
 
-    SetBkMode(hdc, TRANSPARENT);
+    /* Opaque, not transparent: the rows lay down their own background,
+       which is what keeps a streaming reply from flashing. */
+    SetBkMode(hdc, OPAQUE);
+    SetBkColor(hdc, g_bg);
     rows = view_rows(v);
+    row = 0;
     if (sb_view(&v->sb, (unsigned long)v->top, &it)) {
-        for (row = 0; row < rows && sb_view_next(&it, &r); row++)
-            paint_row(hdc, v->margin, row * g_ch, &r);
+        for (; row < rows && sb_view_next(&it, &r); row++)
+            paint_row(hdc, v->margin, row * g_ch, rc.right, &r);
+    }
+    /* Only what is left below the last row, and only once. */
+    if (row * g_ch < rc.bottom) {
+        RECT tail;
+        tail.left = 0; tail.top = row * g_ch;
+        tail.right = rc.right; tail.bottom = rc.bottom;
+        FillRect(hdc, &tail, g_bg_brush);
     }
     EndPaint(hwnd, &ps);
 }
@@ -423,6 +454,54 @@ static void send_text_frame(unsigned char type, const char *text)
     if (len > WIRE_MAX_PAYLOAD)
         return;
     send_frame(type, (const unsigned char *)text, len);
+}
+
+/* ---------------------------------------------------------------- */
+/* The server-fed menu                                               */
+/* ---------------------------------------------------------------- */
+
+/* MENU_LIST: [count][more] then [key][label\0][cmd\0] per entry. A cmd
+   beginning with '!' is a local action; anything else is a command to
+   send as if it had been typed. The proxy decides what is on the menu,
+   so a new server feature appears here with no client rebuild - the one
+   idea from the C64's F1 panel worth keeping on any machine. */
+static struct {
+    char key;
+    char label[28];
+    char cmd[12];
+} g_menu[MAX_MENU];
+static int g_menu_count;
+static int g_menu_choice;
+
+static void menu_parse(const unsigned char *p, unsigned len)
+{
+    unsigned i = 2, s;
+    int want;
+
+    if (len < 2)
+        return;
+    want = p[0];
+    g_menu_count = 0;
+    while (i < len && g_menu_count < MAX_MENU && g_menu_count < want) {
+        char key = (char)p[i++];
+
+        s = i;
+        while (i < len && p[i]) i++;
+        if (i >= len) break;            /* label not terminated: give up */
+        lstrcpyn(g_menu[g_menu_count].label, (const char *)(p + s),
+                 sizeof(g_menu[0].label));
+        i++;
+
+        s = i;
+        while (i < len && p[i]) i++;
+        if (i >= len) break;
+        lstrcpyn(g_menu[g_menu_count].cmd, (const char *)(p + s),
+                 sizeof(g_menu[0].cmd));
+        i++;
+
+        g_menu[g_menu_count].key = key;
+        g_menu_count++;
+    }
 }
 
 /* Open a window on a finished sheet. The slot travels in the MDI create
@@ -570,6 +649,10 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
 
     case MSG_ACK:
         set_status("Proxy answered the ping - link is good.");
+        break;
+
+    case MSG_MENU_LIST:
+        menu_parse(p, len);
         break;
 
     case MSG_HINT:
@@ -976,6 +1059,79 @@ static void start_session(HWND hwnd)
 
 static void save_ini(void);
 
+/* The menu, as a 1993 program would have shown it: a modal box of
+   pushbuttons. The buttons are made here rather than in the resource
+   because the proxy decides how many there are and what they say, and
+   each carries the proxy's own key as its mnemonic - so the muscle
+   memory from the C64's F1 panel still works. */
+BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
+                                    LONG lParam)
+{
+    int i, rows, cols, x, y, w, h;
+    /* mgy clears the caption line above the buttons - the static text is
+       at 6 dialog units, which is lower than it looks. */
+    int bw = 190, bh = 26, gap = 6, mgx = 12, mgy = 34;
+    HINSTANCE inst;
+    RECT wr, cr, fr;
+    char text[52];
+
+    (void)lParam;
+    switch (msg) {
+    case WM_INITDIALOG:
+        inst = (HINSTANCE)GetWindowWord(dlg, GWW_HINSTANCE);
+        SetDlgItemText(dlg, IDC_MENUTITLE, g_menu_count
+            ? "Choose an action:"
+            : "The proxy has not sent its menu yet. Connect, then try F1.");
+
+        cols = (g_menu_count > 7) ? 2 : 1;
+        rows = cols ? (g_menu_count + cols - 1) / cols : 1;
+        if (rows < 1) rows = 1;
+        for (i = 0; i < g_menu_count; i++) {
+            /* "Cancel reply (&x)" - the label the proxy wrote, and the
+               key it chose, in the place Windows expects a mnemonic. */
+            wsprintf(text, "%s (&%c)", (LPSTR)g_menu[i].label,
+                     g_menu[i].key);
+            CreateWindow("BUTTON", text,
+                         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                         mgx + (i / rows) * (bw + gap),
+                         mgy + (i % rows) * (bh + gap),
+                         bw, bh, dlg, (HMENU)(IDC_MENUBASE + i), inst, NULL);
+        }
+
+        /* Fit the box to what it actually holds - a menu of four should
+           not open a window sized for thirteen. */
+        w = mgx * 2 + cols * bw + (cols - 1) * gap;
+        h = mgy + rows * (bh + gap) + 10 + bh;
+        GetWindowRect(dlg, &wr);
+        GetClientRect(dlg, &cr);
+        w += (int)(wr.right - wr.left) - (int)cr.right;
+        h += (int)(wr.bottom - wr.top) - (int)cr.bottom;
+        /* Centred on the frame, which is where a modal belongs. */
+        GetWindowRect(g_frame, &fr);
+        x = (int)fr.left + ((int)(fr.right - fr.left) - w) / 2;
+        y = (int)fr.top + ((int)(fr.bottom - fr.top) - h) / 2;
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+        SetWindowPos(dlg, NULL, x, y, w, h, SWP_NOZORDER);
+        MoveWindow(GetDlgItem(dlg, IDCANCEL),
+                   (w - 70) / 2, mgy + rows * (bh + gap) + 4, 70, bh, TRUE);
+        return TRUE;
+
+    case WM_COMMAND:
+        if (wParam >= IDC_MENUBASE && wParam < IDC_MENUBASE + MAX_MENU) {
+            g_menu_choice = (int)(wParam - IDC_MENUBASE);
+            EndDialog(dlg, 1);
+            return TRUE;
+        }
+        if (wParam == IDCANCEL) {
+            EndDialog(dlg, 0);
+            return TRUE;
+        }
+        break;
+    }
+    return FALSE;
+}
+
 /* Server settings. The one dialog the client cannot do without on a real
    machine: there is no command line there, so without this the only way
    to change the address is to rebuild the disk the program came on. */
@@ -1022,27 +1178,120 @@ BOOL FAR PASCAL _export ServerDlgProc(HWND dlg, UINT msg, UINT wParam,
     return FALSE;
 }
 
+/* Put the Server box up and act on what it decided. Reached from the
+   Settings menu and from the proxy's own "Server config" entry. */
+static void server_dialog(HWND owner)
+{
+    HINSTANCE inst = (HINSTANCE)GetWindowWord(owner, GWW_HINSTANCE);
+    /* MakeProcInstance is not optional in Win16: the dialog is called
+       back through a thunk that reloads DS for this instance. */
+    FARPROC fn = MakeProcInstance((FARPROC)ServerDlgProc, inst);
+    int r = DialogBox(inst, "LLM64SERVER", owner, (DLGPROC)fn);
+
+    FreeProcInstance(fn);
+    if (r == 2) {
+        net_disconnect();
+        do_connect();
+    } else if (r == 1) {
+        char msg[160];
+        wsprintf(msg, "Server set to %s:%u - connect when ready.",
+                 (LPSTR)g_host, g_port);
+        set_status(msg);
+    }
+}
+
+static void new_conversation(void)
+{
+    send_frame(MSG_NEW_CONVERSATION, NULL, 0);
+    sb_clear(&g_conv_view.sb);
+    view_touch(&g_conv_view);
+}
+
+/* Act on a menu entry. '!' means the action lives here; anything else is
+   a command the proxy understands, sent exactly as if it had been typed
+   - which is why a new server-side command needs no client change. */
+static void menu_run(HWND owner, int idx)
+{
+    const char *cmd;
+
+    if (idx < 0 || idx >= g_menu_count)
+        return;
+    cmd = g_menu[idx].cmd;
+
+    if (cmd[0] != '!') {
+        if (net_state() != NET_UP) {
+            say(2, "Not connected. Use File > Connect.");
+            return;
+        }
+        say(1, cmd);
+        send_text_frame(MSG_CHAT_REQUEST, cmd);
+        set_status("Waiting for the model...");
+        if (g_input)
+            EnableWindow(g_input, FALSE);
+        return;
+    }
+
+    switch (cmd[1]) {
+    case 'n':
+        new_conversation();
+        break;
+    case 'x':
+        send_frame(MSG_CANCEL_REQUEST, NULL, 0);
+        input_enable(1);
+        set_status("Cancelled.");
+        break;
+    case 'e':
+        server_dialog(owner);
+        break;
+    case 'd':
+        /* mod_diskcopy exists because a C64 program has to be able to
+           copy itself onto a blank disk. Nothing here does. */
+        say(12, "Copying the client disk is a C64 problem.");
+        break;
+    case 'c':
+        say(12, "The conversation manager is not built yet.");
+        break;
+    case 'j':
+        say(12, "The jukebox is not built yet - music is MIDI here, "
+                "and that is still to come.");
+        break;
+    default:
+        say(12, "That entry has no Windows equivalent yet.");
+        break;
+    }
+}
+
 /* Open the conversation document. One today; the same call is how a
    picture viewer or a jukebox will arrive. */
 static HWND conv_create(HWND frame)
 {
     MDICREATESTRUCT mcs;
 
+    HWND w;
+
     mcs.szClass = CONV_CLASS;
     mcs.szTitle = "Conversation";
     mcs.hOwner  = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
-    mcs.x       = CW_USEDEFAULT;
-    mcs.y       = CW_USEDEFAULT;
-    mcs.cx      = CW_USEDEFAULT;
-    mcs.cy      = CW_USEDEFAULT;
-    /* Maximized: with a single document the workspace border is all
-       cost and no information. Restoring it is a click away, and that
-       is where a second window starts making sense. */
-    mcs.style   = WS_MAXIMIZE;
+    /* A real restored size, not CW_USEDEFAULT, and created *unmaximized*
+       even though it is wanted maximized. Creating it maximized with
+       CW_USEDEFAULT leaves the normal rect degenerate, so the first
+       un-maximize restores the window to no area at all - squashed flat
+       on Windows, and gone entirely under Wine. Maximizing afterwards
+       records this rect as the one to come back to. */
+    mcs.x       = 8;
+    mcs.y       = 8;
+    mcs.cx      = g_cw * 80 + 6 * GetSystemMetrics(SM_CXVSCROLL);
+    mcs.cy      = g_ch * 24;
+    mcs.style   = 0;
     mcs.lParam  = 0;
 
-    return (HWND)(WORD)SendMessage(g_mdi, WM_MDICREATE, 0,
-                                   (LONG)(LPMDICREATESTRUCT)&mcs);
+    w = (HWND)(WORD)SendMessage(g_mdi, WM_MDICREATE, 0,
+                                (LONG)(LPMDICREATESTRUCT)&mcs);
+    /* With a single document the workspace border is all cost and no
+       information, so open maximized anyway. */
+    if (w)
+        SendMessage(g_mdi, WM_MDIMAXIMIZE, (WPARAM)w, 0L);
+    return w;
 }
 
 long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
@@ -1141,6 +1390,8 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
             if (net_state() == NET_UP) {
                 set_status("Connected. Pinging...");
                 send_frame(MSG_PING, NULL, 0);
+                /* Fetch the menu now so F1 has something in it. */
+                send_frame(MSG_GET_MENU, NULL, 0);
             } else {
                 set_status(err);
                 say(2, err);
@@ -1162,9 +1413,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                              set_status("Disconnected."); return 0;
         case IDM_PING:       send_frame(MSG_PING, NULL, 0);
                              set_status("Ping sent."); return 0;
-        case IDM_NEWCONV:    send_frame(MSG_NEW_CONVERSATION, NULL, 0);
-                             sb_clear(&g_conv_view.sb);
-                             view_touch(&g_conv_view); return 0;
+        case IDM_NEWCONV:    new_conversation(); return 0;
         case IDM_CANCEL:     send_frame(MSG_CANCEL_REQUEST, NULL, 0);
                              input_enable(1); return 0;
         case IDM_ABOUT:
@@ -1178,23 +1427,24 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
             PostMessage(hwnd, WM_CLOSE, 0, 0L);
             return 0;
 
-        case IDM_SERVER: {
+        case IDM_SERVER:
+            server_dialog(hwnd);
+            return 0;
+
+        case IDM_MENU: {
             HINSTANCE inst = (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE);
-            /* MakeProcInstance is not optional in Win16: the dialog is
-               called back through a thunk that reloads DS for this
-               instance. */
-            FARPROC fn = MakeProcInstance((FARPROC)ServerDlgProc, inst);
-            int r = DialogBox(inst, "LLM64SERVER", hwnd, (DLGPROC)fn);
+            FARPROC fn;
+            int r;
+
+            /* Ask again if we have nothing: the menu changes with the
+               mode, so a stale one is worse than a late one. */
+            if (net_state() == NET_UP)
+                send_frame(MSG_GET_MENU, NULL, 0);
+            fn = MakeProcInstance((FARPROC)MenuDlgProc, inst);
+            r = DialogBox(inst, "LLM64ACTIONS", hwnd, (DLGPROC)fn);
             FreeProcInstance(fn);
-            if (r == 2) {
-                net_disconnect();
-                do_connect();
-            } else if (r == 1) {
-                char msg2[160];
-                wsprintf(msg2, "Server set to %s:%u - connect when ready.",
-                         (LPSTR)g_host, g_port);
-                set_status(msg2);
-            }
+            if (r == 1)
+                menu_run(hwnd, g_menu_choice);
             return 0;
         }
 
@@ -1299,6 +1549,7 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
 {
     WNDCLASS wc;
     HWND hwnd;
+    HANDLE accel;
     MSG msg;
     char *p;
 
@@ -1375,11 +1626,22 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
     ShowWindow(hwnd, show);
     UpdateWindow(hwnd);
 
+    /* F1/F2/F3. The menu has advertised F2 and F3 since the spike with
+       no accelerator table behind them, so they never worked. */
+    /* The table loads under Wine and its keys do nothing there, the
+       same way TranslateMDISysAccel does nothing there: Wine's 16-bit
+       layer does not do accelerators. Ctrl+F4 proved that pattern on
+       real Windows, so F1/F2/F3 are expected to work on a real machine
+       and to stay dead under the emulator. Every one of them is also on
+       a menu, which works everywhere. */
+    accel = LoadAccelerators(hInst, "LLM64ACC");
+
     while (GetMessage(&msg, NULL, 0, 0)) {
         /* Ctrl+F4, Ctrl+F6 and the rest of the MDI system accelerators
            are the document windows', and they have to be offered the
            message before the frame translates it. */
-        if (!TranslateMDISysAccel(g_mdi, &msg)) {
+        if (!TranslateMDISysAccel(g_mdi, &msg)
+            && !(accel && TranslateAccelerator(hwnd, accel, &msg))) {
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }

@@ -26,6 +26,7 @@
 #define IDM_THEME_PAPER 113
 #define IDM_THEME_SCREEN 114
 #define IDM_CLOSEPAPER  115
+#define IDM_MENU        116
 
 #define IDM_FIRSTCHILD  200
 
@@ -37,5 +38,11 @@
 #define IDC_HOST        1101
 #define IDC_PORT        1102
 #define IDC_RECONNECT   1103
+
+/* Menu dialog. The entry buttons are created at run time - the proxy
+   decides how many there are - and numbered from IDC_MENUBASE. */
+#define IDC_MENUTITLE   1200
+#define IDC_MENUBASE    1210
+#define MAX_MENU        16
 
 #endif /* RESOURCE_H */
