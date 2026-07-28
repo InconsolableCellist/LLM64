@@ -665,15 +665,25 @@ Window > New Conversation Window opens onto it with the scrollback
 intact. Confirmed end to end: close, chat, reopen, and the earlier text
 is still there.
 
-One open question, and the Win95 VM is the place to answer it: Wine's
-16-bit MDI did not act on Ctrl+F4 or Ctrl+F5 at all, while every mouse
-route worked. `TranslateMDISysAccel` is in the message loop where it
-belongs, so this looks like the emulator rather than the client — but it
-is unproven either way.
+One question the emulator could not answer, now answered on the metal:
+Wine's 16-bit layer did not act on Ctrl+F4 or Ctrl+F5 at all, while
+every mouse route worked. On Windows 95 OSR2 **Ctrl+F4 closes the
+document and leaves the frame standing**, and Window > New Conversation
+Window brings it back. `TranslateMDISysAccel` was doing its job all
+along; Wine is the gap.
+
+That is worth more than the keystroke. **Wine proves the protocol and
+the drawing; it does not prove the shell.** Winsock, the framing, the
+transcript and every pixel of the pane are testable under Wine in
+seconds. Anything resting on Windows' own keyboard handling, menu
+behaviour or window management is not, and has to be believed only after
+a real machine has been asked.
 
 ### The first real-machine run, and what it asked for
 
-The client runs on Windows 95 OSR2 under QEMU. The first thing that went
+The client runs on Windows 95 OSR2 under QEMU: it connects to the proxy,
+holds a conversation, and its document windows close and reopen from the
+keyboard. The first thing that went
 wrong there was not the client: it was not knowing which address the
 program was dialling, and having no way to change it without rebuilding
 the floppy it booted from. Both are now answered:
@@ -720,11 +730,20 @@ proc that is already half torn down.
    normalisation, hand review); the MIDI equivalent is smaller but not
    free, and it is the long pole in Phase 5.
 5. **Real 3.11 hardware needs an NDIS driver** for whatever NIC the
-   machine has. A solved problem, but a shopping problem.
+   machine has. A solved problem, but a shopping problem. Windows 95
+   needs nothing: it runs the NE binary and ships its own 16-bit
+   `WINSOCK.DLL`, which is why it was the first real machine this ran
+   on.
 6. **Protocol drift.** Two clients means the wire is now an interface,
    not an implementation detail. `CLIENT_HELLO` and the profile table
    are what keep that honest; without them every future change has to be
    simultaneously C64-safe and Windows-safe by accident.
+7. **Wine cannot test the shell.** Not a risk to the design but a
+   standing limit on the harness: Winsock, the framing, the transcript
+   and every pixel of the pane are testable under Wine in seconds, while
+   keyboard handling, menu behaviour and window management have to be
+   confirmed on a real machine. The MDI accelerators are the case that
+   proved it (§10) — inert under Wine, correct on Windows 95.
 
 ---
 
@@ -842,6 +861,10 @@ negotiated rather than assumed.
 - A headless Xvfb needs a window manager or Wine never delivers
   `WM_SIZE`, and every resize test on it passes without testing
   anything.
+- Wine's 16-bit `TranslateMDISysAccel` is inert: Ctrl+F4 and Ctrl+F5 do
+  nothing there and work on real Windows. Do not debug the client over
+  it — and more generally, do not conclude anything about keyboard,
+  menu or window-management behaviour from Wine alone.
 - Anything written to the transcript before the first `WM_SIZE` wraps at
   the placeholder pane width. That is why the banner is emitted from
   `start_session()` and not `WM_CREATE`.

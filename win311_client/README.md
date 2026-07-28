@@ -203,9 +203,14 @@ arriving with no window open is still appended, because the transcript
 belongs to the application and not to any window. Window > New
 Conversation Window opens one on it again, scrollback intact.
 
-**Wine's 16-bit MDI does not appear to honour the system accelerators.**
-Ctrl+F4 (close document) and Ctrl+F5 (restore) do nothing under Wine
-11.0, while the mouse routes — close box, minimize, restore, and the
-Window menu's Cascade and Tile — all work. `TranslateMDISysAccel` is in
-the loop where it belongs; this wants re-checking on real Windows or in
-the Win95 VM before concluding anything about the client.
+**Wine's 16-bit layer does not honour the MDI system accelerators, and
+real Windows does.** Ctrl+F4 (close document) and Ctrl+F5 (restore) do
+nothing under Wine 11.0, while every mouse route works — close box,
+minimize, restore, and the Window menu's Cascade and Tile. On Windows 95
+OSR2 Ctrl+F4 closes the document and leaves the frame up, as it should.
+So `TranslateMDISysAccel` is doing its job and Wine is the gap.
+
+The lesson generalises past this one key: **Wine proves the protocol and
+the drawing; it does not prove the shell.** Anything that depends on
+Windows' own keyboard handling, menu behaviour or window management
+needs a real machine before it can be called working.
