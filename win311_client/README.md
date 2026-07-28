@@ -62,13 +62,37 @@ make run PORT=6410            # launch under Wine
 ./tools/wine_smoke.sh 6410    # or: drive it and photograph the result
 ```
 
-On a real machine, put `LLM64.INI` beside the EXE:
+On a real machine there is no command line, so it reads `LLM64.INI` from
+its own directory — *beside the EXE*, which is not what an unqualified
+name means to `GetPrivateProfileString` (that resolves against the
+Windows directory), so the path is derived from `GetModuleFileName`:
 
 ```ini
 [Server]
 Host=192.168.1.10
 Port=6400
 ```
+
+## In a VM
+
+`make floppy` writes a 1.44 MB image holding the EXE and a matching INI:
+
+```sh
+make floppy                       # -> build/llm64.img, pointing at 10.0.2.2:6410
+make floppy VMHOST=10.0.2.2 VMPORT=6400
+```
+
+Attach it with `-fda build/llm64.img` and run `A:\LLM64.EXE`. Under
+QEMU's user-mode networking the host is **10.0.2.2** from inside the
+guest, and a proxy bound to the host's loopback is reachable there — so
+`./tools/devproxy.sh 6410` on the host needs no extra plumbing.
+
+The guest needs TCP/IP bound to its network card (Control Panel →
+Network); slirp runs a DHCP server, so "obtain an IP address
+automatically" is enough. Windows 95 and 98 run the NE binary natively
+and ship their own 16-bit `WINSOCK.DLL`, so nothing else is required
+there. Windows 3.1 needs Trumpet Winsock; WfW 3.11 wants Microsoft's
+TCP/IP-32.
 
 ## Layout
 

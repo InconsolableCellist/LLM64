@@ -58,6 +58,7 @@ static FARPROC  g_old_edit_proc;
 static char     g_status[128] = "Not connected.";
 static char     g_host[64];
 static unsigned g_port;
+static char     g_ini[160];     /* full path to LLM64.INI */
 
 static unsigned char g_rxbuf[WIRE_MAX_PAYLOAD];
 static WireRx        g_rx;
@@ -622,11 +623,30 @@ long FAR PASCAL _export MainProc(HWND hwnd, UINT msg, UINT wParam,
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
+/* Where LLM64.INI is, in full. A bare filename does not mean "next to
+   the program": the profile calls resolve an unqualified name against
+   the Windows directory, which is the last place someone running this
+   off a floppy or out of a folder would think to put it. So derive the
+   path from the module's own. */
+static void ini_path(HINSTANCE hInst)
+{
+    char *p;
+
+    if (GetModuleFileName(hInst, g_ini, sizeof(g_ini) - 16) <= 0) {
+        lstrcpy(g_ini, INI_FILE);
+        return;
+    }
+    p = g_ini + lstrlen(g_ini);
+    while (p > g_ini && *(p - 1) != '\\' && *(p - 1) != ':')
+        p--;
+    lstrcpy(p, INI_FILE);
+}
+
 static void load_ini(void)
 {
     GetPrivateProfileString("Server", "Host", "127.0.0.1",
-                            g_host, sizeof(g_host), INI_FILE);
-    g_port = GetPrivateProfileInt("Server", "Port", 6400, INI_FILE);
+                            g_host, sizeof(g_host), g_ini);
+    g_port = GetPrivateProfileInt("Server", "Port", 6400, g_ini);
 }
 
 int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
@@ -636,6 +656,7 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
     MSG msg;
     char *p;
 
+    ini_path(hInst);
     load_ini();
     /* "LLM64 host port" on the command line beats the INI - it is how
        the test harness points the client at a scratch proxy. */

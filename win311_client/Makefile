@@ -37,7 +37,13 @@ WINEPREFIX ?= $(HOME)/.wine-llm64
 HOST ?= 127.0.0.1
 PORT ?= 6400
 
-.PHONY: all run devproxy test clean
+# A 1.44 MB floppy image is how the binary gets into a VM or onto real
+# hardware. QEMU's user-mode networking puts the host at 10.0.2.2 as
+# seen from the guest, so that is what the INI on it points at.
+VMHOST ?= 10.0.2.2
+VMPORT ?= 6410
+
+.PHONY: all run devproxy test floppy clean
 
 all: $(EXE)
 
@@ -66,6 +72,20 @@ test:
 	./build/test_wire
 	cc -Wall -Iinclude -o build/test_scroll src/scroll.c tests/test_scroll.c
 	./build/test_scroll
+
+# The EXE plus an INI, on a floppy image a VM can mount. The INI has to
+# travel with it: the client reads the one beside itself, and CRLF is
+# not optional in a file Windows will parse.
+floppy: $(EXE)
+	rm -f build/llm64.img
+	mformat -C -f 1440 -v LLM64 -i build/llm64.img ::
+	printf '[Server]\r\nHost=%s\r\nPort=%s\r\n' '$(VMHOST)' '$(VMPORT)' \
+	    > build/LLM64.INI
+	mcopy -i build/llm64.img $(EXE) ::/LLM64.EXE
+	mcopy -i build/llm64.img build/LLM64.INI ::/LLM64.INI
+	@echo
+	@echo "-> $(CURDIR)/build/llm64.img  (A: = $(VMHOST):$(VMPORT))"
+	@echo "   attach to QEMU with:  -fda $(CURDIR)/build/llm64.img"
 
 clean:
 	rm -rf build

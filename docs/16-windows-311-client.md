@@ -515,6 +515,16 @@ For real-machine fidelity: `qemu-system-i386` is installed and WfW 3.11
 PCem give a more convincing 486. On modern 64-bit Windows the 16-bit
 build needs **otvdm/winevdm** — or you just ship `LLM32.EXE`.
 
+**Windows 95/98 run this binary with nothing added.** They keep a full
+Win16 subsystem, and — unlike 3.1 — ship a 16-bit `WINSOCK.DLL` as part
+of the OS, so the client needs only that TCP/IP is bound to the adapter.
+That makes a Win95 VM the cheapest real-machine test there is, at the
+cost of the one thing the exercise is about: the app wears Win95 chrome,
+so it stops looking like 1993 and starts looking like 1995. Good for
+proving the protocol on real hardware-ish; not the fidelity target.
+`make floppy` builds a 1.44 MB image with the EXE and an INI on it,
+since a VM has no command line to pass the host and port on.
+
 ---
 
 ## 10. Testing
