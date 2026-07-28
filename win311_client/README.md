@@ -22,8 +22,14 @@ Verified against a real proxy, running under Wine's 16-bit subsystem:
 - connects, PINGs, and gets its ACK
 - sends `CHAT_REQUEST`, renders streamed `CHAT_CHUNK` replies
 - renders the proxy's in-band colour markers, and bold in a real bold face
-- **MDI**: one frame window, the conversation as a document window inside
-  it, a Window menu that cascades, tiles and lists the open documents
+- **MDI**: one frame window, documents inside it, a Window menu that
+  cascades, tiles and lists them
+- **`/print` lands on virtual paper** — the proxy composes the document
+  and ships it as `PRINT_*` frames; instead of a printer, the client
+  catches it in a document window. Up to four sheets at once, and no new
+  wire messages were needed
+- **Two themes**: Paper (black on white, a 1993 business application) and
+  C64 Screen (the Pepto palette on black). Settings ▸, saved to the INI
 - menu bar, transcript pane with scroll bar, input box, status strip
 - reads `LLM64.INI`; the command line overrides it
 - **Settings ▸ Server…** retypes the host and port and reconnects,
@@ -188,6 +194,19 @@ only.
 **Callbacks need `_export`** so the compiler emits the prologue that
 reloads DS. `-zu` is set for the same reason: in a Win16 callback,
 DS != SS.
+
+**Every document is a `View`** — a `Scrollback`, a scroll position, and
+whether it re-flows. The pane window keeps a far pointer to its View in
+its extra window bytes (`cbWndExtra`), which is what lets one `PaneProc`
+draw the transcript and every sheet of paper. The transcript re-flows
+because it is a conversation; paper does not, because the proxy already
+laid it out to a printer width and re-wrapping it would be re-typesetting
+someone else's document.
+
+**Mnemonics inside one popup must be distinct.** `&Server...` and a
+`&Screen` item beside it both answer to Alt+S, the first one wins, and
+the menu looks broken in a way that reads as a theme bug. Caught only by
+driving the menu from the keyboard.
 
 **It is an MDI application**, so three things are not optional:
 `DefFrameProc`/`DefMDIChildProc` in place of `DefWindowProc`,

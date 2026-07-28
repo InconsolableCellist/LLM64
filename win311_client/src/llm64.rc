@@ -20,6 +20,16 @@ BEGIN
     POPUP "&Settings"
     BEGIN
         MENUITEM "&Server...",            IDM_SERVER
+        MENUITEM SEPARATOR
+        /* Paper is a 1993 business application on white; the other is
+           the C64's own palette on black. docs/16 section 6.3 - the
+           point was always that it should be a setting.
+
+           Mnemonics inside one popup have to be distinct: "&Server" and
+           a "&Screen" beside it both answer to S, and the first one
+           wins - so the theme item is C for C64. */
+        MENUITEM "&Paper (black on white)",   IDM_THEME_PAPER
+        MENUITEM "&C64 Screen (light on black)", IDM_THEME_SCREEN
     END
     /* The MDI window menu. It has to be a real popup that the frame can
        hand to the MDI client, which appends the child list to it. Its
@@ -27,6 +37,7 @@ BEGIN
     POPUP "&Window"
     BEGIN
         MENUITEM "&New Conversation Window", IDM_NEWWINDOW
+        MENUITEM "Close All &Printouts",     IDM_CLOSEPAPER
         MENUITEM SEPARATOR
         MENUITEM "&Cascade\tShift+F5",    IDM_CASCADE
         MENUITEM "&Tile\tShift+F4",       IDM_TILE

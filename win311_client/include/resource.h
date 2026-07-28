@@ -23,6 +23,9 @@
 #define IDM_ARRANGE     110
 #define IDM_NEWWINDOW   111
 #define IDM_SERVER      112
+#define IDM_THEME_PAPER 113
+#define IDM_THEME_SCREEN 114
+#define IDM_CLOSEPAPER  115
 
 #define IDM_FIRSTCHILD  200
 

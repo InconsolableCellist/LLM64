@@ -453,6 +453,15 @@ The `flags` byte already carries "business charset" and "form feed
 before close"; for a GDI sink the first is meaningless and the second is
 a page eject, so the semantics survive translation.
 
+**Paper before a printer.** The first sink built is not a printer DC at
+all: it is a document window. `PRINT_BEGIN`/`DATA`/`END` are caught, the
+blocks ACKed exactly as the C64 ACKs them, and the composed document
+opened as a sheet in the workspace — up to four on the desk at once. It
+needs no printer installed, no driver, and no proxy change, and on a
+1993 machine it is what Print Preview was. A real `PrintDlg` and printer
+DC then become a second sink for a document already in hand, rather than
+the only way to see what `/print` produced.
+
 Details worth getting right:
 
 - **Width.** The proxy lays a document out to `printer_width` (78 by
@@ -577,7 +586,7 @@ emulator anywhere in the loop.
 | **3 — pictures** | Blob → DIB modal viewer (Path A, no proxy change) | media transfer end-to-end |
 | **4 — profiles** | `CLIENT_HELLO`, the proxy's `ClientProfile`, negotiated widths and payloads, per-profile art (§7) | the proxy is multi-client, not C64-with-exceptions |
 | **5 — MIDI** | `MIDI_*` frames, a mood-tagged GM corpus, MCI playback, jukebox dialog | the era's music, and the last new subsystem |
-| **6 — printing** | `PRINT_*` to a GDI printer DC via `PrintDlg` (§8) | hardcopy, with no new wire messages |
+| **6 — printing** ◐ | `PRINT_*` caught in a paper document window ✅; a GDI printer DC via `PrintDlg` (§8) still to do | hardcopy, with no new wire messages |
 | **7 — polish** | CTL3D, icon, About, Win32 build, installer | it looks like it shipped |
 
 ### What Phase 0 actually measured
@@ -707,6 +716,40 @@ the floppy it booted from. Both are now answered:
 The dialog also fixes the reconnect ordering trap: it returns its intent
 as a result code rather than calling into the socket from inside a modal
 proc that is already half torn down.
+
+### Paper, and the colour it is printed on
+
+Two changes that turned out to be the same change. Both landed after the
+Win95 run.
+
+**A second kind of document.** Every document is now a `View`: a
+`Scrollback`, a scroll position, and whether it re-flows. The pane window
+carries a far pointer to its View in its extra window bytes, so one
+window procedure draws the transcript and every sheet of paper. That is
+what made `/print` cheap — `PRINT_BEGIN`/`DATA`/`END` are caught and
+ACKed exactly as the C64 ACKs them, and the composed document opens as a
+sheet in the workspace (§8). No proxy change, no new wire message, no
+printer required.
+
+Paper is the case that proves the abstraction was drawn in the right
+place: it is a View that does *not* re-flow, because the proxy already
+laid it out to `printer_width` and re-wrapping it would be re-typesetting
+someone else's document. The transcript re-flows because a conversation
+has no layout of its own to respect.
+
+**A palette that is not the C64's.** White paper, black ink, by default.
+This is not the Pepto table dimmed: half of those colours are illegible
+on white at any brightness, and the two worst are yellow and the light
+green that every assistant reply arrives in. So the light theme keeps
+each marker slot's *hue* and gives it a value that reads as ink — index 1
+becomes black, index 13 a dark green. The C64 palette on black is still
+there under Settings, and the choice is saved to the INI, which is what
+§6.3 said it should be from the start.
+
+One bug, and only the keyboard finds it: `&Server...` and a `&Screen`
+item in the same popup both answer to Alt+S, the first one wins, and what
+you see is a theme setting that appears not to work. Mnemonics inside a
+popup have to be distinct.
 
 ---
 

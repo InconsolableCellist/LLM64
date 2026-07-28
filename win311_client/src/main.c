@@ -3,11 +3,17 @@
  *
  * A 16-bit Windows 3.x client for the LLM64 proxy. It is an MDI
  * application: one frame window with the menu bar, the status strip and
- * the socket, and document windows inside it. Today there is one kind
- * of document - the conversation, an owner-drawn transcript pane over a
- * one-line input box - and the picture viewer, jukebox and conversation
- * manager join it as further children rather than as loose top-level
- * windows.
+ * the socket, and document windows inside it. Two kinds of document so
+ * far - the conversation, an owner-drawn transcript pane over a one-line
+ * input box, and a sheet of paper, which is a print job the proxy
+ * composed and this program caught instead of sending to a printer. The
+ * picture viewer and jukebox join them the same way rather than as loose
+ * top-level windows.
+ *
+ * Both kinds are a View (below): text, a scroll position, and whether it
+ * re-flows. The transcript re-flows because it is a conversation; paper
+ * does not, because the proxy already laid it out to a printer width and
+ * re-wrapping it would be re-typesetting someone else's document.
  *
  * MDI is the period-correct answer and also the one that aged well:
  * Word, Excel and Program Manager all worked this way, and a window
@@ -28,9 +34,8 @@
  * logical lines in far blocks now, wrapped at paint time, so the pane
  * re-flows on a resize and is not bounded by DGROUP. See scroll.h.
  *
- * Deliberately absent, and scheduled: images, MIDI, printing, the
- * conversation manager and the settings dialog. See
- * win311_client/README.md.
+ * Deliberately absent, and scheduled: images, MIDI, printing to a real
+ * printer DC, and the conversation manager. See win311_client/README.md.
  */
 
 #include <windows.h>
@@ -43,6 +48,7 @@
 
 #define APP_CLASS   "LLM64Main"
 #define CONV_CLASS  "LLM64Conv"
+#define PAPER_CLASS "LLM64Paper"
 #define PANE_CLASS  "LLM64Pane"
 #define APP_TITLE   "LLM64"
 #define INI_FILE    "LLM64.INI"
@@ -50,17 +56,35 @@
 #define ID_PANE     1000
 #define ID_INPUT    1001
 
-/* The transcript. Unwrapped logical lines in far blocks off the global
-   heap, wrapped at paint time - see scroll.h. All that is left here is
-   where we are looking at it from. */
-static Scrollback g_sb;
-static long       g_top = 0;    /* first visible display row */
-static int        g_follow = 1; /* stick to the bottom as text arrives */
+/* One document's worth of text and where we are looking at it from. The
+   transcript is one of these; every sheet of printed paper is another.
+   The pane window that draws it keeps a pointer to its View in its extra
+   window bytes, so one PaneProc serves them all. */
+typedef struct {
+    Scrollback sb;
+    long       top;         /* first visible display row */
+    int        follow;      /* stick to the bottom as text arrives */
+    int        wrap;        /* re-flow to the pane, or keep the layout */
+    int        margin;      /* left inset, in pixels */
+    HWND       pane;        /* the window drawing it, or NULL */
+    int        live;        /* the scrollback has been initialised */
+} View;
+
+/* Paper. A print job is composed by the proxy and arrives as laid-out
+   ASCII, so several can be on the desk at once - which is the whole
+   reason for a workspace with documents in it. The cap is memory
+   honesty, not taste: each sheet holds its own far blocks. */
+#define MAX_PAPER   4
+
+static View     g_conv_view;
+static View     g_paper[MAX_PAPER];
+static HWND     g_paper_wnd[MAX_PAPER];
+static unsigned g_paper_seq;        /* sheets printed, for the titles */
 
 static HWND     g_frame;    /* the one top-level window */
 static HWND     g_mdi;      /* MDICLIENT, between the frame and its docs */
 static HWND     g_conv;     /* the conversation document */
-static HWND     g_pane, g_input;    /* inside the conversation */
+static HWND     g_input;    /* the conversation's input box */
 static HFONT    g_font, g_font_bold;
 static int      g_cw = 8, g_ch = 16;    /* character cell */
 static FARPROC  g_old_edit_proc;
@@ -75,10 +99,21 @@ static WireRx        g_rx;
    "frame" means the MDI frame everywhere else in this file. */
 static unsigned char g_txframe[WIRE_MAX_PAYLOAD + 8];
 
+/* The print job being received. One at a time: the proxy holds a media
+   lock and waits for an ACK per block. */
+static int      g_prt_active;
+static int      g_prt_slot;
+static unsigned g_prt_blocks, g_prt_total;
+static int      g_prt_formfeed;
+
+/* ---------------------------------------------------------------- */
+/* Colour                                                            */
+/* ---------------------------------------------------------------- */
+
 /* Pepto's C64 palette, the same table the proxy converts images with
    (llm64_proxy/src/imaging.py). Index 0 is black and never used as a
    text colour. */
-static const COLORREF g_pal[16] = {
+static const COLORREF g_pal_screen[16] = {
     RGB(0x00,0x00,0x00), RGB(0xFF,0xFF,0xFF), RGB(0x68,0x37,0x2B),
     RGB(0x70,0xA4,0xB2), RGB(0x6F,0x3D,0x86), RGB(0x58,0x8D,0x43),
     RGB(0x35,0x28,0x79), RGB(0xB8,0xC7,0x6F), RGB(0x6F,0x4F,0x25),
@@ -87,79 +122,145 @@ static const COLORREF g_pal[16] = {
     RGB(0x95,0x95,0x95)
 };
 
+/* The same fourteen marker slots as inks on white paper. Not the C64
+   colours dimmed: half of them are unreadable on white at any
+   brightness - yellow and light green worst of all, and light green is
+   the colour every assistant reply arrives in. So each slot keeps its
+   *hue* and takes a value that reads as ink. Index 1, the default text
+   colour, becomes black; index 13 becomes a dark green, which is what
+   makes a reply legible rather than merely present. */
+static const COLORREF g_pal_paper[16] = {
+    RGB(0x00,0x00,0x00), RGB(0x00,0x00,0x00), RGB(0xB0,0x14,0x14),
+    RGB(0x00,0x70,0x80), RGB(0x80,0x20,0x90), RGB(0x1C,0x70,0x20),
+    RGB(0x18,0x28,0xA8), RGB(0x80,0x70,0x00), RGB(0xB0,0x5A,0x00),
+    RGB(0x70,0x44,0x10), RGB(0xC0,0x40,0x38), RGB(0x50,0x50,0x50),
+    RGB(0x68,0x68,0x68), RGB(0x00,0x64,0x1E), RGB(0x40,0x40,0xB0),
+    RGB(0x78,0x78,0x78)
+};
+
+#define THEME_PAPER   0
+#define THEME_SCREEN  1
+
+static int       g_theme = THEME_PAPER;
+static const COLORREF *g_pal = g_pal_paper;
+static COLORREF  g_bg = RGB(0xFF,0xFF,0xFF);
+/* Kept alive because WM_CTLCOLOR returns it rather than copying it: the
+   brush has to outlive the message. */
+static HBRUSH    g_bg_brush;
+
+static void theme_apply(int theme)
+{
+    HMENU m;
+    int i;
+
+    g_theme = theme;
+    if (theme == THEME_SCREEN) {
+        g_pal = g_pal_screen;
+        g_bg  = RGB(0x00,0x00,0x00);
+    } else {
+        g_pal = g_pal_paper;
+        g_bg  = RGB(0xFF,0xFF,0xFF);
+    }
+    if (g_bg_brush)
+        DeleteObject(g_bg_brush);
+    g_bg_brush = CreateSolidBrush(g_bg);
+
+    if (g_frame) {
+        m = GetMenu(g_frame);
+        CheckMenuItem(m, IDM_THEME_PAPER, MF_BYCOMMAND
+            | (theme == THEME_PAPER ? MF_CHECKED : MF_UNCHECKED));
+        CheckMenuItem(m, IDM_THEME_SCREEN, MF_BYCOMMAND
+            | (theme == THEME_SCREEN ? MF_CHECKED : MF_UNCHECKED));
+    }
+    if (g_conv_view.pane)
+        InvalidateRect(g_conv_view.pane, NULL, TRUE);
+    for (i = 0; i < MAX_PAPER; i++)
+        if (g_paper[i].pane)
+            InvalidateRect(g_paper[i].pane, NULL, TRUE);
+    if (g_input)
+        InvalidateRect(g_input, NULL, TRUE);
+}
+
 /* ---------------------------------------------------------------- */
 /* Transcript                                                        */
 /* ---------------------------------------------------------------- */
 
-static int pane_rows(void)
+static int view_rows(const View *v)
 {
     RECT rc;
-    if (!g_pane)
+    if (!v->pane)
         return 1;
-    GetClientRect(g_pane, &rc);
+    GetClientRect(v->pane, &rc);
     return (rc.bottom / g_ch) > 0 ? (int)(rc.bottom / g_ch) : 1;
 }
 
-static int pane_cols(void)
+static int view_cols(const View *v)
 {
     RECT rc;
     int c;
-    if (!g_pane)
+
+    /* A sheet of paper is already laid out by the proxy to a printer
+       width; re-flowing it would be re-typesetting someone else's
+       document. So paper asks for a width nothing can reach and keeps
+       the lines it was sent. */
+    if (!v->wrap)
+        return 1000;
+    if (!v->pane)
         return 40;
-    GetClientRect(g_pane, &rc);
-    c = (int)((rc.right - 4) / g_cw);
+    GetClientRect(v->pane, &rc);
+    c = (int)((rc.right - v->margin - 2) / g_cw);
     if (c < 10) c = 10;
     return c;
 }
 
 /* Total rows, clamped to what a 16-bit scroll bar can express. Only a
    pathologically narrow pane over a full transcript can reach this. */
-static long pane_total(void)
+static long view_total(const View *v)
 {
-    unsigned long n = sb_rows(&g_sb);
+    unsigned long n = sb_rows(&v->sb);
     return n > 32000UL ? 32000L : (long)n;
 }
 
-static long pane_max_top(void)
+static long view_max_top(const View *v)
 {
-    long max = pane_total() - pane_rows();
+    long max = view_total(v) - view_rows(v);
     return max < 0 ? 0 : max;
 }
 
-static void pane_sync_scroll(void)
+static void view_sync_scroll(View *v)
 {
-    long max = pane_max_top();
+    long max = view_max_top(v);
 
-    if (g_top > max) g_top = max;
-    if (g_top < 0) g_top = 0;
-    if (!g_pane)
+    if (v->top > max) v->top = max;
+    if (v->top < 0) v->top = 0;
+    if (!v->pane)
         return;
-    SetScrollRange(g_pane, SB_VERT, 0, (int)max, FALSE);
-    SetScrollPos(g_pane, SB_VERT, (int)g_top, TRUE);
+    SetScrollRange(v->pane, SB_VERT, 0, (int)max, FALSE);
+    SetScrollPos(v->pane, SB_VERT, (int)v->top, TRUE);
 }
 
-static void pane_bottom(void)
+static void view_bottom(View *v)
 {
-    g_top = pane_max_top();
-    g_follow = 1;
-    pane_sync_scroll();
+    v->top = view_max_top(v);
+    v->follow = 1;
+    view_sync_scroll(v);
 }
 
-/* Every write to the transcript ends the same way: pin to the bottom
-   and repaint. The transcript itself is independent of any window, so
-   text arriving while the document is closed is kept, not dropped - it
-   is simply there when a window is opened on it again. */
-static void pane_touch(void)
+/* Every write to a document ends the same way: pin to the bottom and
+   repaint. The text is independent of any window, so what arrives while
+   the document is closed is kept, not dropped - it is simply there when
+   a window is opened on it again. */
+static void view_touch(View *v)
 {
-    pane_bottom();
-    if (g_pane)
-        InvalidateRect(g_pane, NULL, TRUE);
+    view_bottom(v);
+    if (v->pane)
+        InvalidateRect(v->pane, NULL, TRUE);
 }
 
 static void say(unsigned char color, const char *s)
 {
-    sb_say(&g_sb, color, s);
-    pane_touch();
+    sb_say(&g_conv_view.sb, color, s);
+    view_touch(&g_conv_view);
 }
 
 /* The input box exists only while a conversation document is open, so
@@ -188,10 +289,10 @@ static void set_status(const char *s)
    what the runs are split on, and the row arrives already knowing the
    colour and weight in force at its first cell, which is what makes a
    span that survives a wrap render the same on both rows. */
-static void paint_row(HDC hdc, int y, const SbRow *r)
+static void paint_row(HDC hdc, int x0, int y, const SbRow *r)
 {
     unsigned i, run_start = 0;
-    int x = 2, n;
+    int x = x0, n;
     unsigned char color = r->color;
     unsigned char bold = r->bold;
 
@@ -223,29 +324,85 @@ static void paint_row(HDC hdc, int y, const SbRow *r)
     }
 }
 
+/* The View a pane window is looking at, kept in its extra window bytes
+   so one window procedure serves the transcript and every sheet. */
+static View *pane_view(HWND hwnd)
+{
+    return (View *)GetWindowLong(hwnd, 0);
+}
+
 static void pane_paint(HWND hwnd)
 {
     PAINTSTRUCT ps;
     HDC hdc;
     RECT rc;
-    SbView v;
+    SbView it;
     SbRow  r;
     int row, rows;
     HBRUSH bg;
+    View *v = pane_view(hwnd);
 
     hdc = BeginPaint(hwnd, &ps);
     GetClientRect(hwnd, &rc);
-    bg = CreateSolidBrush(RGB(0, 0, 0));
+    bg = CreateSolidBrush(g_bg);
     FillRect(hdc, &rc, bg);
     DeleteObject(bg);
 
+    if (!v || !v->live) {
+        EndPaint(hwnd, &ps);
+        return;
+    }
+
     SetBkMode(hdc, TRANSPARENT);
-    rows = pane_rows();
-    if (sb_view(&g_sb, (unsigned long)g_top, &v)) {
-        for (row = 0; row < rows && sb_view_next(&v, &r); row++)
-            paint_row(hdc, row * g_ch, &r);
+    rows = view_rows(v);
+    if (sb_view(&v->sb, (unsigned long)v->top, &it)) {
+        for (row = 0; row < rows && sb_view_next(&it, &r); row++)
+            paint_row(hdc, v->margin, row * g_ch, &r);
     }
     EndPaint(hwnd, &ps);
+}
+
+/* ---------------------------------------------------------------- */
+/* Paper: taking a sheet, and giving it back                         */
+/* ---------------------------------------------------------------- */
+
+static unsigned g_paper_born[MAX_PAPER];
+
+/* A free slot, or the oldest sheet's - four on the desk at once is
+   plenty, and the fifth print job is a better use of the memory than
+   the first one still is. */
+static int paper_slot(void)
+{
+    int i, oldest = 0;
+
+    for (i = 0; i < MAX_PAPER; i++)
+        if (!g_paper[i].live)
+            return i;
+    for (i = 1; i < MAX_PAPER; i++)
+        if (g_paper_born[i] < g_paper_born[oldest])
+            oldest = i;
+    if (g_paper_wnd[oldest])
+        SendMessage(g_mdi, WM_MDIDESTROY, (WPARAM)g_paper_wnd[oldest], 0L);
+    if (g_paper[oldest].live) {     /* if the window did not take it */
+        sb_free(&g_paper[oldest].sb);
+        g_paper[oldest].live = 0;
+        g_paper[oldest].pane = NULL;
+    }
+    return oldest;
+}
+
+/* A job that never reached PRINT_END - the link dropped mid-sheet. Give
+   the blocks back rather than holding a slot for a document that will
+   never finish. */
+static void print_abort(void)
+{
+    if (!g_prt_active)
+        return;
+    g_prt_active = 0;
+    if (g_paper[g_prt_slot].live && !g_paper_wnd[g_prt_slot]) {
+        sb_free(&g_paper[g_prt_slot].sb);
+        g_paper[g_prt_slot].live = 0;
+    }
 }
 
 /* ---------------------------------------------------------------- */
@@ -268,6 +425,109 @@ static void send_text_frame(unsigned char type, const char *text)
     send_frame(type, (const unsigned char *)text, len);
 }
 
+/* Open a window on a finished sheet. The slot travels in the MDI create
+   struct's lParam because the child's WM_CREATE runs before
+   WM_MDICREATE returns, so it cannot yet be found by its handle. */
+static void paper_open(int slot)
+{
+    MDICREATESTRUCT mcs;
+    char title[40];
+
+    wsprintf(title, "Printout %u", g_paper_born[slot]);
+    mcs.szClass = PAPER_CLASS;
+    mcs.szTitle = title;
+    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    /* Offset each sheet so a second one does not hide the first. */
+    mcs.x       = 16 + (int)(g_paper_born[slot] % 4) * 20;
+    mcs.y       = 8 + (int)(g_paper_born[slot] % 4) * 16;
+    mcs.cx      = g_cw * 84;
+    mcs.cy      = g_ch * 24;
+    mcs.style   = 0;
+    mcs.lParam  = (LONG)slot;
+
+    g_paper_wnd[slot] = (HWND)(WORD)SendMessage(g_mdi, WM_MDICREATE, 0,
+                                               (LONG)(LPMDICREATESTRUCT)&mcs);
+}
+
+static void print_begin(const unsigned char *p, unsigned len)
+{
+    int slot;
+
+    /* A re-sent BEGIN is re-ACKed, not started again - the same rule the
+       C64 follows, and for the same reason: the proxy may not have heard
+       the first ACK. */
+    if (g_prt_active) {
+        send_frame(MSG_ACK, NULL, 0);
+        return;
+    }
+    if (len < 2) {
+        send_frame(MSG_NAK, NULL, 0);
+        return;
+    }
+    slot = paper_slot();
+    if (!sb_init(&g_paper[slot].sb)) {
+        send_frame(MSG_NAK, NULL, 0);
+        set_status("Not enough memory for another sheet.");
+        return;
+    }
+    g_paper[slot].live   = 1;
+    g_paper[slot].wrap   = 0;   /* it is already laid out; leave it be */
+    g_paper[slot].margin = g_cw;
+    g_paper[slot].top    = 0;
+    g_paper[slot].follow = 0;   /* a document opens at the top, not the end */
+    g_paper[slot].pane   = NULL;
+    sb_width(&g_paper[slot].sb, 1000);
+    sb_color(&g_paper[slot].sb, 1);     /* ink: black on paper */
+    g_paper_born[slot] = ++g_paper_seq;
+
+    g_prt_slot     = slot;
+    g_prt_active   = 1;
+    g_prt_blocks   = 0;
+    g_prt_total    = p[1];
+    g_prt_formfeed = (p[0] & 2) ? 1 : 0;
+    set_status("Printing...");
+    send_frame(MSG_ACK, NULL, 0);
+}
+
+static void print_data(const unsigned char *p, unsigned len)
+{
+    char msg[64];
+    unsigned i;
+
+    if (!g_prt_active)
+        return;             /* a stray block after an abort */
+    /* The document arrives as ASCII with 0x0A between lines, which is
+       exactly what sb_putc wants. The C64 turns them into 0x0D for the
+       IEC bus; nothing here has to. */
+    for (i = 0; i < len; i++)
+        sb_putc(&g_paper[g_prt_slot].sb, (char)p[i]);
+    g_prt_blocks++;
+    wsprintf(msg, "Printing %u/%u...", g_prt_blocks, g_prt_total);
+    set_status(msg);
+    send_frame(MSG_ACK, NULL, 0);
+}
+
+static void print_end(void)
+{
+    int slot;
+    char msg[80];
+
+    if (!g_prt_active)
+        return;
+    slot = g_prt_slot;
+    g_prt_active = 0;
+    /* Close a last line the document did not end with a newline. */
+    if (g_paper[slot].sb.open_len > 0)
+        sb_newline(&g_paper[slot].sb);
+    /* The form feed says "eject the page". There is no page to eject, so
+       it is the one flag with nothing to do here. */
+    paper_open(slot);
+    wsprintf(msg, "Printed %u lines to Printout %u.",
+             (unsigned)sb_lines(&g_paper[slot].sb) - 1, g_paper_born[slot]);
+    set_status(msg);
+    send_frame(MSG_ACK, NULL, 0);
+}
+
 static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
 {
     char note[160];
@@ -284,16 +544,16 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
         /* [seq][text\0] - seq only matters to a link that can lose
            frames, which TCP is not. Kept in the payload for the C64. */
         if (len > 1) {
-            sb_color(&g_sb, 13);
-            sb_puts(&g_sb, (const char *)(p + 1));
-            pane_touch();
+            sb_color(&g_conv_view.sb, 13);
+            sb_puts(&g_conv_view.sb, (const char *)(p + 1));
+            view_touch(&g_conv_view);
         }
         break;
 
     case MSG_CHAT_DONE:
-        sb_newline(&g_sb);
-        sb_newline(&g_sb);
-        pane_touch();
+        sb_newline(&g_conv_view.sb);
+        sb_newline(&g_conv_view.sb);
+        view_touch(&g_conv_view);
         set_status("Ready.");
         input_enable(1);
         break;
@@ -317,6 +577,24 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
            status text. Phase 1 gives it its own half of the strip. */
         if (len > 2)
             set_status((const char *)(p + 2));
+        break;
+
+    /* Printing. The proxy composes and lays out the document (docs/14)
+       and ships it a block at a time, waiting for an ACK on each because
+       the C64 has to stop listening to the wire while it talks to the
+       printer. Nothing here needs a printer: the sheet is caught in a
+       document window instead, which is what the C64 would have called
+       paper. Phase 6 adds a real printer DC alongside it. */
+    case MSG_PRINT_BEGIN:
+        print_begin(p, len);
+        break;
+
+    case MSG_PRINT_DATA:
+        print_data(p, len);
+        break;
+
+    case MSG_PRINT_END:
+        print_end();
         break;
 
     default:
@@ -353,6 +631,8 @@ static void do_connect(void)
     char msg[200];
 
     wire_rx_init(&g_rx, g_rxbuf, sizeof(g_rxbuf));
+    /* A half-received sheet cannot be finished across a reconnect. */
+    print_abort();
     wsprintf(msg, "Connecting to %s:%u...", (LPSTR)g_host, g_port);
     set_status(msg);
     if (!net_connect(g_host, (unsigned short)g_port, err, sizeof(err))) {
@@ -395,42 +675,66 @@ long FAR PASCAL _export PaneProc(HWND hwnd, UINT msg, UINT wParam,
 {
     int rows;
 
+    View *v = pane_view(hwnd);
+
     switch (msg) {
     case WM_PAINT:
         pane_paint(hwnd);
         return 0;
+    }
+    if (!v || !v->live)
+        return DefWindowProc(hwnd, msg, wParam, lParam);
 
+    switch (msg) {
     case WM_VSCROLL:
-        rows = pane_rows();
+        rows = view_rows(v);
         switch (wParam) {
-        case SB_LINEUP:   g_top--; break;
-        case SB_LINEDOWN: g_top++; break;
-        case SB_PAGEUP:   g_top -= rows; break;
-        case SB_PAGEDOWN: g_top += rows; break;
+        case SB_LINEUP:   v->top--; break;
+        case SB_LINEDOWN: v->top++; break;
+        case SB_PAGEUP:   v->top -= rows; break;
+        case SB_PAGEDOWN: v->top += rows; break;
         case SB_THUMBPOSITION:
-        case SB_THUMBTRACK: g_top = LOWORD(lParam); break;
+        case SB_THUMBTRACK: v->top = LOWORD(lParam); break;
         default: return 0;
         }
-        pane_sync_scroll();
+        view_sync_scroll(v);
         /* Scrolling back to the bottom re-arms the follow: a reader who
            has paged up stays where they are while a reply streams in. */
-        g_follow = (g_top >= pane_max_top());
+        v->follow = (v->top >= view_max_top(v));
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
 
     case WM_SIZE:
         /* The whole point of the far-block transcript: a resize re-flows
            what is already on screen, because nothing was ever stored
-           wrapped in the first place. */
-        sb_width(&g_sb, (unsigned)pane_cols());
-        if (g_follow)
-            pane_bottom();
+           wrapped in the first place. Paper is the exception - it keeps
+           the layout it was printed with (view_cols). */
+        sb_width(&v->sb, (unsigned)view_cols(v));
+        if (v->follow)
+            view_bottom(v);
         else
-            pane_sync_scroll();
+            view_sync_scroll(v);
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
     }
     return DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+/* Attach a pane window to a View. Both document kinds do exactly this,
+   and the pane learns which document it is drawing here and nowhere
+   else. */
+static HWND pane_create(HWND parent, View *v)
+{
+    HWND p = CreateWindow(PANE_CLASS, NULL,
+                          WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER,
+                          0, 0, 10, 10, parent, (HMENU)ID_PANE,
+                          (HINSTANCE)GetWindowWord(parent, GWW_HINSTANCE),
+                          NULL);
+    if (!p)
+        return NULL;
+    SetWindowLong(p, 0, (LONG)v);
+    v->pane = p;
+    return p;
 }
 
 /* The input box is a stock EDIT control; subclassing is how it learns
@@ -443,7 +747,7 @@ long FAR PASCAL _export EditProc(HWND hwnd, UINT msg, UINT wParam,
         return 0;
     }
     if (msg == WM_KEYDOWN && (wParam == VK_PRIOR || wParam == VK_NEXT)) {
-        SendMessage(g_pane, WM_VSCROLL,
+        SendMessage(g_conv_view.pane, WM_VSCROLL,
                     wParam == VK_PRIOR ? SB_PAGEUP : SB_PAGEDOWN, 0L);
         return 0;
     }
@@ -462,8 +766,10 @@ static void conv_layout(HWND hwnd)
     GetClientRect(hwnd, &rc);
     paneh = rc.bottom - inputh;
     if (paneh < g_ch) paneh = g_ch;
-    MoveWindow(g_pane, 0, 0, rc.right, paneh, TRUE);
-    MoveWindow(g_input, 0, paneh, rc.right, inputh, TRUE);
+    if (g_conv_view.pane)
+        MoveWindow(g_conv_view.pane, 0, 0, rc.right, paneh, TRUE);
+    if (g_input)
+        MoveWindow(g_input, 0, paneh, rc.right, inputh, TRUE);
 }
 
 /* The frame gives everything except the status strip to the MDI client,
@@ -490,9 +796,7 @@ long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
     switch (msg) {
     case WM_CREATE:
         inst = (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE);
-        g_pane = CreateWindow(PANE_CLASS, NULL,
-                              WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER,
-                              0, 0, 10, 10, hwnd, (HMENU)ID_PANE, inst, NULL);
+        pane_create(hwnd, &g_conv_view);
         g_input = CreateWindow("EDIT", "",
                                WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
                                0, 0, 10, 10, hwnd, (HMENU)ID_INPUT, inst, NULL);
@@ -512,6 +816,18 @@ long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
             SetFocus(g_input);
         break;
 
+    case WM_CTLCOLOR:
+        /* The input box has to follow the theme, or the Screen palette
+           leaves a white box glued under a black transcript. WM_CTLCOLOR
+           is how 3.1 did this - the brush is returned, not copied, which
+           is why it is a global that outlives the message. */
+        if (HIWORD(lParam) == CTLCOLOR_EDIT) {
+            SetTextColor((HDC)wParam, g_pal[1]);
+            SetBkColor((HDC)wParam, g_bg);
+            return (LONG)g_bg_brush;
+        }
+        break;
+
     case WM_SETFOCUS:
         if (g_input)
             SetFocus(g_input);
@@ -524,8 +840,84 @@ long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
            would otherwise paint into a window that no longer exists.
            Window > New Conversation Window brings it back. */
         g_conv = NULL;
-        g_pane = NULL;
+        g_conv_view.pane = NULL;
         g_input = NULL;
+        break;
+    }
+    return DefMDIChildProc(hwnd, msg, wParam, lParam);
+}
+
+/* ---------------------------------------------------------------- */
+/* Paper                                                             */
+/* ---------------------------------------------------------------- */
+
+/* A sheet of printed paper. The proxy has already composed and laid the
+   document out to a printer width (docs/14), so this window's whole job
+   is to hold still and be read: no input box, no re-flow, a margin, and
+   the text exactly where the printer would have put it. */
+long FAR PASCAL _export PaperProc(HWND hwnd, UINT msg, UINT wParam,
+                                  LONG lParam)
+{
+    RECT rc;
+    int i;
+
+    switch (msg) {
+    case WM_CREATE: {
+        /* The slot arrives in the MDI create struct: this runs before
+           WM_MDICREATE returns, so the sheet cannot yet be found by
+           looking its window up. */
+        LPMDICREATESTRUCT mp =
+            (LPMDICREATESTRUCT)((LPCREATESTRUCT)lParam)->lpCreateParams;
+        int slot = (int)mp->lParam;
+
+        if (slot < 0 || slot >= MAX_PAPER)
+            return -1;
+        g_paper_wnd[slot] = hwnd;
+        pane_create(hwnd, &g_paper[slot]);
+        break;
+    }
+
+    case WM_SIZE:
+        GetClientRect(hwnd, &rc);
+        for (i = 0; i < MAX_PAPER; i++) {
+            if (g_paper_wnd[i] == hwnd && g_paper[i].pane) {
+                MoveWindow(g_paper[i].pane, 0, 0, rc.right, rc.bottom, TRUE);
+                break;
+            }
+        }
+        break;
+
+    case WM_MDIACTIVATE:
+        /* Paper has nothing to type into, so activating a sheet must not
+           leave the keyboard pointing at the conversation's input box -
+           give the focus to the sheet's own pane, where PgUp and PgDn
+           work. */
+        if (wParam) {
+            for (i = 0; i < MAX_PAPER; i++) {
+                if (g_paper_wnd[i] == hwnd && g_paper[i].pane) {
+                    SetFocus(g_paper[i].pane);
+                    break;
+                }
+            }
+        }
+        break;
+
+    case WM_DESTROY:
+        for (i = 0; i < MAX_PAPER; i++) {
+            if (g_paper_wnd[i] == hwnd) {
+                /* The sheet is thrown away with its window: unlike the
+                   transcript, nothing later appends to it, and its far
+                   blocks are worth more back on the heap. */
+                if (g_paper[i].live)
+                    sb_free(&g_paper[i].sb);
+                g_paper[i].live = 0;
+                g_paper[i].pane = NULL;
+                g_paper_wnd[i] = NULL;
+                if (g_prt_active && g_prt_slot == i)
+                    g_prt_active = 0;
+                break;
+            }
+        }
         break;
     }
     return DefMDIChildProc(hwnd, msg, wParam, lParam);
@@ -665,11 +1057,18 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
     switch (msg) {
     case WM_CREATE:
         g_frame = hwnd;
-        if (!sb_init(&g_sb)) {
+        /* Colours before anything can paint: the background brush lives
+           with the theme, and WM_CTLCOLOR hands it out. */
+        theme_apply(g_theme);
+        if (!sb_init(&g_conv_view.sb)) {
             MessageBox(hwnd, "Not enough memory for the transcript.",
                        APP_TITLE, MB_OK | MB_ICONSTOP);
             return -1;
         }
+        g_conv_view.live   = 1;
+        g_conv_view.wrap   = 1;     /* the transcript re-flows; paper does not */
+        g_conv_view.margin = 2;
+        g_conv_view.follow = 1;
         g_font = GetStockObject(SYSTEM_FIXED_FONT);
         hdc = GetDC(hwnd);
         SelectObject(hdc, g_font);
@@ -749,6 +1148,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         } else if (event == NET_EV_READ) {
             pump_socket();
         } else if (event == NET_EV_CLOSE) {
+            print_abort();
             set_status(err);
             say(2, "Disconnected.");
         }
@@ -763,8 +1163,8 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         case IDM_PING:       send_frame(MSG_PING, NULL, 0);
                              set_status("Ping sent."); return 0;
         case IDM_NEWCONV:    send_frame(MSG_NEW_CONVERSATION, NULL, 0);
-                             sb_clear(&g_sb);
-                             pane_touch(); return 0;
+                             sb_clear(&g_conv_view.sb);
+                             view_touch(&g_conv_view); return 0;
         case IDM_CANCEL:     send_frame(MSG_CANCEL_REQUEST, NULL, 0);
                              input_enable(1); return 0;
         case IDM_ABOUT:
@@ -808,6 +1208,22 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                 g_conv = conv_create(hwnd);
             return 0;
 
+        case IDM_THEME_PAPER:
+        case IDM_THEME_SCREEN:
+            theme_apply(wParam == IDM_THEME_SCREEN ? THEME_SCREEN
+                                                   : THEME_PAPER);
+            save_ini();
+            return 0;
+
+        case IDM_CLOSEPAPER: {
+            int i;
+            for (i = 0; i < MAX_PAPER; i++)
+                if (g_paper_wnd[i])
+                    SendMessage(g_mdi, WM_MDIDESTROY,
+                                (WPARAM)g_paper_wnd[i], 0L);
+            return 0;
+        }
+
         case IDM_CASCADE: SendMessage(g_mdi, WM_MDICASCADE, 0, 0L); return 0;
         case IDM_TILE:    SendMessage(g_mdi, WM_MDITILE, 0, 0L); return 0;
         case IDM_ARRANGE: SendMessage(g_mdi, WM_MDIICONARRANGE, 0, 0L); return 0;
@@ -818,13 +1234,20 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
            loses its Window menu. */
         break;
 
-    case WM_DESTROY:
+    case WM_DESTROY: {
+        int i;
         net_shutdown();
         if (g_font_bold && g_font_bold != g_font)
             DeleteObject(g_font_bold);
-        sb_free(&g_sb);
+        if (g_bg_brush)
+            DeleteObject(g_bg_brush);
+        for (i = 0; i < MAX_PAPER; i++)
+            if (g_paper[i].live)
+                sb_free(&g_paper[i].sb);
+        sb_free(&g_conv_view.sb);
         PostQuitMessage(0);
         return 0;
+    }
     }
     return DefFrameProc(hwnd, g_mdi, msg, wParam, lParam);
 }
@@ -850,9 +1273,14 @@ static void ini_path(HINSTANCE hInst)
 
 static void load_ini(void)
 {
+    char buf[32];
+
     GetPrivateProfileString("Server", "Host", "127.0.0.1",
                             g_host, sizeof(g_host), g_ini);
     g_port = GetPrivateProfileInt("Server", "Port", 6400, g_ini);
+    GetPrivateProfileString("Display", "Theme", "paper",
+                            buf, sizeof(buf), g_ini);
+    g_theme = (buf[0] == 's' || buf[0] == 'S') ? THEME_SCREEN : THEME_PAPER;
 }
 
 static void save_ini(void)
@@ -862,6 +1290,9 @@ static void save_ini(void)
     WritePrivateProfileString("Server", "Host", g_host, g_ini);
     wsprintf(num, "%u", g_port);
     WritePrivateProfileString("Server", "Port", num, g_ini);
+    WritePrivateProfileString("Display", "Theme",
+                              g_theme == THEME_SCREEN ? "screen" : "paper",
+                              g_ini);
 }
 
 int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
@@ -911,14 +1342,29 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
         if (!RegisterClass(&wc))
             return 1;
 
+        /* Paper: a printed document, with no input box under it. */
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = PaperProc;
+        wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+        wc.hbrBackground = GetStockObject(LTGRAY_BRUSH);
+        wc.lpszMenuName = NULL;
+        wc.lpszClassName = PAPER_CLASS;
+        if (!RegisterClass(&wc))
+            return 1;
+
+        /* The pane. Four extra bytes because every pane carries a far
+           pointer to the View it is drawing, which is what lets one
+           window procedure serve the transcript and every sheet. */
         wc.style = CS_HREDRAW | CS_VREDRAW;
         wc.lpfnWndProc = PaneProc;
+        wc.cbWndExtra = sizeof(View FAR *);
         wc.hIcon = NULL;
         wc.hbrBackground = NULL;
         wc.lpszMenuName = NULL;
         wc.lpszClassName = PANE_CLASS;
         if (!RegisterClass(&wc))
             return 1;
+        wc.cbWndExtra = 0;
     }
 
     hwnd = CreateWindow(APP_CLASS, APP_TITLE, WS_OVERLAPPEDWINDOW,
