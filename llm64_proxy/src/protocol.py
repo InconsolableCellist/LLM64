@@ -14,10 +14,12 @@ from .modes import (Mode, AdventureMode, RoleplayMode, ClaudeMode,
 from .claude_session import ClaudeSession
 from .music import MusicLibrary, MusicDirectiveFilter
 from .dice import expand as expand_dice
+from .dice import pool as dice_pool
 from .advsetup import (AdventureSetup, STAGES, ACT_QUICK,
                        ACT_THEME, ACT_BEGIN, ACT_LOAD)
 from .advtemplates import TemplateStore
 from . import advmap
+from . import chargen
 from . import printdoc
 from . import printcups
 from . import printpic
@@ -885,12 +887,27 @@ class ProtocolHandler:
         return sorted(cards, key=lambda c: c[0].lower())
 
     def _find_card(self, query: str):
-        """Match a card by name prefix/substring: (name, path) or None."""
+        """Match a card by name - exact, then prefix, then substring -
+        returning (name, path) or None.
+
+        RANKED rather than first-hit. First-hit meant a merely-containing
+        name could beat an exact one purely by sort order: a user card
+        called 'AI Assistant (By Character AI)' CONTAINS 'Assistant', so
+        /assist landed there and the bundled Assistant card was
+        unreachable. Exact-first also keeps the documented shadowing rule
+        intact - _all_cards lists the user's folder first, so a user card
+        named exactly 'Assistant' still wins over the bundled one."""
         q = query.lower()
+        prefix = substring = None
         for name, path in self._all_cards():
-            if name.lower().startswith(q) or q in name.lower():
+            low = name.lower()
+            if low == q:
                 return (name, path)
-        return None
+            if prefix is None and low.startswith(q):
+                prefix = (name, path)
+            elif substring is None and q in low:
+                substring = (name, path)
+        return prefix or substring
 
     async def _start_roleplay(self, query: str):
         if not query:
@@ -931,8 +948,10 @@ class ProtocolHandler:
     # chars/s - still several times faster than reading speed - with
     # comfortable headroom for both screen modes.
     CHUNK_TEXT_MAX = 60
-    CHUNK_PACE_BASE = 0.016       # per frame
-    CHUNK_PACE_PER_BYTE = 0.0018  # per payload byte
+    # Defaults live in config.py now ([serial] chunk_pace_*) so the
+    # ceiling can be dialled in against real hardware without a redeploy.
+    CHUNK_PACE_BASE = 0.016       # per frame (fallback)
+    CHUNK_PACE_PER_BYTE = 0.0018  # per payload byte (fallback)
 
     # Bulk frames (conversation list/load) are wire-bound: pace each frame
     # at just over its 9600-baud transmit time so the burst never piles up
@@ -1227,6 +1246,20 @@ class ProtocolHandler:
             # render_ascii opens with its own "THE MAP - n places".
             def body(width, _m=m):
                 return "\n".join(advmap.render_ascii(_m, width=width))
+            wrap = False
+        elif printdoc.wants_catalog(arg) and self._adv_setup is not None:
+            # ONLY while character creation is open. A roleplay scene can
+            # easily put a catalogue in front of the player - a fence's
+            # stock list, a ship's manifest - and answering "/print the
+            # catalog" with the adventure kit shop would be baffling.
+            # Outside setup this falls through to the model, which is the
+            # right answer for a catalogue that exists in the fiction.
+            title = 'The supply houses'
+            body = printdoc.render_catalog(
+                self._adv_setup.rules,
+                chargen.gear_options(
+                    self._adv_setup.rules,
+                    self._adv_setup.answers.get('class', '')))
             wrap = False
         elif printdoc.wants_sheet(arg) and adv_state:
             title = 'Character sheet'
@@ -1735,8 +1768,8 @@ class ProtocolHandler:
         payload.extend(piece)
         payload.append(0x00)
         await self.send_message(MessageType.CHAT_CHUNK, bytes(payload))
-        await asyncio.sleep(self.CHUNK_PACE_BASE
-                            + len(piece) * self.CHUNK_PACE_PER_BYTE)
+        await asyncio.sleep(self.config.chunk_pace_base
+                            + len(piece) * self.config.chunk_pace_per_byte)
         return (seq + 1) % 256
 
     # Heartbeats keep the client's ~43s response watchdog fed during a
@@ -2001,6 +2034,18 @@ class ProtocolHandler:
                     self.conv_manager.get_meta('adv_map') or {})
                 if block:
                     sys_prompt += "\n\n" + block
+                # This turn's dice, so the narrator can resolve a check
+                # itself rather than stopping to ask. Last, because it
+                # changes every single turn and everything after it would
+                # miss the prefix cache.
+                sys_prompt += (
+                    "\n\nDICE FOR THIS TURN - real rolls, already made, "
+                    "yours to use:\n" + dice_pool() +
+                    "\nTake them in order, and say what you rolled "
+                    "(\"you swing - 14 against its guard\"). They are "
+                    "OPTIONAL: leave them unused if nothing this turn is "
+                    "genuinely uncertain. Never invent a check just to "
+                    "spend one.")
             if (mfilter and self.music.available and self.music.stale()
                     and sys_prompt):
                 sys_prompt += ("\n(The background music has been looping "

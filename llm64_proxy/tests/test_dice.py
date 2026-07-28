@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.dice import expand, ROLL_RE
+from src.dice import expand, pool, POOL_SPEC, ROLL_RE
 from src.music import DIRECTIVE_RE
 
 failures = []
@@ -79,6 +79,41 @@ for probe in ("[roll:1d20]", "[you rolled 1d20: 7]"):
 for probe in ("[[MUSIC: eerie]]", "[MUSIC: eerie]", "[IMAGE: a door]"):
     if ROLL_RE.search(probe):
         failures.append(f"dice matched a directive: {probe!r}")
+
+# --- the narrator's own dice ------------------------------------------
+# Pre-generated each turn so the DM can resolve a check itself instead of
+# stopping the story to ask the player for a roll. Real dice, rolled by
+# the proxy, for the same reason the [roll:] macro is: a model asked to
+# roll invents a flattering number.
+
+block = pool(random.Random(3))
+lines = block.splitlines()
+check("the pool names every die", len(lines), len(POOL_SPEC))
+for line, (label, sides, count) in zip(lines, POOL_SPEC):
+    if not line.strip().startswith(label + ':'):
+        failures.append(f"pool line does not lead with {label}: {line!r}")
+    vals = [int(v) for v in line.split(':', 1)[1].split(',')]
+    check(f"{label} count", len(vals), count)
+    if not all(1 <= v <= sides for v in vals):
+        failures.append(f"{label} out of range: {vals}")
+
+check("the pool is deterministic given an rng",
+      pool(random.Random(11)), pool(random.Random(11)))
+if pool(random.Random(11)) == pool(random.Random(12)):
+    failures.append("the pool does not vary with the rng")
+
+# A d20 pool that never rolls low (or never high) would quietly rig the
+# game, so check the spread over many turns rather than one
+_rng = random.Random(5)
+d20s = []
+for _ in range(400):
+    d20s += [int(v) for v in pool(_rng).splitlines()[0]
+             .split(':', 1)[1].split(',')]
+if min(d20s) != 1 or max(d20s) != 20:
+    failures.append(f"d20 pool never hits the ends: {min(d20s)}..{max(d20s)}")
+_mean = sum(d20s) / len(d20s)
+if not (10.0 < _mean < 11.0):
+    failures.append(f"d20 pool mean {_mean:.2f}, expected ~10.5")
 
 if failures:
     print(f"FAIL ({len(failures)})\n")

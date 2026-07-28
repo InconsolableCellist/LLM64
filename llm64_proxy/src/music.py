@@ -16,6 +16,9 @@ import time
 from collections import deque
 from pathlib import Path
 
+from . import sid_overrides
+from . import sid_ranking
+
 DIRECTIVE_RE = re.compile(
     # Canonical form. DOTALL so a STATE block's JSON may wrap, and ']]'
     # as the terminator so the JSON's own ']' cannot close it early.
@@ -56,19 +59,11 @@ DIRECTIVE_FINAL_RE = re.compile(
 RECENT_N = 3
 
 
-# Tunes rejected by ear, by id. moods.json is GENERATED (sid_makedb.py),
-# and data/ is gitignored and never rsynced, so an edit there is undone by
-# the next rebuild and exists on one machine only. This list lives in src/
-# so it is version-controlled, deploys with the proxy, and survives a
-# regenerated database. Add a reason - "sounds bad" is a real reason, but
-# next time we should know whether it was taste or a broken relocation.
-BLOCKED_TUNE_IDS = {
-    # Audible glitches on real hardware, and not good enough to debug.
-    'MUSICIANS__S__Scan__Afrikaan_Beat',
-    # Corrupt-sounding on real hardware (field verdict 2026-07-23).
-    'MUSICIANS__A__Astovel__Strenth_Energy',
-    'MUSICIANS__J__Jammer__Blast_em_All',
-}
+# Tunes rejected by ear, and hand-corrected mood tags, live in
+# src/sid_overrides.json (see sid_overrides.py) - moods.json is GENERATED
+# and data/ is gitignored, so a verdict recorded there would be undone by
+# the next rebuild and exist on one machine only. Record verdicts with
+# tools/sid_review.py; they are applied here at load time.
 
 
 class MusicLibrary:
@@ -82,9 +77,21 @@ class MusicLibrary:
         self.tune_started = None  # monotonic time the current tune began
         try:
             db = json.loads(self.db_path.read_text())
-            self.tunes = [t for t in db["tunes"]
-                          if t.get("id") not in BLOCKED_TUNE_IDS]
-            self.moods = db["moods"]
+            self.tunes = sid_overrides.apply_all(db["tunes"],
+                                                 sid_overrides.load())
+            # How well-regarded each tune is, if tools/sid_rank.py has
+            # been run: 10k tunes is far more than anyone can audition,
+            # so the scene's own opinion decides which of two equally
+            # fitting tunes actually plays.
+            sid_ranking.annotate(
+                self.tunes,
+                sid_ranking.load(self.db_path.parent
+                                 / sid_ranking.DEFAULT_NAME))
+            # A listener may have moved a tune into a mood the generated
+            # vocabulary no longer contains (its only tagged tune got
+            # retagged), and the LLM is offered exactly this list.
+            self.moods = sorted(set(db["moods"])
+                                | {m for t in self.tunes for m in t["moods"]})
         except (OSError, KeyError, json.JSONDecodeError):
             pass  # library optional: proxy runs fine without music
         self.favorites = self._load_favorites()
@@ -175,10 +182,13 @@ class MusicLibrary:
             pool = confident
         if not pool:
             return None
-        # Weight by mood fit, damped by arcadey and iconic scores
+        # Weight by mood fit, damped by arcadey and iconic scores, and
+        # lifted by how well-regarded the tune is (sid_ranking.weight is
+        # 1.0 for everything when no ranking has been built)
         weights = [t["moods"][mood]
                    * (1.0 - 0.5 * (t.get("arcadey") or 0))
                    * (1.0 - 0.6 * (t.get("iconic") or 0))
+                   * sid_ranking.weight(t.get("rank"))
                    for t in pool]
         tune = random.choices(pool, weights=weights, k=1)[0]
         self._recent.append(tune["id"])

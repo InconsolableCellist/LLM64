@@ -283,12 +283,120 @@ green dragon with one arm lover a burningi village` on the C64 to test.
 
 ### Music
 
-Music activates automatically when `data/sids/moods.json` exists.
-The shipped library was produced by the pipeline in
-`llm64_proxy/tools/` (HVSC scan -> `sidreloc` relocation into the protected
-$B000 window -> LLM mood-tagging -> loudness normalization -> `sid_makedb`);
-`data/` is not in git, so from a clean clone you run the pipeline (needs an
-HVSC snapshot, `sidreloc`, and for loudness py65 + pyresidfp).
+Music activates automatically when `data/sids/moods.json` exists. No
+library ships with this repo — every tune in HVSC is copyrighted by its
+composer, and HVSC's own notice limits use to private enjoyment, so you
+build your own from your own copy. One command does the whole thing:
+
+```
+# 1. Get HVSC (85 MB) from https://www.hvsc.c64.org/downloads
+#    or https://hvsc.brona.dk/HVSC/HVSC_85-all-of-them.7z
+# 2. Point the builder at it:
+llm64_proxy/tools/sid_build.py --hvsc ~/Downloads/HVSC_85-all-of-them.7z
+```
+
+`sid_build.py` runs the seven pipeline stages in order with progress and
+time estimates, and it is resumable — every stage is skipped when its
+output already exists, so an interrupted build picks up where it stopped:
+
+| stage | what happens | roughly |
+| --- | --- | --- |
+| unpack | HVSC `.7z` → `data/sids/C64Music/` | 1 min, 457 MB |
+| sidreloc | fetch + build Linus Åkesson's relocator (MIT) | 10 s |
+| scan | which tunes could fit the client's 4 KB window | 2 min |
+| relocate | move each to `$B000`, verify, reject the rest | 1 h |
+| songlengths | per-subtune durations from HVSC | 5 s |
+| loudness | emulate each tune, measure RMS and `$D418` | 3 h |
+| moods | an LLM tags each tune for the narrator | 1–2 h |
+| database | assemble `moods.json` | 10 s |
+| ranking | cross-reference the scene's opinion (below) | 2 min |
+
+Only the mood tagger needs anything beyond the repo: any OpenAI-compatible
+endpoint (`--llm-url`, the same llama.cpp server the proxy uses), or
+`--tags` with a prebuilt tag file to skip it. `--no-loudness` skips the
+one stage that needs `pyresidfp` + `py65`, at the cost of volume
+normalization. `tools/sid_build.py --info` prints the links and the
+licence position; `--dry-run` shows what is already done.
+
+If the proxy lives on another machine, finish with
+
+```
+llm64_proxy/tools/sid_build.py --deploy user@proxyhost:/path/to/llm64_proxy
+```
+
+which rsyncs only what the proxy reads — the database, the ranking and
+the relocated tunes, ~50 MB — and not the 457 MB HVSC tree.
+
+#### Which tune is any good
+
+The tagger says what a tune is *for*; nothing in it says whether the tune
+is any *good*, and 10k tunes is ~100 hours of listening. So
+`tools/sid_rank.py` cross-references the library against the C64 scene's
+own published opinion, taken from the
+[DeepSID](https://deepsid.chordian.net) database dump (one 8 MB download,
+no crawling):
+
+| signal | what it is |
+| --- | --- |
+| `compo` | party music-competition placings — an audience voted |
+| `youtube` | tunes somebody thought worth filming |
+| `usage` | how many CSDb releases re-use the tune |
+| `composer` | DeepSID's register: the pros and the documented notables |
+| `stil` | has an HVSC STIL entry at all |
+| `csdb` | user rating of the releases it appears in (`--csdb-ratings`, network) |
+
+```
+tools/sid_rank.py --download --explain 40    # build data/sids/ranking.json
+tools/sid_rank.py --missing 40               # best HVSC tunes NOT in the library
+```
+
+`ranking.json` publishes a percentile per tune ("better regarded than
+this fraction of your library") plus the reason in words. `MusicLibrary`
+loads it beside `moods.json` and weights selection by it —
+`FLOOR + (1-FLOOR)·rank²` in `src/sid_ranking.py`, which measured on the
+real library lifts the mean regard of what actually plays from 0.52 to
+0.69 while still drawing one pick in nine from the bottom third. It is
+deliberately a weighting and not a filter: most of HVSC is obscure demo
+music nobody wrote about, and unheard is not the same as bad. Your own
+jukebox favourites outrank all of it.
+
+#### What this repo does and does not carry
+
+No SID in this repository belongs to anyone else. The shareware intro's
+tune is `c64_client/intro/tune/llm64_theme.s` — a three-voice player and
+score written for this project, rebuilt with `make -C c64_client/intro
+tune`. The built library, the relocated tunes and everything else under
+`data/` stay out of git deliberately: HVSC's
+`DOCUMENTS/Disclaimer.txt` limits those tunes to private enjoyment, which
+covers your own machine and your own C64 but not redistribution — so
+don't publish a built library or a disk image containing one.
+
+Two HVSC files remain as end-to-end test fixtures
+(`emu/fixtures/sids/`); swapping them for the intro's own tune is a small
+change if that matters to you.
+
+#### Fixing what the tagger got wrong
+
+The tagger works from filenames and STIL notes, so it is often wrong -
+an upbeat chiptune tagged `eerie` because the game was a horror game -
+and some tunes are simply bad or relocate badly. `tools/sid_review.py`
+is the ears in that loop: it deals random tunes, plays them through
+VICE's `vsid` at the volume the C64 will use, and lets you retag, block,
+or confirm them.
+
+```
+tools/sid_review.py                       # unheard tunes, best-regarded first
+tools/sid_review.py --mood eerie --as-selected   # audit one mood bucket,
+                                          #   likeliest-to-be-heard first
+tools/sid_review.py --status blocked      # revisit your own rejects
+```
+
+Verdicts go to `src/sid_overrides.json` (version-controlled, deployed
+with the proxy), never to the generated `moods.json`, and are applied
+both when `sid_makedb` rebuilds the database and when the proxy loads
+it - so re-running the tagger cannot undo them. A tune the tagger
+guessed at is `source: auto` at runtime; one a person heard is
+`source: manual` with the date.
 
 ### Printing
 
@@ -462,7 +570,9 @@ c64_client/     cc65 client (main.c TUI + transfer state machines,
                 music.s SID player, display/editor/protocol)
 llm64_proxy/   Python proxy (src/), SID pipeline tools (tools/):
                 sid_scan, sid_reloc_batch, sid_mood (LLM tagger),
-                sid_loudness, sid_makedb, img2c64
+                sid_loudness, sid_makedb, sid_rank (scene regard),
+                sid_review (listen and retag/block by hand),
+                sid_build (runs all of the above), img2c64
 emu/            VICE automation: e2e harness, mock LLM, watchdog suite,
                 binary-monitor client
 docs/           design docs + setup guides

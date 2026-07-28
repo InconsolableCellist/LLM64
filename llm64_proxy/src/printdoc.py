@@ -375,3 +375,56 @@ def finish(title: str, body: str, width: int = 78, date: str = None,
             [ln.rstrip()[:width] for ln in body.splitlines()])
     out = '\n'.join(head + laid + [RULE * width]) + '\n'
     return out.encode('ascii', 'replace').decode('ascii')
+
+
+# --- the kit catalogue -------------------------------------------------
+#
+# Deterministic, like the character sheet and for the same reason: the
+# catalogue is proxy data that never enters the prompt, so asking the
+# model for it gets a plausible invention rather than the 94 items the
+# shop actually stocks - and the numbers would not match the screen,
+# which is the entire point of printing it.
+CATALOG_RE = re.compile(r'\b(catalog|catalogue|shop|shelves|kit list)\b',
+                        re.I)
+
+
+def wants_catalog(arg: str) -> bool:
+    """True for '/print the entire catalog' and friends.
+
+    The CALLER must also check that character creation is actually open
+    (protocol.py). A roleplay scene can easily put a catalogue in front
+    of the player - a fence's stock list, a ship's manifest - and
+    printing the adventure kit shop instead of what they were reading
+    would be baffling."""
+    return bool(CATALOG_RE.search(arg or ''))
+
+
+def render_catalog(rules: dict, items, title_note='') -> str:
+    """The shop, in catalogue order, with the SAME numbers the screen
+    shows - a printed number that does not work when typed back in would
+    be worse than no printout."""
+    gear = (rules or {}).get('equipment') or {}
+    cats = gear.get('categories') or []
+    by_kind = {}
+    for it in items:
+        by_kind.setdefault(it.get('kind'), []).append(it)
+
+    out = []
+    if title_note:
+        out += [title_note, '']
+    out.append("%d points to spend. Custom items cost %d each, up to %d."
+               % (gear.get('points', 6), gear.get('custom_cost', 1),
+                  gear.get('custom_max', 6)))
+    out.append('')
+    n = 0
+    for c in cats:
+        rows = [it for k in (c.get('kinds') or []) for it in by_kind.get(k, [])]
+        if not rows:
+            continue
+        out.append(c['label'].upper())
+        for it in rows:
+            n += 1
+            out.append("  %3d  %-24s %d  %s"
+                       % (n, it['name'], it['cost'], it.get('blurb', '')))
+        out.append('')
+    return "\n".join(out).rstrip()

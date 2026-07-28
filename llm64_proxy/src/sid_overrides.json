@@ -1,0 +1,48 @@
+{
+ "version": 1,
+ "tunes": {
+  "MUSICIANS__A__Ass_It__Good_Night_Mix": {
+   "verdict": "blocked",
+   "reason": "wrong for the game (too arcadey / too iconic)",
+   "reviewed": "2026-07-26",
+   "auto": {
+    "moods": {
+     "serene": 0.5
+    },
+    "settings": {},
+    "arcadey": 0.3,
+    "iconic": 0.1,
+    "confidence": 0.3
+   }
+  },
+  "MUSICIANS__A__Astovel__Strenth_Energy": {
+   "verdict": "blocked",
+   "reason": "corrupt-sounding on real hardware",
+   "reviewed": "2026-07-23"
+  },
+  "MUSICIANS__J__Jammer__Blast_em_All": {
+   "verdict": "blocked",
+   "reason": "corrupt-sounding on real hardware",
+   "reviewed": "2026-07-23"
+  },
+  "MUSICIANS__N__Ne7__Manifold_tune_11": {
+   "verdict": "blocked",
+   "reason": "bad music",
+   "reviewed": "2026-07-26",
+   "auto": {
+    "moods": {
+     "mysterious": 0.5
+    },
+    "settings": {},
+    "arcadey": 0.2,
+    "iconic": 0.1,
+    "confidence": 0.2
+   }
+  },
+  "MUSICIANS__S__Scan__Afrikaan_Beat": {
+   "verdict": "blocked",
+   "reason": "audible glitches on real hardware, not good enough to debug",
+   "reviewed": "2026-07-23"
+  }
+ }
+}

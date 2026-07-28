@@ -56,11 +56,21 @@ def blurb(rules: dict, key: str, name: str) -> str:
 
 def gear_options(rules: dict, class_name: str) -> list:
     """Starting equipment this class may take: everything unrestricted,
-    plus whatever names it. A class the rules do not know (the player
-    typed their own) gets the unrestricted list, which is the honest
-    answer - we cannot know what an Automaton is proficient with."""
+    plus whatever names it.
+
+    A class the rules have never heard of (the player typed their own)
+    gets the WHOLE catalogue. The old reading - give it only the
+    unrestricted items - sounded like honesty and played like a
+    punishment: exactly one weapon in the whole book is unrestricted, so
+    a custom class opened the weapon shelf and found a dagger and
+    nothing else. We cannot know what an Automaton is proficient with,
+    and that cuts both ways: offering everything and letting the player
+    choose is the honest answer, not offering nothing."""
+    items = (rules.get('equipment') or {}).get('items', [])
+    if not find_class(rules, class_name):
+        return list(items)
     out = []
-    for item in (rules.get('equipment') or {}).get('items', []):
+    for item in items:
         allowed = item.get('classes')
         if not allowed or (class_name or '').lower() in [
                 a.lower() for a in allowed]:

@@ -51,6 +51,24 @@ static const char S_FETCH[] = "   fetching from server...";
 static const char S_EMPTY[] = "   (no entries - /help still works)";
 static const char S_FOOT[]  = " key or return = run    f1 = close";
 static const char S_READY[] = "Ready.";
+static const char S_RETRYING[] = "No reply - retrying...";
+static const char S_NOREPLY[] = "No reply - close and reopen (f1).";
+
+/* Request timeout, same as the conversation manager's (mod_convmgr.c)
+   and for the same reason: the resident response watchdog only runs
+   while the chat state machine is busy, and F1 is only reachable from
+   ST_IDLE, so a MENU_LIST lost on the wire parked this panel on
+   'fetching from server...' forever with no timeout, no error and no
+   way out. There is no flow control on the downlink (RTS handshake is
+   off by design - see serial.s) and no link-layer retransmit, so every
+   request path needs its own recovery; this was the last one without.
+   ~15s: long enough that the resident loop has already resynced a
+   parser left mid-frame by a truncated reply (STALL_UNITS in main.c),
+   so the retry does not feed its own reply to a jammed parser. */
+extern volatile uint8_t sys_ticks[2];
+#define REQ_UNITS  4      /* * ~4.3s (sys_ticks high byte) */
+static uint8_t req_at;    /* tick at the last request */
+static uint8_t req_retry; /* the automatic retry is already spent */
 
 /* Panel geometry: text columns [PN_COL, PN_COL+PN_W), matrix pairs
    [PN_PAIR, PN_PAIR+PN_PAIRS). All even so the 2-column color
@@ -162,6 +180,31 @@ static void mn_draw(void) {
     pn_shadow(PN_TOP + 5 + n);
 }
 
+/* Ask the proxy for the menu. Resets the list so a retry cannot append
+   to a half-parsed one (a lost tail frame leaves entries behind). */
+static void mn_request(void) {
+    conv_count = 0;
+    conv_sel = 0;
+    conv_loading = 1;
+    req_at = sys_ticks[1];
+    proto_send_message(MSG_GET_MENU, 0, 0);
+}
+
+/* Called from the resident main loop while the modal is open. */
+static void mn_tick(void) {
+    if (!conv_loading) return;
+    if ((uint8_t)(sys_ticks[1] - req_at) < REQ_UNITS) return;
+    if (!req_retry) {
+        req_retry = 1;
+        mn_request();
+        ui_status(S_RETRYING);
+        return;
+    }
+    conv_loading = 0;   /* stop claiming to be loading */
+    mn_draw();
+    ui_status(S_NOREPLY);
+}
+
 static void mn_parse(void) {
     uint8_t* p = proto_get_payload(&proto);
     uint16_t plen = proto_get_length(&proto);
@@ -247,13 +290,12 @@ static void mn_key(uint8_t k) {
 }
 
 void mod_menu_run(void) {
-    conv_count = 0;
-    conv_sel = 0;
-    conv_loading = 1;
     menu_action = 0;
     menu_pcmd = 0;
+    req_retry = 0;   /* every open spends a fresh automatic retry */
     mod_modal_begin(mn_msg, mn_key);
-    proto_send_message(MSG_GET_MENU, 0, 0);
+    mod_modal_tick(mn_tick);   /* AFTER begin, which clears the hook */
+    mn_request();
     mn_draw();
 }
 

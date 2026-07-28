@@ -98,6 +98,25 @@ class Config:
             'LLM64_WIRE_BAUD',
             config.get('serial', {}).get('wire_baud', 9600)))
 
+        # Streaming chat is paced by the C64's RENDERING cost, not the
+        # wire - the screen is the slower of the two at every baud we
+        # support - so these are separate from wire_baud and do NOT move
+        # when it does. Tunable because the true ceiling depends on what
+        # the screen is doing: a reply that has not filled the chat area
+        # yet only repaints changed rows, while a full screen repaints
+        # all 19. The defaults are the measured worst case.
+        #
+        # Raising them is a real experiment, not a free win: the client
+        # already reports its own loss counters on every CHAT_DONE
+        # ("Ready. [data loss ov=.. hw=.. cr=..]"), so bump, play, and
+        # watch that line. Any non-zero value means back it off.
+        _ser = config.get('serial', {})
+        self.chunk_pace_base = float(os.getenv(
+            'LLM64_CHUNK_PACE_BASE', _ser.get('chunk_pace_base', 0.016)))
+        self.chunk_pace_per_byte = float(os.getenv(
+            'LLM64_CHUNK_PACE_PER_BYTE',
+            _ser.get('chunk_pace_per_byte', 0.0018)))
+
         # Hardcopy (/print, docs/14). `width` is the column the composed
         # document wraps at - the printer's, not the screen's: an
         # MPS-803 is 80 columns wide whichever mode the client is in.
