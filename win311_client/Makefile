@@ -8,11 +8,11 @@
 # Open Watcom is not packaged on most distributions. Fetch the snapshot
 # and point WATCOM at it:
 #
-#   mkdir -p ~/opt && cd ~/opt
+#   mkdir -p ~/Programs && cd ~/Programs
 #   curl -LO https://github.com/open-watcom/open-watcom-v2/releases/download/Current-build/ow-snapshot.tar.xz
 #   mkdir open-watcom-v2 && tar -xf ow-snapshot.tar.xz -C open-watcom-v2
 
-WATCOM  ?= $(HOME)/opt/open-watcom-v2
+WATCOM  ?= $(HOME)/Programs/open-watcom-v2
 OWBIN   := $(WATCOM)/binl64
 export WATCOM
 # wcl shells out to wcc and wlink by name, so they have to be on PATH
@@ -20,7 +20,7 @@ export PATH := $(OWBIN):$(PATH)
 export INCLUDE := $(WATCOM)/h/win:$(WATCOM)/h
 export EDPATH  := $(WATCOM)/eddat
 
-SRC     := src/wire.c src/net.c src/main.c
+SRC     := src/wire.c src/scroll.c src/net.c src/main.c
 OBJ     := $(patsubst src/%.c,build/%.obj,$(SRC))
 EXE     := build/LLM64.EXE
 RC      := src/llm64.rc
@@ -58,12 +58,14 @@ run: $(EXE)
 devproxy:
 	./tools/devproxy.sh
 
-# The wire protocol is plain C with no Windows in it, so it can be
-# tested on the host at native speed - no emulator, no Wine.
+# The framing and the transcript are plain C with no Windows in them, so
+# they can be tested on the host at native speed - no emulator, no Wine.
 test:
 	@mkdir -p build
-	cc -Iinclude -o build/test_wire src/wire.c tests/test_wire.c
+	cc -Wall -Iinclude -o build/test_wire src/wire.c tests/test_wire.c
 	./build/test_wire
+	cc -Wall -Iinclude -o build/test_scroll src/scroll.c tests/test_scroll.c
+	./build/test_scroll
 
 clean:
 	rm -rf build

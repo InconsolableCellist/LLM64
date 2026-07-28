@@ -12,9 +12,13 @@
  *   - the +0x20 length bias round-trips against the real proxy
  *   - the in-band colour markers render as colour
  *
+ * The transcript moved out of this file in Phase 1: it is unwrapped
+ * logical lines in far blocks now, wrapped at paint time, so the pane
+ * re-flows on a resize and is not bounded by DGROUP. See scroll.h.
+ *
  * Deliberately absent, and scheduled: images, MIDI, printing, the
- * conversation manager, the settings dialog, and a scrollback that is
- * not a fixed array. See win311_client/README.md.
+ * conversation manager and the settings dialog. See
+ * win311_client/README.md.
  */
 
 #include <windows.h>
@@ -22,6 +26,7 @@
 #include <stdlib.h>
 #include "wire.h"
 #include "net.h"
+#include "scroll.h"
 
 #define APP_CLASS   "LLM64Main"
 #define PANE_CLASS  "LLM64Pane"
@@ -39,27 +44,15 @@
 #define ID_PANE     1000
 #define ID_INPUT    1001
 
-/* Scrollback. A fixed array for now: the Win16 default data segment is
-   64 KB and this is 200 x 160 = 32 KB of it, which is the ceiling this
-   approach can reach. Phase 2 replaces it with a list of GlobalAlloc'd
-   blocks - see README. */
-#define MAX_LINES   200
-#define MAX_COLS    160
-
-typedef struct {
-    char          text[MAX_COLS + 1];
-    unsigned char len;
-    unsigned char color;     /* C64 colour index the line starts in */
-} Line;
-
-static Line          g_lines[MAX_LINES];
-static int           g_nlines = 0;      /* lines in use */
-static int           g_top = 0;         /* first visible line */
-static unsigned char g_cur_color = 13;  /* light green: assistant */
-static int           g_open_line = 0;   /* line being appended to */
+/* The transcript. Unwrapped logical lines in far blocks off the global
+   heap, wrapped at paint time - see scroll.h. All that is left here is
+   where we are looking at it from. */
+static Scrollback g_sb;
+static long       g_top = 0;    /* first visible display row */
+static int        g_follow = 1; /* stick to the bottom as text arrives */
 
 static HWND     g_main, g_pane, g_input;
-static HFONT    g_font;
+static HFONT    g_font, g_font_bold;
 static int      g_cw = 8, g_ch = 16;    /* character cell */
 static FARPROC  g_old_edit_proc;
 static char     g_status[128] = "Not connected.";
@@ -104,120 +97,52 @@ static int pane_cols(void)
     GetClientRect(g_pane, &rc);
     c = (int)((rc.right - 4) / g_cw);
     if (c < 10) c = 10;
-    if (c > MAX_COLS) c = MAX_COLS;
     return c;
+}
+
+/* Total rows, clamped to what a 16-bit scroll bar can express. Only a
+   pathologically narrow pane over a full transcript can reach this. */
+static long pane_total(void)
+{
+    unsigned long n = sb_rows(&g_sb);
+    return n > 32000UL ? 32000L : (long)n;
+}
+
+static long pane_max_top(void)
+{
+    long max = pane_total() - pane_rows();
+    return max < 0 ? 0 : max;
 }
 
 static void pane_sync_scroll(void)
 {
-    int rows = pane_rows();
-    int max = g_nlines - rows;
-    if (max < 0) max = 0;
+    long max = pane_max_top();
+
     if (g_top > max) g_top = max;
     if (g_top < 0) g_top = 0;
-    SetScrollRange(g_pane, SB_VERT, 0, max, FALSE);
-    SetScrollPos(g_pane, SB_VERT, g_top, TRUE);
+    SetScrollRange(g_pane, SB_VERT, 0, (int)max, FALSE);
+    SetScrollPos(g_pane, SB_VERT, (int)g_top, TRUE);
 }
 
 static void pane_bottom(void)
 {
-    int rows = pane_rows();
-    g_top = g_nlines - rows;
-    if (g_top < 0) g_top = 0;
+    g_top = pane_max_top();
+    g_follow = 1;
     pane_sync_scroll();
 }
 
-/* Drop the oldest line when the array is full. A memmove of 32 KB is
-   not free, but it happens once per line at the very end of a long
-   session, and it keeps the indices trivially correct. */
-static void scroll_out(void)
+/* Every write to the transcript ends the same way: pin to the bottom
+   and repaint. */
+static void pane_touch(void)
 {
-    memmove(&g_lines[0], &g_lines[1], sizeof(Line) * (MAX_LINES - 1));
-    g_nlines = MAX_LINES - 1;
-    g_open_line = g_nlines;
-    memset(&g_lines[g_open_line], 0, sizeof(Line));
-    g_lines[g_open_line].color = g_cur_color;
-}
-
-static void line_new(void)
-{
-    if (g_nlines >= MAX_LINES)
-        scroll_out();
-    else
-        g_open_line = g_nlines++;
-    memset(&g_lines[g_open_line], 0, sizeof(Line));
-    g_lines[g_open_line].color = g_cur_color;
-}
-
-static void append_char(char c)
-{
-    Line *ln;
-    int cols = pane_cols();
-    int brk, i, n;
-
-    if (g_nlines == 0)
-        line_new();
-    ln = &g_lines[g_open_line];
-
-    if (c == '\n') {
-        line_new();
-        return;
-    }
-    if (ln->len >= (unsigned char)cols) {
-        /* Word wrap: carry the last unfinished word to the next line
-           rather than splitting it. */
-        brk = -1;
-        for (i = ln->len - 1; i > 0 && i > ln->len - 24; i--) {
-            if (ln->text[i] == ' ') { brk = i; break; }
-        }
-        if (brk > 0) {
-            char carry[32];
-            n = ln->len - brk - 1;
-            if (n > 30) n = 30;
-            memcpy(carry, ln->text + brk + 1, n);
-            ln->len = (unsigned char)brk;
-            ln->text[brk] = '\0';
-            line_new();
-            ln = &g_lines[g_open_line];
-            memcpy(ln->text, carry, n);
-            ln->len = (unsigned char)n;
-            ln->text[n] = '\0';
-        } else {
-            line_new();
-            ln = &g_lines[g_open_line];
-        }
-    }
-    ln->text[ln->len++] = c;
-    ln->text[ln->len] = '\0';
-}
-
-/* Append proxy text, markers and all. The markers stay in the buffer
-   because they are what the painter splits colour runs on. */
-static void append_text(const char *s)
-{
-    while (*s)
-        append_char(*s++);
-}
-
-/* A line's base colour is stamped when the line is created, so changing
-   the current colour has to restamp a line that has not been written to
-   yet - otherwise the first chunk of a reply inherits the colour of
-   whatever came before it. */
-static void set_color(unsigned char color)
-{
-    g_cur_color = color;
-    if (g_nlines > 0 && g_lines[g_open_line].len == 0)
-        g_lines[g_open_line].color = color;
+    pane_bottom();
+    InvalidateRect(g_pane, NULL, TRUE);
 }
 
 static void say(unsigned char color, const char *s)
 {
-    g_cur_color = color;
-    line_new();
-    append_text(s);
-    line_new();
-    pane_bottom();
-    InvalidateRect(g_pane, NULL, TRUE);
+    sb_say(&g_sb, color, s);
+    pane_touch();
 }
 
 static void set_status(const char *s)
@@ -231,32 +156,36 @@ static void set_status(const char *s)
 /* Painting                                                          */
 /* ---------------------------------------------------------------- */
 
-static void paint_line(HDC hdc, int y, const Line *ln)
+/* Draw one display row. The markers are still in the text - they are
+   what the runs are split on, and the row arrives already knowing the
+   colour and weight in force at its first cell, which is what makes a
+   span that survives a wrap render the same on both rows. */
+static void paint_row(HDC hdc, int y, const SbRow *r)
 {
-    int i, run_start = 0, x = 2;
-    unsigned char color = ln->color;
-    int bold = 0;
-    char buf[MAX_COLS + 1];
-    int n;
+    unsigned i, run_start = 0;
+    int x = 2, n;
+    unsigned char color = r->color;
+    unsigned char bold = r->bold;
 
-    for (i = 0; i <= (int)ln->len; i++) {
-        unsigned char c = (unsigned char)ln->text[i];
-        int is_marker = (i < (int)ln->len)
-            && (c == MARK_CLOSE || c == MARK_BOLD_ON || c == MARK_BOLD_OFF
-                || (c >= MARK_COLOR_BASE + 1 && c <= MARK_COLOR_BASE + 14));
+    /* i == r->len closes the last run, and at that point there is no
+       byte to read: a row can end flush against the end of an arena
+       block, and in protected mode reading one past it is a fault, not
+       a stray byte. The Phase 0 version got away with this because its
+       lines were NUL-terminated arrays. */
+    for (i = 0; i <= r->len; i++) {
+        unsigned char c = (i < r->len) ? (unsigned char)r->text[i] : 0;
+        int is_marker = (i < r->len) && sb_is_marker(c);
 
-        if (i == (int)ln->len || is_marker) {
-            n = i - run_start;
+        if (i == r->len || is_marker) {
+            n = (int)(i - run_start);
             if (n > 0) {
-                memcpy(buf, ln->text + run_start, n);
-                buf[n] = '\0';
                 SetTextColor(hdc, g_pal[color & 0x0F]);
-                SelectObject(hdc, g_font);
-                TextOut(hdc, x, y, buf, n);
+                SelectObject(hdc, bold ? g_font_bold : g_font);
+                TextOut(hdc, x, y, (LPSTR)(r->text + run_start), n);
                 x += n * g_cw;
             }
             if (is_marker) {
-                if (c == MARK_CLOSE)         color = ln->color;
+                if (c == MARK_CLOSE)         color = r->base;
                 else if (c == MARK_BOLD_ON)  bold = 1;
                 else if (c == MARK_BOLD_OFF) bold = 0;
                 else                         color = (unsigned char)(c & 0x0F);
@@ -264,7 +193,6 @@ static void paint_line(HDC hdc, int y, const Line *ln)
             run_start = i + 1;
         }
     }
-    (void)bold;   /* a bold face lands with the font work in Phase 1 */
 }
 
 static void pane_paint(HWND hwnd)
@@ -272,7 +200,9 @@ static void pane_paint(HWND hwnd)
     PAINTSTRUCT ps;
     HDC hdc;
     RECT rc;
-    int row, rows, idx, y;
+    SbView v;
+    SbRow  r;
+    int row, rows;
     HBRUSH bg;
 
     hdc = BeginPaint(hwnd, &ps);
@@ -283,12 +213,9 @@ static void pane_paint(HWND hwnd)
 
     SetBkMode(hdc, TRANSPARENT);
     rows = pane_rows();
-    for (row = 0; row < rows; row++) {
-        idx = g_top + row;
-        if (idx >= g_nlines)
-            break;
-        y = row * g_ch;
-        paint_line(hdc, y, &g_lines[idx]);
+    if (sb_view(&g_sb, (unsigned long)g_top, &v)) {
+        for (row = 0; row < rows && sb_view_next(&v, &r); row++)
+            paint_row(hdc, row * g_ch, &r);
     }
     EndPaint(hwnd, &ps);
 }
@@ -329,18 +256,16 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
         /* [seq][text\0] - seq only matters to a link that can lose
            frames, which TCP is not. Kept in the payload for the C64. */
         if (len > 1) {
-            set_color(13);
-            append_text((const char *)(p + 1));
-            pane_bottom();
-            InvalidateRect(g_pane, NULL, TRUE);
+            sb_color(&g_sb, 13);
+            sb_puts(&g_sb, (const char *)(p + 1));
+            pane_touch();
         }
         break;
 
     case MSG_CHAT_DONE:
-        line_new();
-        line_new();
-        pane_bottom();
-        InvalidateRect(g_pane, NULL, TRUE);
+        sb_newline(&g_sb);
+        sb_newline(&g_sb);
+        pane_touch();
         set_status("Ready.");
         EnableWindow(g_input, TRUE);
         SetFocus(g_input);
@@ -425,7 +350,6 @@ static void send_input(void)
         say(2, "Not connected. Use File > Connect.");
         return;
     }
-    g_cur_color = 1;
     say(1, text);
     send_text_frame(MSG_CHAT_REQUEST, text);
     set_status("Waiting for the model...");
@@ -458,11 +382,22 @@ long FAR PASCAL _export PaneProc(HWND hwnd, UINT msg, UINT wParam,
         default: return 0;
         }
         pane_sync_scroll();
+        /* Scrolling back to the bottom re-arms the follow: a reader who
+           has paged up stays where they are while a reply streams in. */
+        g_follow = (g_top >= pane_max_top());
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
 
     case WM_SIZE:
-        pane_sync_scroll();
+        /* The whole point of the far-block transcript: a resize re-flows
+           what is already on screen, because nothing was ever stored
+           wrapped in the first place. */
+        sb_width(&g_sb, (unsigned)pane_cols());
+        if (g_follow)
+            pane_bottom();
+        else
+            pane_sync_scroll();
+        InvalidateRect(hwnd, NULL, TRUE);
         return 0;
     }
     return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -532,7 +467,10 @@ static void start_session(HWND hwnd)
     /* The banner is also the renderer's self-check: it is written in
        the same in-band marker language the proxy streams, so if colour
        is broken it is broken before the first frame arrives. */
-    say(1, "LLM64 for Windows - Phase 0 spike");
+    say(1, "LLM64 for Windows - Phase 1. "
+           "The transcript keeps its lines unwrapped and re-flows them "
+           "at paint time, so resizing this window re-lays out the text "
+           "already in it rather than leaving it wrapped where it fell.");
     say(12, "In-band markers: "
             "\x12" "red" "\x01" " "
             "\x1D" "green" "\x01" " "
@@ -552,17 +490,44 @@ long FAR PASCAL _export MainProc(HWND hwnd, UINT msg, UINT wParam,
 {
     char err[128];
     TEXTMETRIC tm;
+    LOGFONT lf;
     HDC hdc;
 
     switch (msg) {
     case WM_CREATE:
         g_main = hwnd;
+        if (!sb_init(&g_sb)) {
+            MessageBox(hwnd, "Not enough memory for the transcript.",
+                       APP_TITLE, MB_OK | MB_ICONSTOP);
+            return -1;
+        }
         g_font = GetStockObject(SYSTEM_FIXED_FONT);
         hdc = GetDC(hwnd);
         SelectObject(hdc, g_font);
         GetTextMetrics(hdc, &tm);
         g_cw = tm.tmAveCharWidth;
         g_ch = tm.tmHeight;
+
+        /* A bold face for the proxy's bold markers. It has to keep the
+           cell width or the pane stops being a grid, so ask for the
+           measured width explicitly and check we got it. */
+        g_font_bold = g_font;
+        if (GetObject(g_font, sizeof(lf), (LPSTR)&lf)) {
+            HFONT f;
+            lf.lfWeight = FW_BOLD;
+            lf.lfWidth  = g_cw;
+            f = CreateFontIndirect(&lf);
+            if (f) {
+                SelectObject(hdc, f);
+                GetTextMetrics(hdc, &tm);
+                if (tm.tmAveCharWidth == g_cw)
+                    g_font_bold = f;
+                else
+                    DeleteObject(f);
+                SelectObject(hdc, g_font);
+                GetTextMetrics(hdc, &tm);
+            }
+        }
         ReleaseDC(hwnd, hdc);
 
         g_pane = CreateWindow(PANE_CLASS, NULL,
@@ -583,10 +548,11 @@ long FAR PASCAL _export MainProc(HWND hwnd, UINT msg, UINT wParam,
 
     case WM_SIZE:
         layout(hwnd);
-        /* Nothing may be written to the transcript before the pane has
-           its real size: lines are wrapped as they are appended, and at
-           WM_CREATE time the pane is still the 10x10 placeholder that
-           CreateWindow was given. */
+        /* Text written before the pane knew its size used to wrap at the
+           10x10 placeholder width and stay that way; now it re-flows on
+           the first WM_SIZE like everything else. The session still
+           starts from here rather than WM_CREATE, because connecting
+           wants a window that is already on screen to report to. */
         if (!g_started) {
             g_started = 1;
             start_session(hwnd);
@@ -628,15 +594,15 @@ long FAR PASCAL _export MainProc(HWND hwnd, UINT msg, UINT wParam,
         case IDM_PING:       send_frame(MSG_PING, NULL, 0);
                              set_status("Ping sent."); return 0;
         case IDM_NEWCONV:    send_frame(MSG_NEW_CONVERSATION, NULL, 0);
-                             g_nlines = 0; g_top = 0;
-                             InvalidateRect(g_pane, NULL, TRUE); return 0;
+                             sb_clear(&g_sb);
+                             pane_touch(); return 0;
         case IDM_CANCEL:     send_frame(MSG_CANCEL_REQUEST, NULL, 0);
                              EnableWindow(g_input, TRUE); return 0;
         case IDM_ABOUT:
             MessageBox(hwnd,
                        "LLM64 for Windows\n\n"
                        "A Windows 3.1 client for the LLM64 proxy.\n"
-                       "Phase 0 spike.",
+                       "Phase 1.",
                        "About LLM64", MB_OK | MB_ICONINFORMATION);
             return 0;
         case IDM_EXIT:
@@ -647,6 +613,9 @@ long FAR PASCAL _export MainProc(HWND hwnd, UINT msg, UINT wParam,
 
     case WM_DESTROY:
         net_shutdown();
+        if (g_font_bold && g_font_bold != g_font)
+            DeleteObject(g_font_bold);
+        sb_free(&g_sb);
         PostQuitMessage(0);
         return 0;
     }

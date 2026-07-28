@@ -1,0 +1,162 @@
+/*
+ * LLM64 for Windows - the transcript
+ *
+ * The Phase 0 spike kept the transcript as a 200 x 160 array of
+ * already-wrapped lines in the default data segment. That is 32 KB of
+ * the 64 KB DGROUP, and because the wrapping happened as text was
+ * appended, resizing the window could not re-flow anything already on
+ * screen. Both problems have the same fix, and it is this file:
+ *
+ *   - logical lines are stored *unwrapped*, in far blocks off the heap,
+ *     so DGROUP holds only the bookkeeping;
+ *   - wrapping happens at paint time, through one iterator, so a
+ *     re-flow is just a paint at a different width.
+ *
+ * There is no Windows in here. Under the 16-bit large memory model
+ * every pointer is already far and malloc() draws on the far heap - the
+ * same global memory GlobalAlloc hands out - so the same source compiles
+ * for the host and `make test` can exercise the wrapping without Wine,
+ * an emulator or a proxy anywhere in the loop.
+ *
+ * Text is stored with the proxy's in-band markers still in it (docs/08:
+ * 0x01 close, 0x02/0x03 bold, 0x10|c colour). They occupy no screen
+ * cell, which is precisely why wrapping has to be marker-aware and the
+ * spike's byte-counting wrap was subtly short.
+ */
+
+#ifndef SCROLL_H
+#define SCROLL_H
+
+/* 8 blocks of 8 KB is 64 KB of transcript, about a thousand lines of
+   prose, and it is all outside DGROUP. Raising these costs global
+   memory and nothing else. */
+#define SB_BLOCK_SIZE   8192
+#define SB_MAX_BLOCKS   8
+#define SB_MAX_LINES    512
+
+/* The longest logical line kept whole, and the one place the design
+   shows a seam: text past this is committed and continued on a fresh
+   logical line, which after wrapping reads as one short row in the
+   middle of a paragraph. The break is taken at a space so it never
+   lands mid-word. The proxy sends real newlines between paragraphs, so
+   only a single unbroken 2 KB block of prose can reach it. This buffer
+   is the one part of the transcript still in DGROUP; it is 2 KB of the
+   32 KB the fixed array used to hold. */
+#define SB_MAX_LINE     2048
+
+/* How far back the seam looks for a space to break on. */
+#define SB_CARRY        80
+
+typedef struct {
+    unsigned      block;    /* arena block holding the text */
+    unsigned      off;      /* byte offset within that block */
+    unsigned      len;      /* bytes, markers included */
+    unsigned      rows;     /* display rows at the current width */
+    unsigned char color;    /* colour in force at the first cell */
+} SbLine;
+
+typedef struct {
+    char     *blocks[SB_MAX_BLOCKS];
+    unsigned  nblocks;      /* blocks actually allocated so far */
+    unsigned  cur_block;    /* block being filled */
+    unsigned  cur_off;      /* fill point within it */
+
+    SbLine   *lines;        /* ring of SB_MAX_LINES committed lines */
+    unsigned  head;         /* ring slot of the oldest */
+    unsigned  count;        /* committed lines held */
+
+    /* The line being appended to. It lives here rather than in the
+       arena because it grows a character at a time, and the arena is
+       append-only. It is committed on a newline. */
+    char      open[SB_MAX_LINE];
+    unsigned  open_len;
+    unsigned char open_color;   /* colour at the open line's first cell */
+
+    /* Where the open line's final display row starts, so appending a
+       character re-wraps one row rather than the whole line. */
+    unsigned      open_tail;
+    unsigned      open_rows;    /* rows before open_tail */
+    unsigned char open_tail_color;
+
+    unsigned char color;        /* colour for text appended from now on */
+    unsigned      cols;         /* display width, in cells */
+    unsigned long total_rows;   /* committed rows; the open line is extra */
+} Scrollback;
+
+/* One display row: a slice of a logical line, plus the rendering state
+   in force at its first cell. text points into the arena or the open
+   buffer and is valid until the next append. */
+typedef struct {
+    const char   *text;
+    unsigned      len;
+    unsigned char color;    /* colour here */
+    unsigned char base;     /* the logical line's colour, for MARK_CLOSE */
+    unsigned char bold;
+} SbRow;
+
+/* Wrap iterator over one logical line. The single implementation of the
+   wrapping rules: counting rows and finding row N are the same walk. */
+typedef struct {
+    const char   *text;
+    unsigned      len;
+    unsigned      cols;
+    unsigned      pos;
+    unsigned char color;
+    unsigned char base;
+    unsigned char bold;
+    int           done;
+} SbWrap;
+
+/* A cursor over display rows, so painting a screenful is one seek and
+   then one step per row rather than a seek per row. */
+typedef struct {
+    const Scrollback *sb;
+    unsigned          slot;     /* ring slot of the current logical line */
+    unsigned          left;     /* committed lines still ahead */
+    SbWrap            w;
+    int               in_open;  /* the open line is the last one */
+    int               done;
+} SbView;
+
+int      sb_init(Scrollback *sb);
+void     sb_free(Scrollback *sb);
+void     sb_clear(Scrollback *sb);
+
+/* Colour for text appended from here on. Applied to the open line
+   itself when nothing has been written to it yet - otherwise the first
+   chunk of a reply inherits the colour of whatever preceded it. */
+void     sb_color(Scrollback *sb, unsigned char color);
+
+void     sb_putc(Scrollback *sb, char c);   /* '\n' closes the line */
+void     sb_puts(Scrollback *sb, const char *s);
+void     sb_newline(Scrollback *sb);
+
+/* A whole line in one colour, closed at both ends: the shape almost
+   every status or error message wants. */
+void     sb_say(Scrollback *sb, unsigned char color, const char *s);
+
+/* Set the display width and re-flow. Cheap enough to call from WM_SIZE:
+   it re-walks the retained text once. */
+void     sb_width(Scrollback *sb, unsigned cols);
+
+/* Display rows in the whole transcript, the open line included. */
+unsigned long sb_rows(const Scrollback *sb);
+
+/* Logical lines retained, the open one included - for tests and for the
+   eviction accounting. */
+unsigned sb_lines(const Scrollback *sb);
+
+/* Position a cursor at a display row. Returns 0 if the row is past the
+   end. */
+int      sb_view(const Scrollback *sb, unsigned long row, SbView *v);
+int      sb_view_next(SbView *v, SbRow *out);
+
+/* Exposed for the tests: wrap one logical line by hand. */
+void     sb_wrap_begin(SbWrap *w, const char *text, unsigned len,
+                       unsigned cols, unsigned char base);
+int      sb_wrap_next(SbWrap *w, SbRow *out);
+
+/* Nonzero if this byte is an in-band marker and so occupies no cell. */
+int      sb_is_marker(unsigned char c);
+
+#endif /* SCROLL_H */

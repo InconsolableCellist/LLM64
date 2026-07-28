@@ -544,7 +544,7 @@ emulator anywhere in the loop.
 | Phase | Deliverable | Proves |
 |---|---|---|
 | **0 — spike** ✅ | Win16 app: connect, `PING`, streamed chat, colour markers, menu bar, status strip | the *whole* toolchain risk (see below) |
-| **1 — MVP** | Far-memory scrollback with re-flow, editor keys, `HINT` chrome, `MENU_LIST`, help | it is a usable client |
+| **1 — MVP** ◐ | Far-memory scrollback with re-flow ✅ and bold ✅; editor keys, `HINT` chrome, `MENU_LIST`, help still to do | it is a usable client |
 | **2 — dialogs** | Conversation manager, settings, model picker, find/history | feature parity with the F-keys |
 | **3 — pictures** | Blob → DIB modal viewer (Path A, no proxy change) | media transfer end-to-end |
 | **4 — profiles** | `CLIENT_HELLO`, the proxy's `ClientProfile`, negotiated widths and payloads, per-profile art (§7) | the proxy is multi-client, not C64-with-exceptions |
@@ -577,6 +577,49 @@ the first chunk of a reply inherited the *user's* colour; and the
 startup banner was written before the pane had been sized, so it wrapped
 at the placeholder width of 10 columns.
 
+### What Phase 1's scrollback measured
+
+Built and run on 2026-07-27, on the second machine (Bazzite; Watcom in
+`~/Programs`, Wine 11.0 Staging inside the `my-distrobox` toolbox):
+
+- **The transcript is out of DGROUP and re-flows.** `src/scroll.c` keeps
+  unwrapped logical lines in `malloc`'d far blocks — under the large
+  memory model that is the far heap, which is the global memory
+  `GlobalAlloc` hands out — and wraps them at paint time through a single
+  iterator. Resizing the window re-lays out text already on screen,
+  which the Phase 0 fixed array could not do at all. 64 KB of text in 8
+  recycled blocks, 512 logical lines, against 32 KB of DGROUP before.
+- **`tests/test_scroll.c` pins it on the host**, alongside the wire test:
+  33 assertions covering re-flow in both directions, marker-aware
+  wrapping, eviction, the row cursor agreeing with the cached row count,
+  and the over-long-line seam. No Wine, no proxy, no emulator.
+- **Verified under Wine at scale**: four `LONGTEST` replies (2760 chars
+  each, no newline in them) spill the transcript past one arena block;
+  narrowing, widening, and paging to the top and back all hold.
+- **Bold markers now render in a bold face**, built from the fixed
+  system font's `LOGFONT` and rejected if it does not keep the cell
+  width.
+
+Three bugs of the kind only this exercise surfaces:
+
+1. **The painter read one byte past a row.** Rows are slices of an arena
+   block, not NUL-terminated arrays, and in protected mode reading past
+   the end of a segment is a fault rather than a stray character. The
+   Phase 0 code got away with the same loop because its lines *were*
+   terminated arrays.
+2. **The wrap counted bytes, not cells**, so any line carrying colour
+   markers broke early — invisible in the spike because the only marked
+   line was short.
+3. **The over-long-line seam cut mid-word.** `SB_MAX_LINE` has to break
+   somewhere; it now backs up to the last space, so the seam costs one
+   short row and never half a word.
+
+And two in the harness, both of which had been quietly weakening it:
+`xdotool type --window` is `XSendEvent`, which the 16-bit VDM mostly
+drops — the message arrived at the proxy as its first word only — and a
+headless Xvfb with no window manager never produces a `WM_SIZE`, so a
+resize test on it proves nothing. See the README.
+
 ---
 
 ## 12. Risks
@@ -584,14 +627,12 @@ at the placeholder width of 10 columns.
 1. ~~**`winsock.dll16` under Wine is unproven.**~~ Retired: proven in
    Phase 0. The Win32 build (§9.2) remains worth having for modern
    Windows, but it is no longer insurance.
-2. **64 KB segments vs. a long scrollback.** Now concrete rather than
-   theoretical: the spike's transcript is a 32 KB fixed array in DGROUP,
-   it wraps lines as they are appended, and it therefore cannot re-flow
-   on a window resize. The fix is Phase 1 and is known — logical
-   (unwrapped) lines in `GlobalAlloc`'d far blocks, wrapped into a small
-   display array at paint time — but it is the single most likely source
-   of Win16-specific bugs, and it wants doing before the client grows
-   around the wrong data structure.
+2. ~~**64 KB segments vs. a long scrollback.**~~ Retired: done in Phase 1
+   (§10). The transcript is unwrapped logical lines in far blocks,
+   wrapped at paint time, and it re-flows. It did produce the predicted
+   Win16-specific bug — a one-byte overread past an arena block, which
+   in protected mode faults — so the prediction was right about the
+   *kind* of trouble as well as the need.
 3. **Cooperative multitasking.** Holding a menu open or dragging a
    window stops the message pump. This was the main argument against
    streaming PCM; with MIDI handed to MCI (§6.2) the risk largely goes
@@ -644,18 +685,27 @@ whole proxy. Three things are not:
 
 1. **Open Watcom V2** — 522 MB extracted, so re-fetch rather than copy:
    ```sh
-   mkdir -p ~/opt && cd ~/opt
+   mkdir -p ~/Programs && cd ~/Programs
    curl -LO https://github.com/open-watcom/open-watcom-v2/releases/download/Current-build/ow-snapshot.tar.xz
    mkdir open-watcom-v2 && tar -xf ow-snapshot.tar.xz -C open-watcom-v2
    ```
-   The Makefile defaults to `~/opt/open-watcom-v2`; `make WATCOM=...`
-   overrides. `Current-build` is a rolling tag — pin a dated build if
-   two machines need identical output.
+   The Makefile defaults to `~/Programs/open-watcom-v2`; `make WATCOM=...`
+   overrides. Nothing needs symlinking into `~/bin`: the Makefile puts
+   `binl64` on `PATH` itself, which it has to, because `wcl` shells out
+   to `wcc` and `wlink` by name. `Current-build` is a rolling tag — pin a
+   dated build if two machines need identical output.
 2. **The proxy venv**, because `tools/devproxy.sh` borrows it for
    Pillow: `cd llm64_proxy && python -m venv .venv && .venv/bin/pip
    install -r requirements.txt`.
-3. **Wine, xdotool, imagemagick** — only to *run* the client. Headless
-   needs a display: `Xvfb :99 &` and `DISPLAY=:99`.
+3. **Wine, xdotool, imagemagick, Xvfb and a window manager** — only to
+   *run* the client. On an ostree host (Bazzite, Silverblue) put them in
+   a toolbox rather than layering them onto the image: `distrobox enter
+   my-distrobox -- sudo dnf install wine xdotool xorg-x11-server-Xvfb
+   ImageMagick openbox`. The 16-bit modules land in
+   `/usr/lib64/wine-wow64/wine/i386-windows/` and work from there.
+   `wine_smoke.sh` starts its own Xvfb and window manager; the proxy runs
+   on the host, and a toolbox shares the network namespace so
+   `127.0.0.1` still reaches it.
 
 No `config.toml` is required: `main.py` skips it when absent
 (`main.py:63`) and `devproxy.sh` supplies everything by environment.
@@ -675,14 +725,17 @@ so a green run means the checkout is good before any environment fight.
 
 ### Next task, and why it is first
 
-**Phase 1's scrollback rewrite** (§12 risk 2). The transcript is
-currently a 200 × 160 fixed array in the 64 KB default data segment, and
-lines are wrapped *as they are appended* — so a window resize does not
-re-flow anything already on screen, and 32 KB of DGROUP is the ceiling.
-The replacement is known: logical (unwrapped) lines in `GlobalAlloc`'d
-far blocks, wrapped into a small display array at paint time. Doing it
-before the dialogs land means the client does not grow around the wrong
-data structure.
+~~Phase 1's scrollback rewrite~~ — done, see §10. What is left of Phase 1
+is the rest of the list: the editor keys (Ctrl-A/E/K/D on the input box),
+the `HINT` chrome in its own half of the status strip, `MENU_LIST`
+appended to `&Mode` at runtime, and help. None of them is structural;
+the data structure everything else grows around is now in place.
+
+The one thing still worth doing early is the **`CLIENT_HELLO` /
+`ClientProfile` work in §7**, which is Phase 4 in the table but is the
+only remaining change that reaches into the proxy. Everything after it
+(pictures, MIDI, printing) is easier once widths and payload caps are
+negotiated rather than assumed.
 
 ### Decisions still open
 
@@ -703,6 +756,14 @@ data structure.
   session. Kill by PID, from a script file.
 - `xdotool search --name LLM64` also matches a file manager or editor
   with the project open; match on the `winevdm.exe` window class too.
+- `xdotool type --window <id>` is `XSendEvent`, and the 16-bit VDM drops
+  most synthetic keystrokes: the symptom is a message that reaches the
+  proxy as its first word. Focus the window and type through XTEST.
+- XTEST types into whatever has focus, so a smoke run on `:0` types into
+  whatever *you* are doing. `wine_smoke.sh` brings up its own Xvfb.
+- A headless Xvfb needs a window manager or Wine never delivers
+  `WM_SIZE`, and every resize test on it passes without testing
+  anything.
 - Anything written to the transcript before the first `WM_SIZE` wraps at
   the placeholder pane width. That is why the banner is emitted from
   `start_session()` and not `WM_CREATE`.
