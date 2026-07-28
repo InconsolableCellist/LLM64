@@ -22,6 +22,8 @@ Verified against a real proxy, running under Wine's 16-bit subsystem:
 - connects, PINGs, and gets its ACK
 - sends `CHAT_REQUEST`, renders streamed `CHAT_CHUNK` replies
 - renders the proxy's in-band colour markers, and bold in a real bold face
+- **MDI**: one frame window, the conversation as a document window inside
+  it, a Window menu that cascades, tiles and lists the open documents
 - menu bar, transcript pane with scroll bar, input box, status strip
 - reads `LLM64.INI`; the command line overrides it
 - **the transcript re-flows on a resize**, and lives outside the 64 KB
@@ -107,8 +109,9 @@ include/net.h    src/net.c     Winsock 1.1, asynchronous. Windows 3.x is
                                cooperatively multitasked, so a blocking
                                recv() would freeze the whole system;
                                everything is WSAAsyncSelect + messages.
-                 src/main.c    window, menu, transcript pane, input,
-                               status strip, frame dispatch.
+                 src/main.c    MDI frame, conversation document, menu,
+                               transcript pane, input, status strip,
+                               frame dispatch.
                  src/llm64.rc  menu resource.
 tests/           test_wire.c   framing tests, including the +0x20 length
                                bias and its 8-bit wrap.
@@ -160,3 +163,24 @@ only.
 **Callbacks need `_export`** so the compiler emits the prologue that
 reloads DS. `-zu` is set for the same reason: in a Win16 callback,
 DS != SS.
+
+**It is an MDI application**, so three things are not optional:
+`DefFrameProc`/`DefMDIChildProc` in place of `DefWindowProc`,
+`TranslateMDISysAccel` in the message loop, and letting `WM_COMMAND`
+fall through to `DefFrameProc` for anything the frame does not handle —
+swallowing the default case is how an MDI app quietly loses the list of
+open documents on its Window menu.
+
+A document window can be *closed*, which is normal in MDI and leaves an
+empty workspace. `ConvProc`'s `WM_DESTROY` therefore clears `g_pane` and
+`g_input`, and everything that touches them tolerates NULL: a reply
+arriving with no window open is still appended, because the transcript
+belongs to the application and not to any window. Window > New
+Conversation Window opens one on it again, scrollback intact.
+
+**Wine's 16-bit MDI does not appear to honour the system accelerators.**
+Ctrl+F4 (close document) and Ctrl+F5 (restore) do nothing under Wine
+11.0, while the mouse routes — close box, minimize, restore, and the
+Window menu's Cascade and Tile — all work. `TranslateMDISysAccel` is in
+the loop where it belongs; this wants re-checking on real Windows or in
+the Win95 VM before concluding anything about the client.

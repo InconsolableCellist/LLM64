@@ -16,6 +16,16 @@ BEGIN
         MENUITEM "&Ping",                 105
         MENUITEM "&Cancel Reply\tF3",     106
     END
+    /* The MDI window menu. It has to be a real popup that the frame can
+       hand to the MDI client, which appends the child list to it. */
+    POPUP "&Window"
+    BEGIN
+        MENUITEM "&New Conversation Window", 111
+        MENUITEM SEPARATOR
+        MENUITEM "&Cascade\tShift+F5",    108
+        MENUITEM "&Tile\tShift+F4",       109
+        MENUITEM "Arrange &Icons",        110
+    END
     POPUP "&Help"
     BEGIN
         MENUITEM "&About LLM64...",       107

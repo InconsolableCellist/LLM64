@@ -214,7 +214,25 @@ back-pressure the ACIA's TDRE bit did.
 
 The point of the exercise is that it should look like it shipped in 1993.
 
-**Main window** — `WNDCLASS` with a menu bar, sizeable frame, an
+**The application is MDI** — one top-level frame window holding document
+windows, rather than a scatter of top-levels. That was briefly the
+fashion in the other direction, and MDI is both the period-correct
+answer and the one that aged better: Word, Excel, File Manager and
+Program Manager all worked this way. It also decides where the later
+windows go — the picture viewer, jukebox and conversation manager become
+documents in the workspace rather than free-floating windows, and the
+Window menu lists them. Structurally it costs `DefFrameProc` and
+`DefMDIChildProc` in place of `DefWindowProc`, a `MDICLIENT` between the
+frame and its documents, and `TranslateMDISysAccel` in the message loop.
+
+The split is: the *frame* owns the menu bar, the status strip and the
+socket, because those are the application's; a *document* owns a
+transcript pane and an input box. The transcript itself belongs to
+neither — it is application state, so closing every window on it loses
+nothing and a reply that arrives while no window is open is still there
+when one is opened again.
+
+**Frame window** — `WNDCLASS` with a menu bar, sizeable frame, an
 `ICON`, and `CTL3D.DLL` for the sunken-border look that every serious
 3.1 app used.
 
@@ -554,7 +572,7 @@ emulator anywhere in the loop.
 | Phase | Deliverable | Proves |
 |---|---|---|
 | **0 — spike** ✅ | Win16 app: connect, `PING`, streamed chat, colour markers, menu bar, status strip | the *whole* toolchain risk (see below) |
-| **1 — MVP** ◐ | Far-memory scrollback with re-flow ✅ and bold ✅; editor keys, `HINT` chrome, `MENU_LIST`, help still to do | it is a usable client |
+| **1 — MVP** ◐ | Far-memory scrollback with re-flow ✅, bold ✅, MDI frame and document windows ✅; editor keys, `HINT` chrome, `MENU_LIST`, help still to do | it is a usable client |
 | **2 — dialogs** | Conversation manager, settings, model picker, find/history | feature parity with the F-keys |
 | **3 — pictures** | Blob → DIB modal viewer (Path A, no proxy change) | media transfer end-to-end |
 | **4 — profiles** | `CLIENT_HELLO`, the proxy's `ClientProfile`, negotiated widths and payloads, per-profile art (§7) | the proxy is multi-client, not C64-with-exceptions |
@@ -629,6 +647,29 @@ And two in the harness, both of which had been quietly weakening it:
 drops — the message arrived at the proxy as its first word only — and a
 headless Xvfb with no window manager never produces a `WM_SIZE`, so a
 resize test on it proves nothing. See the README.
+
+### What the MDI restructure measured
+
+Verified under Wine on the same day: the menu bar merges the maximized
+document's system menu and buttons, the Window menu lists the open
+document and its Cascade and Tile work, focus follows `WM_MDIACTIVATE`
+into the document's input box, and the transcript re-flows to a restored
+child's narrower width exactly as it does to the frame's.
+
+Closing a document is the case worth having tested. It leaves an empty
+workspace — correct for MDI — and it used to leave `g_pane` and
+`g_input` naming windows that no longer existed. They are now cleared on
+`WM_DESTROY` and every use tolerates their absence, so a reply streaming
+in with no window open is appended rather than painted into nothing;
+Window > New Conversation Window opens onto it with the scrollback
+intact. Confirmed end to end: close, chat, reopen, and the earlier text
+is still there.
+
+One open question, and the Win95 VM is the place to answer it: Wine's
+16-bit MDI did not act on Ctrl+F4 or Ctrl+F5 at all, while every mouse
+route worked. `TranslateMDISysAccel` is in the message loop where it
+belongs, so this looks like the emulator rather than the client — but it
+is unproven either way.
 
 ---
 

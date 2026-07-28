@@ -1,11 +1,23 @@
 /*
- * LLM64 for Windows - Phase 0 spike
+ * LLM64 for Windows - frame, windows and frame dispatch
  *
- * A 16-bit Windows 3.x client for the LLM64 proxy: main window with a
- * menu bar, an owner-drawn transcript pane, a one-line input box and a
- * status strip. It connects over Winsock, PINGs, and holds a chat.
+ * A 16-bit Windows 3.x client for the LLM64 proxy. It is an MDI
+ * application: one frame window with the menu bar, the status strip and
+ * the socket, and document windows inside it. Today there is one kind
+ * of document - the conversation, an owner-drawn transcript pane over a
+ * one-line input box - and the picture viewer, jukebox and conversation
+ * manager join it as further children rather than as loose top-level
+ * windows.
  *
- * What this spike is proving (docs/16 section 10):
+ * MDI is the period-correct answer and also the one that aged well:
+ * Word, Excel and Program Manager all worked this way, and a window
+ * full of loose windows is the thing Windows spent the nineties moving
+ * away from. Structurally it costs three things and no more:
+ * DefFrameProc and DefMDIChildProc instead of DefWindowProc, a
+ * MDICLIENT between the frame and its documents, and
+ * TranslateMDISysAccel in the message loop.
+ *
+ * What the spike proved, and this keeps proving (docs/16 section 10):
  *   - Open Watcom builds a working NE binary for Windows 3.x
  *   - it runs under Wine's 16-bit subsystem
  *   - WSAAsyncSelect drives the protocol without ever blocking
@@ -29,6 +41,7 @@
 #include "scroll.h"
 
 #define APP_CLASS   "LLM64Main"
+#define CONV_CLASS  "LLM64Conv"
 #define PANE_CLASS  "LLM64Pane"
 #define APP_TITLE   "LLM64"
 #define INI_FILE    "LLM64.INI"
@@ -40,6 +53,18 @@
 #define IDM_PING        105
 #define IDM_CANCEL      106
 #define IDM_ABOUT       107
+#define IDM_CASCADE     108
+#define IDM_TILE        109
+#define IDM_ARRANGE     110
+#define IDM_NEWWINDOW   111
+
+/* Where the MDI client starts numbering its document windows on the
+   Window menu. It has to sit above every command id above, because the
+   frame routes anything at or over it straight to DefFrameProc. */
+#define IDM_FIRSTCHILD  200
+
+/* Position of the &Window popup in the menu bar: File, Link, Window. */
+#define WINDOW_MENU_POS 2
 
 #define ID_PANE     1000
 #define ID_INPUT    1001
@@ -51,7 +76,10 @@ static Scrollback g_sb;
 static long       g_top = 0;    /* first visible display row */
 static int        g_follow = 1; /* stick to the bottom as text arrives */
 
-static HWND     g_main, g_pane, g_input;
+static HWND     g_frame;    /* the one top-level window */
+static HWND     g_mdi;      /* MDICLIENT, between the frame and its docs */
+static HWND     g_conv;     /* the conversation document */
+static HWND     g_pane, g_input;    /* inside the conversation */
 static HFONT    g_font, g_font_bold;
 static int      g_cw = 8, g_ch = 16;    /* character cell */
 static FARPROC  g_old_edit_proc;
@@ -62,7 +90,9 @@ static char     g_ini[160];     /* full path to LLM64.INI */
 
 static unsigned char g_rxbuf[WIRE_MAX_PAYLOAD];
 static WireRx        g_rx;
-static unsigned char g_frame[WIRE_MAX_PAYLOAD + 8];
+/* Outgoing frame staging buffer. Named for the wire, not the window:
+   "frame" means the MDI frame everywhere else in this file. */
+static unsigned char g_txframe[WIRE_MAX_PAYLOAD + 8];
 
 /* Pepto's C64 palette, the same table the proxy converts images with
    (llm64_proxy/src/imaging.py). Index 0 is black and never used as a
@@ -121,6 +151,8 @@ static void pane_sync_scroll(void)
 
     if (g_top > max) g_top = max;
     if (g_top < 0) g_top = 0;
+    if (!g_pane)
+        return;
     SetScrollRange(g_pane, SB_VERT, 0, (int)max, FALSE);
     SetScrollPos(g_pane, SB_VERT, (int)g_top, TRUE);
 }
@@ -133,11 +165,14 @@ static void pane_bottom(void)
 }
 
 /* Every write to the transcript ends the same way: pin to the bottom
-   and repaint. */
+   and repaint. The transcript itself is independent of any window, so
+   text arriving while the document is closed is kept, not dropped - it
+   is simply there when a window is opened on it again. */
 static void pane_touch(void)
 {
     pane_bottom();
-    InvalidateRect(g_pane, NULL, TRUE);
+    if (g_pane)
+        InvalidateRect(g_pane, NULL, TRUE);
 }
 
 static void say(unsigned char color, const char *s)
@@ -146,11 +181,22 @@ static void say(unsigned char color, const char *s)
     pane_touch();
 }
 
+/* The input box exists only while a conversation document is open, so
+   every use of it has to tolerate its absence. */
+static void input_enable(int on)
+{
+    if (!g_input)
+        return;
+    EnableWindow(g_input, on ? TRUE : FALSE);
+    if (on)
+        SetFocus(g_input);
+}
+
 static void set_status(const char *s)
 {
     lstrcpyn(g_status, s, sizeof(g_status) - 1);
-    if (g_main)
-        InvalidateRect(g_main, NULL, FALSE);
+    if (g_frame)
+        InvalidateRect(g_frame, NULL, FALSE);
 }
 
 /* ---------------------------------------------------------------- */
@@ -228,8 +274,8 @@ static void pane_paint(HWND hwnd)
 static void send_frame(unsigned char type, const unsigned char *payload,
                        unsigned len)
 {
-    unsigned n = wire_frame(g_frame, type, payload, len);
-    if (!net_send(g_frame, n))
+    unsigned n = wire_frame(g_txframe, type, payload, len);
+    if (!net_send(g_txframe, n))
         set_status("Send queue full - the link is stalled.");
 }
 
@@ -268,14 +314,13 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
         sb_newline(&g_sb);
         pane_touch();
         set_status("Ready.");
-        EnableWindow(g_input, TRUE);
-        SetFocus(g_input);
+        input_enable(1);
         break;
 
     case MSG_CHAT_ERROR:
         say(2, (const char *)p);
         set_status("Error.");
-        EnableWindow(g_input, TRUE);
+        input_enable(1);
         break;
 
     case MSG_NOTICE:
@@ -341,6 +386,8 @@ static void send_input(void)
     char text[512];
     int n;
 
+    if (!g_input)
+        return;
     n = GetWindowText(g_input, text, sizeof(text) - 1);
     if (n <= 0)
         return;
@@ -354,7 +401,8 @@ static void send_input(void)
     say(1, text);
     send_text_frame(MSG_CHAT_REQUEST, text);
     set_status("Waiting for the model...");
-    EnableWindow(g_input, FALSE);
+    if (g_input)
+        EnableWindow(g_input, FALSE);
 }
 
 /* ---------------------------------------------------------------- */
@@ -421,18 +469,85 @@ long FAR PASCAL _export EditProc(HWND hwnd, UINT msg, UINT wParam,
     return CallWindowProc(g_old_edit_proc, hwnd, msg, wParam, lParam);
 }
 
-static void layout(HWND hwnd)
+/* Inside a conversation document: transcript over input box. The status
+   strip is not here - it belongs to the frame, because it reports on the
+   link, which is the application's and not any one document's. */
+static void conv_layout(HWND hwnd)
 {
     RECT rc;
     int inputh = g_ch + 8;
-    int statush = g_ch + 6;
     int paneh;
 
     GetClientRect(hwnd, &rc);
-    paneh = rc.bottom - inputh - statush;
+    paneh = rc.bottom - inputh;
     if (paneh < g_ch) paneh = g_ch;
     MoveWindow(g_pane, 0, 0, rc.right, paneh, TRUE);
     MoveWindow(g_input, 0, paneh, rc.right, inputh, TRUE);
+}
+
+/* The frame gives everything except the status strip to the MDI client,
+   which is what actually owns the document windows. */
+static void frame_layout(HWND hwnd)
+{
+    RECT rc;
+    int statush = g_ch + 6;
+    int h;
+
+    if (!g_mdi)
+        return;
+    GetClientRect(hwnd, &rc);
+    h = rc.bottom - statush;
+    if (h < g_ch) h = g_ch;
+    MoveWindow(g_mdi, 0, 0, rc.right, h, TRUE);
+}
+
+long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
+                                 LONG lParam)
+{
+    HINSTANCE inst;
+
+    switch (msg) {
+    case WM_CREATE:
+        inst = (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE);
+        g_pane = CreateWindow(PANE_CLASS, NULL,
+                              WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER,
+                              0, 0, 10, 10, hwnd, (HMENU)ID_PANE, inst, NULL);
+        g_input = CreateWindow("EDIT", "",
+                               WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+                               0, 0, 10, 10, hwnd, (HMENU)ID_INPUT, inst, NULL);
+        SendMessage(g_input, WM_SETFONT, (WPARAM)g_font, 0L);
+        g_old_edit_proc = (FARPROC)GetWindowLong(g_input, GWL_WNDPROC);
+        SetWindowLong(g_input, GWL_WNDPROC, (LONG)EditProc);
+        break;
+
+    case WM_SIZE:
+        conv_layout(hwnd);
+        break;
+
+    case WM_MDIACTIVATE:
+        /* Typing should land in the document you just clicked on, not
+           wherever the focus happened to be. */
+        if (wParam)
+            SetFocus(g_input);
+        break;
+
+    case WM_SETFOCUS:
+        if (g_input)
+            SetFocus(g_input);
+        return 0;
+
+    case WM_DESTROY:
+        /* A document window can be closed - Ctrl+F4, the close box, the
+           system menu. Forget its children rather than leaving handles
+           that outlive the windows they name: an arriving CHAT_CHUNK
+           would otherwise paint into a window that no longer exists.
+           Window > New Conversation Window brings it back. */
+        g_conv = NULL;
+        g_pane = NULL;
+        g_input = NULL;
+        break;
+    }
+    return DefMDIChildProc(hwnd, msg, wParam, lParam);
 }
 
 static void paint_status(HWND hwnd)
@@ -486,17 +601,41 @@ static void start_session(HWND hwnd)
     do_connect();
 }
 
-long FAR PASCAL _export MainProc(HWND hwnd, UINT msg, UINT wParam,
-                                 LONG lParam)
+/* Open the conversation document. One today; the same call is how a
+   picture viewer or a jukebox will arrive. */
+static HWND conv_create(HWND frame)
+{
+    MDICREATESTRUCT mcs;
+
+    mcs.szClass = CONV_CLASS;
+    mcs.szTitle = "Conversation";
+    mcs.hOwner  = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
+    mcs.x       = CW_USEDEFAULT;
+    mcs.y       = CW_USEDEFAULT;
+    mcs.cx      = CW_USEDEFAULT;
+    mcs.cy      = CW_USEDEFAULT;
+    /* Maximized: with a single document the workspace border is all
+       cost and no information. Restoring it is a click away, and that
+       is where a second window starts making sense. */
+    mcs.style   = WS_MAXIMIZE;
+    mcs.lParam  = 0;
+
+    return (HWND)(WORD)SendMessage(g_mdi, WM_MDICREATE, 0,
+                                   (LONG)(LPMDICREATESTRUCT)&mcs);
+}
+
+long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
+                                  LONG lParam)
 {
     char err[128];
     TEXTMETRIC tm;
     LOGFONT lf;
     HDC hdc;
+    CLIENTCREATESTRUCT ccs;
 
     switch (msg) {
     case WM_CREATE:
-        g_main = hwnd;
+        g_frame = hwnd;
         if (!sb_init(&g_sb)) {
             MessageBox(hwnd, "Not enough memory for the transcript.",
                        APP_TITLE, MB_OK | MB_ICONSTOP);
@@ -531,24 +670,23 @@ long FAR PASCAL _export MainProc(HWND hwnd, UINT msg, UINT wParam,
         }
         ReleaseDC(hwnd, hdc);
 
-        g_pane = CreateWindow(PANE_CLASS, NULL,
-                              WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER,
-                              0, 0, 10, 10, hwnd, (HMENU)ID_PANE,
-                              (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE),
-                              NULL);
-        g_input = CreateWindow("EDIT", "",
-                               WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-                               0, 0, 10, 10, hwnd, (HMENU)ID_INPUT,
-                               (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE),
-                               NULL);
-        SendMessage(g_input, WM_SETFONT, (WPARAM)g_font, 0L);
-        g_old_edit_proc = (FARPROC)GetWindowLong(g_input, GWL_WNDPROC);
-        SetWindowLong(g_input, GWL_WNDPROC, (LONG)EditProc);
-
+        /* The MDI client owns the documents. It wants the Window menu
+           by handle so it can append the child list to it, and the id
+           it should start numbering those entries from. */
+        ccs.hWindowMenu  = GetSubMenu(GetMenu(hwnd), WINDOW_MENU_POS);
+        ccs.idFirstChild = IDM_FIRSTCHILD;
+        g_mdi = CreateWindow("MDICLIENT", NULL,
+                             WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+                             0, 0, 10, 10, hwnd, (HMENU)1,
+                             (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE),
+                             (LPSTR)&ccs);
+        if (!g_mdi)
+            return -1;
+        g_conv = conv_create(hwnd);
         return 0;
 
     case WM_SIZE:
-        layout(hwnd);
+        frame_layout(hwnd);
         /* Text written before the pane knew its size used to wrap at the
            10x10 placeholder width and stay that way; now it re-flows on
            the first WM_SIZE like everything else. The session still
@@ -561,7 +699,8 @@ long FAR PASCAL _export MainProc(HWND hwnd, UINT msg, UINT wParam,
         return 0;
 
     case WM_SETFOCUS:
-        SetFocus(g_input);
+        if (g_input)
+            SetFocus(g_input);
         return 0;
 
     case WM_PAINT:
@@ -598,7 +737,7 @@ long FAR PASCAL _export MainProc(HWND hwnd, UINT msg, UINT wParam,
                              sb_clear(&g_sb);
                              pane_touch(); return 0;
         case IDM_CANCEL:     send_frame(MSG_CANCEL_REQUEST, NULL, 0);
-                             EnableWindow(g_input, TRUE); return 0;
+                             input_enable(1); return 0;
         case IDM_ABOUT:
             MessageBox(hwnd,
                        "LLM64 for Windows\n\n"
@@ -609,8 +748,26 @@ long FAR PASCAL _export MainProc(HWND hwnd, UINT msg, UINT wParam,
         case IDM_EXIT:
             PostMessage(hwnd, WM_CLOSE, 0, 0L);
             return 0;
+
+        case IDM_NEWWINDOW:
+            /* Closing the last document leaves an empty workspace, as
+               it should in an MDI app - this is the way back. The
+               transcript outlived the window, so it reappears with it. */
+            if (g_conv)
+                SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_conv, 0L);
+            else
+                g_conv = conv_create(hwnd);
+            return 0;
+
+        case IDM_CASCADE: SendMessage(g_mdi, WM_MDICASCADE, 0, 0L); return 0;
+        case IDM_TILE:    SendMessage(g_mdi, WM_MDITILE, 0, 0L); return 0;
+        case IDM_ARRANGE: SendMessage(g_mdi, WM_MDIICONARRANGE, 0, 0L); return 0;
         }
-        return 0;
+        /* Anything else is either a document window being picked off the
+           Window menu or a control notification: both belong to
+           DefFrameProc, and swallowing them is how an MDI app quietly
+           loses its Window menu. */
+        break;
 
     case WM_DESTROY:
         net_shutdown();
@@ -620,7 +777,7 @@ long FAR PASCAL _export MainProc(HWND hwnd, UINT msg, UINT wParam,
         PostQuitMessage(0);
         return 0;
     }
-    return DefWindowProc(hwnd, msg, wParam, lParam);
+    return DefFrameProc(hwnd, g_mdi, msg, wParam, lParam);
 }
 
 /* Where LLM64.INI is, in full. A bare filename does not mean "next to
@@ -672,7 +829,7 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
 
     if (!hPrev) {
         wc.style = CS_HREDRAW | CS_VREDRAW;
-        wc.lpfnWndProc = MainProc;
+        wc.lpfnWndProc = FrameProc;
         wc.cbClsExtra = 0;
         wc.cbWndExtra = 0;
         wc.hInstance = hInst;
@@ -681,6 +838,18 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
         wc.hbrBackground = GetStockObject(LTGRAY_BRUSH);
         wc.lpszMenuName = "LLM64MENU";
         wc.lpszClassName = APP_CLASS;
+        if (!RegisterClass(&wc))
+            return 1;
+
+        /* Document windows. No class background: the conversation is
+           covered by its pane and its input box, and painting grey
+           under them only buys a flash on resize. */
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = ConvProc;
+        wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+        wc.hbrBackground = GetStockObject(LTGRAY_BRUSH);
+        wc.lpszMenuName = NULL;
+        wc.lpszClassName = CONV_CLASS;
         if (!RegisterClass(&wc))
             return 1;
 
@@ -703,8 +872,13 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
     UpdateWindow(hwnd);
 
     while (GetMessage(&msg, NULL, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+        /* Ctrl+F4, Ctrl+F6 and the rest of the MDI system accelerators
+           are the document windows', and they have to be offered the
+           message before the frame translates it. */
+        if (!TranslateMDISysAccel(g_mdi, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
     }
     return msg.wParam;
 }
