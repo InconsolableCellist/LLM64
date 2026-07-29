@@ -40,6 +40,7 @@
 
 #include <windows.h>
 #include <commdlg.h>
+#include <mmsystem.h>   /* MCI: the sequencer plays our .MIDs */
 #include <string.h>
 #include <stdlib.h>
 #include <i86.h>        /* FP_OFF, for segment-boundary math */
@@ -53,6 +54,7 @@
 #define PAPER_CLASS "LLM64Paper"
 #define PIC_CLASS   "LLM64Pic"
 #define ACT_CLASS   "LLM64Act"
+#define MUS_CLASS   "LLM64Mus"
 #define PANE_CLASS  "LLM64Pane"
 #define APP_TITLE   "LLM64"
 #define INI_FILE    "LLM64.INI"
@@ -585,7 +587,8 @@ static void send_text_frame(unsigned char type, const char *text)
    sender so the two can never drift: the day the painter learns the
    rich markers, this is the line that changes with it - as it did the
    day the picture window learned to eat a DIB. */
-#define OUR_CAPS  (CAP_ZERO_WIDTH_MARKERS | CAP_RICH_TEXT | CAP_DIB_IMAGES)
+#define OUR_CAPS  (CAP_ZERO_WIDTH_MARKERS | CAP_RICH_TEXT \
+                   | CAP_DIB_IMAGES | CAP_MIDI)
 
 /* Introduce ourselves, before anything that could produce text.
  *
@@ -732,7 +735,7 @@ static void act_buttons(HWND hwnd)
    program let you see its rooms without memorizing its menus. Owned by
    the frame like the status strip, because it reports on the desk as a
    whole. */
-#define LAUNCH_N 3
+#define LAUNCH_N 4
 
 static HWND g_launch[LAUNCH_N];
 
@@ -744,7 +747,7 @@ static int launch_h(void)
 static void launch_create(HWND frame)
 {
     static const char *label[LAUNCH_N] =
-        { "Conversation", "Picture", "Actions" };
+        { "Conversation", "Picture", "Actions", "Music" };
     HINSTANCE inst = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
     int i;
 
@@ -758,7 +761,7 @@ static void launch_create(HWND frame)
 
 static void launch_layout(HWND frame)
 {
-    static const int w[LAUNCH_N] = { 104, 76, 72 };
+    static const int w[LAUNCH_N] = { 104, 76, 72, 64 };
     int i, x = 4;
 
     (void)frame;
@@ -987,6 +990,33 @@ static int hfile_write(HFILE f, HGLOBAL mem, unsigned long size)
     }
     GlobalUnlock(mem);
     return ok;
+}
+
+/* Store a frame's bytes into a global block at an arbitrary offset,
+   splitting at the segment boundary FP_OFF reveals - the shared engine
+   of every bulk receive. (The lesson it encodes: Watcom huge
+   arithmetic does not normalize offsets, and a far copy running off a
+   segment's end wraps to offset 0, which is wherever the header is.) */
+static void huge_store(HGLOBAL mem, unsigned long off,
+                       const unsigned char far *src, unsigned n)
+{
+    unsigned char __huge *dst;
+    unsigned span;
+    unsigned long room;
+
+    dst = (unsigned char __huge *)GlobalLock(mem);
+    if (!dst)
+        return;
+    dst += off;
+    while (n) {
+        room = 0x10000UL - FP_OFF(dst);
+        span = (unsigned long)n < room ? n : (unsigned)room;
+        _fmemcpy((void far *)dst, (const void far *)src, span);
+        dst += span;    /* huge: carries into the next segment */
+        src += span;
+        n   -= span;
+    }
+    GlobalUnlock(mem);
 }
 
 /* Rebuild the realizable palette from the DIB's colour table, for the
@@ -1235,7 +1265,6 @@ static void img_data(const unsigned char *p, unsigned len)
 {
     unsigned long off;
     unsigned n;
-    unsigned char __huge *dst;
 
     if (!g_img_active || len < 4)
         return;
@@ -1247,36 +1276,8 @@ static void img_data(const unsigned char *p, unsigned len)
     else if (off + n > g_img_size)
         n = (unsigned)(g_img_size - off);
     if (n) {
-        dst = (unsigned char __huge *)GlobalLock(g_img_mem);
-        if (dst) {
-            /* _fmemcpy instead of a per-byte huge loop (which re-derives
-               the segment on every access - a visible chunk of the
-               transfer time on a real 486) - but split at the segment
-               boundary, because Watcom huge arithmetic does NOT
-               normalize the offset small: dst+off can sit anywhere in
-               the segment, and a far copy that runs off the end WRAPS
-               to offset 0 - which is the DIB header. Field signature:
-               the transfer completes, the caption registers, and
-               StretchDIBits paints black, because the frames straddling
-               each 64 KB line overwrote biSize with pixels. */
-            const unsigned char far *src = p + 4;
-            unsigned span;
-            unsigned long room;
-
-            dst += off;
-            while (n) {
-                room = 0x10000UL - FP_OFF(dst);
-                span = (unsigned long)n < room ? n : (unsigned)room;
-                _fmemcpy((void far *)dst, (const void far *)src, span);
-                dst += span;    /* huge: carries into the next segment */
-                src += span;
-                n   -= span;
-                g_img_got += span;
-            }
-            GlobalUnlock(g_img_mem);
-        } else {
-            g_img_got += n;
-        }
+        huge_store(g_img_mem, off, p + 4, n);
+        g_img_got += n;
     }
     /* The proxy stops and waits for this every g_img_win frames - the
        same flow control the C64 does with its 256-byte bites. */
@@ -1313,6 +1314,209 @@ static void img_end(void)
     } else {
         set_status("Picture received.");
     }
+}
+
+/* ---------------------------------------------------------------- */
+/* Music                                                             */
+/* ---------------------------------------------------------------- */
+
+/* Not SID. The proxy's CAP_MIDI answer to [[MUSIC:]] is a .MID file
+   shipped whole (wire.h); this machine's whole job is to write it to a
+   temp file and hand it to MCI's sequencer - synthesis belongs to the
+   MIDI Mapper, exactly as a 1993 program would have had it. The Music
+   window shows what is playing and offers the three controls that
+   matter: Pause, Stop, Next. */
+
+static HWND g_mus_wnd;              /* the controls window, if open */
+static HWND g_mus_btn[3];           /* Pause/Resume, Stop, Next */
+static char g_mus_title[44];
+static char g_mus_author[36];
+static char g_mus_mood[20];
+static int  g_mus_state;            /* 0 silent, 1 playing, 2 paused */
+static int  g_mus_opened;           /* an MCI alias is open */
+static char g_mus_file[144];        /* the tune's temp file */
+
+/* The transfer in flight, separate from what is playing. */
+static HGLOBAL       g_mid_mem;
+static unsigned long g_mid_size, g_mid_got;
+static unsigned      g_mid_win, g_mid_frames;
+static int           g_mid_active;
+static char          g_mid_title[44];
+static char          g_mid_author[36];
+static char          g_mid_mood[20];
+
+static void mus_update(void)
+{
+    if (g_mus_wnd) {
+        if (g_mus_btn[0])
+            SetWindowText(g_mus_btn[0],
+                          g_mus_state == 2 ? "Resume" : "Pause");
+        InvalidateRect(g_mus_wnd, NULL, TRUE);
+    }
+}
+
+static void mus_mci_close(void)
+{
+    if (g_mus_opened) {
+        mciSendString("close llm64mid", NULL, 0, NULL);
+        g_mus_opened = 0;
+    }
+    g_mus_state = 0;
+}
+
+/* Local silence - what MUSIC_STOP and app exit want. The proxy's idea
+   of what is playing is its own business. */
+static void mus_stop(void)
+{
+    mus_mci_close();
+    mus_update();
+}
+
+static void mus_play_file(void)
+{
+    char cmd[200];
+
+    mus_mci_close();
+    wsprintf(cmd, "open %s type sequencer alias llm64mid",
+             (LPSTR)g_mus_file);
+    if (mciSendString(cmd, NULL, 0, NULL) != 0) {
+        /* No sequencer device is a machine without a sound setup, not
+           an error worth a dialog - the C64 plays on without a SID
+           filter too. */
+        set_status("MIDI open failed - is a sequencer device installed?");
+        return;
+    }
+    g_mus_opened = 1;
+    if (mciSendString("play llm64mid notify", NULL, 0,
+                      g_frame) != 0) {
+        set_status("MIDI play failed.");
+        mus_mci_close();
+        return;
+    }
+    g_mus_state = 1;
+    mus_update();
+}
+
+static void mid_abort(void)
+{
+    if (g_mid_mem) {
+        GlobalFree(g_mid_mem);
+        g_mid_mem = NULL;
+    }
+    g_mid_active = 0;
+}
+
+/* Copy a NUL-terminated field out of the BEGIN payload, advancing the
+   cursor past it either way. */
+static void mid_field(char *dst, unsigned cap,
+                      const unsigned char **q, const unsigned char *end)
+{
+    unsigned i = 0;
+
+    while (*q < end && **q) {
+        if (i + 1 < cap)
+            dst[i++] = (char)**q;
+        (*q)++;
+    }
+    dst[i] = '\0';
+    if (*q < end)
+        (*q)++;                     /* the NUL itself */
+}
+
+static void mid_begin(const unsigned char *p, unsigned len)
+{
+    const unsigned char *q, *end;
+    unsigned long size;
+
+    if (g_mid_active) {             /* BEGIN resent - first ACK lost */
+        send_frame(MSG_ACK, NULL, 0);
+        return;
+    }
+    if (len < 5) {
+        send_frame(MSG_NAK, NULL, 0);
+        return;
+    }
+    size = (unsigned long)p[1] | ((unsigned long)p[2] << 8)
+         | ((unsigned long)p[3] << 16) | ((unsigned long)p[4] << 24);
+    /* 14 bytes is an empty SMF; past 256 KB is not a .MID anyone made. */
+    if (size < 14UL || size > 0x40000UL) {
+        send_frame(MSG_NAK, NULL, 0);
+        return;
+    }
+    g_mid_mem = GlobalAlloc(GMEM_MOVEABLE, size);
+    if (!g_mid_mem) {
+        send_frame(MSG_NAK, NULL, 0);
+        set_status("Not enough memory for the tune.");
+        return;
+    }
+    g_mid_size   = size;
+    g_mid_got    = 0;
+    g_mid_win    = p[0];
+    g_mid_frames = 0;
+    q = p + 5;
+    end = p + len;
+    mid_field(g_mid_title,  sizeof(g_mid_title),  &q, end);
+    mid_field(g_mid_author, sizeof(g_mid_author), &q, end);
+    mid_field(g_mid_mood,   sizeof(g_mid_mood),   &q, end);
+    g_mid_active = 1;
+    send_frame(MSG_ACK, NULL, 0);
+}
+
+static void mid_data(const unsigned char *p, unsigned len)
+{
+    unsigned long off;
+    unsigned n;
+
+    if (!g_mid_active || len < 4)
+        return;
+    off = (unsigned long)p[0] | ((unsigned long)p[1] << 8)
+        | ((unsigned long)p[2] << 16) | ((unsigned long)p[3] << 24);
+    n = len - 4;
+    if (off >= g_mid_size)
+        n = 0;
+    else if (off + n > g_mid_size)
+        n = (unsigned)(g_mid_size - off);
+    if (n) {
+        huge_store(g_mid_mem, off, p + 4, n);
+        g_mid_got += n;
+    }
+    if (g_mid_win && ++g_mid_frames % g_mid_win == 0)
+        send_frame(MSG_ACK, NULL, 0);
+}
+
+static void mid_end(void)
+{
+    OFSTRUCT of;
+    HFILE f;
+    char msg[112];
+
+    if (!g_mid_active)
+        return;
+    g_mid_active = 0;
+    /* Close before delete: MCI holds the old file open. */
+    mus_mci_close();
+    if (g_mus_file[0])
+        OpenFile(g_mus_file, &of, OF_DELETE);
+    if (GetTempFileName(0, "MID", 0, g_mus_file) == 0)
+        g_mus_file[0] = '\0';
+    f = g_mus_file[0] ? _lcreat(g_mus_file, 0) : HFILE_ERROR;
+    if (f == HFILE_ERROR || !hfile_write(f, g_mid_mem, g_mid_size)) {
+        if (f != HFILE_ERROR)
+            _lclose(f);
+        mid_abort();
+        set_status("Couldn't keep the tune - temp disk full?");
+        return;
+    }
+    _lclose(f);
+    GlobalFree(g_mid_mem);
+    g_mid_mem = NULL;
+    lstrcpy(g_mus_title,  g_mid_title);
+    lstrcpy(g_mus_author, g_mid_author);
+    lstrcpy(g_mus_mood,   g_mid_mood);
+    mus_play_file();
+    wsprintf(msg, "Music: %s (%s)", (LPSTR)g_mus_title,
+             (LPSTR)g_mus_author);
+    set_status(msg);
 }
 
 static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
@@ -1410,6 +1614,24 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
 
     case MSG_IMG_END:
         img_end();
+        break;
+
+    /* Music, as a .MID because CLIENT_HELLO claimed CAP_MIDI. */
+    case MSG_MIDI_BEGIN:
+        mid_begin(p, len);
+        break;
+
+    case MSG_MIDI_DATA:
+        mid_data(p, len);
+        break;
+
+    case MSG_MIDI_END:
+        mid_end();
+        break;
+
+    case MSG_MUSIC_STOP:
+        mus_stop();
+        set_status("Music off.");
         break;
 
     default:
@@ -2028,6 +2250,168 @@ static void act_open_wnd(void)
         SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_conv, 0L);
 }
 
+/* ---------------------------------------------------------------- */
+/* The Music window                                                  */
+/* ---------------------------------------------------------------- */
+
+/* A command sent as if typed - what the Stop and Next buttons do, so
+   the proxy stays the authority on what is playing (its MUSIC_STOP
+   comes back and silences us; its next tune arrives as MIDI frames). */
+static void send_command(const char *cmd)
+{
+    if (net_state() != NET_UP) {
+        say(2, "Not connected. Use File > Connect.");
+        return;
+    }
+    say(1, cmd);
+    send_text_frame(MSG_CHAT_REQUEST, cmd);
+    set_status("Waiting for the model...");
+}
+
+static void mus_layout(HWND hwnd)
+{
+    RECT rc;
+    int i, bw, bh = g_ch + 10, x;
+
+    GetClientRect(hwnd, &rc);
+    bw = ((int)rc.right - 4 * 4) / 3;
+    if (bw < 30) bw = 30;
+    x = 4;
+    for (i = 0; i < 3; i++) {
+        if (g_mus_btn[i])
+            MoveWindow(g_mus_btn[i], x, (int)rc.bottom - bh - 4,
+                       bw, bh, TRUE);
+        x += bw + 4;
+    }
+}
+
+static void mus_paint(HWND hwnd)
+{
+    static const char *state_name[] = { "Silent", "Playing", "Paused" };
+    PAINTSTRUCT ps;
+    HDC hdc;
+    RECT rc;
+    char line[96];
+    int y = 6;
+
+    hdc = BeginPaint(hwnd, &ps);
+    GetClientRect(hwnd, &rc);
+    SetBkMode(hdc, TRANSPARENT);
+    SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+    SetTextColor(hdc, RGB(0, 0, 0));
+    if (g_mus_title[0]) {
+        TextOut(hdc, 8, y, g_mus_title, lstrlen(g_mus_title));
+        y += g_ch + 2;
+        if (g_mus_author[0]) {
+            wsprintf(line, "by %s", (LPSTR)g_mus_author);
+            TextOut(hdc, 8, y, line, lstrlen(line));
+            y += g_ch + 2;
+        }
+        if (g_mus_mood[0])
+            wsprintf(line, "%s - mood: %s",
+                     (LPSTR)state_name[g_mus_state], (LPSTR)g_mus_mood);
+        else
+            lstrcpy(line, state_name[g_mus_state]);
+        TextOut(hdc, 8, y, line, lstrlen(line));
+    } else {
+        TextOut(hdc, 8, y, "Nothing has played yet.", 23);
+        y += g_ch + 2;
+        TextOut(hdc, 8, y, "The narrator starts the music,", 30);
+        y += g_ch + 2;
+        TextOut(hdc, 8, y, "or type /music <mood>.", 22);
+    }
+    EndPaint(hwnd, &ps);
+}
+
+long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
+                                LONG lParam)
+{
+    static const char *label[3] = { "Pause", "Stop", "Next" };
+    HINSTANCE inst;
+    int i;
+
+    switch (msg) {
+    case WM_CREATE:
+        g_mus_wnd = hwnd;
+        inst = (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE);
+        for (i = 0; i < 3; i++)
+            g_mus_btn[i] = CreateWindow("BUTTON", label[i],
+                                        WS_CHILD | WS_VISIBLE
+                                        | BS_PUSHBUTTON,
+                                        0, 0, 10, 10, hwnd,
+                                        (HMENU)(IDC_MUSBASE + i), inst,
+                                        NULL);
+        mus_update();
+        break;
+
+    case WM_PAINT:
+        mus_paint(hwnd);
+        return 0;
+
+    case WM_SIZE:
+    case WM_MOVE:
+        if (g_layout_ready && !g_in_layout)
+            g_user_arranged = 1;
+        mus_layout(hwnd);
+        InvalidateRect(hwnd, NULL, TRUE);
+        break;
+
+    case WM_COMMAND:
+        switch (wParam) {
+        case IDC_MUSBASE + 0:       /* Pause / Resume: purely local */
+            if (g_mus_state == 1) {
+                mciSendString("pause llm64mid", NULL, 0, NULL);
+                g_mus_state = 2;
+            } else if (g_mus_state == 2) {
+                mciSendString("resume llm64mid", NULL, 0, NULL);
+                g_mus_state = 1;
+            }
+            mus_update();
+            return 0;
+        case IDC_MUSBASE + 1:       /* Stop: the proxy's call */
+            if (net_state() == NET_UP)
+                send_command("/music stop");
+            else
+                mus_stop();
+            return 0;
+        case IDC_MUSBASE + 2:       /* Next: another of the same mood */
+            send_command("/music next");
+            return 0;
+        }
+        break;
+
+    case WM_DESTROY:
+        g_mus_wnd = NULL;
+        for (i = 0; i < 3; i++)
+            g_mus_btn[i] = NULL;
+        break;
+    }
+    return DefMDIChildProc(hwnd, msg, wParam, lParam);
+}
+
+static void mus_open_wnd(void)
+{
+    MDICREATESTRUCT mcs;
+
+    if (g_mus_wnd) {
+        SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_mus_wnd, 0L);
+        return;
+    }
+    mcs.szClass = MUS_CLASS;
+    mcs.szTitle = "Music";
+    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.x       = 60;
+    mcs.y       = 40;
+    mcs.cx      = 250;
+    mcs.cy      = 140;
+    mcs.style   = 0;
+    mcs.lParam  = 0;
+    /* Same guard as every open: birth is not the user arranging. */
+    g_in_layout = 1;
+    SendMessage(g_mdi, WM_MDICREATE, 0, (LONG)(LPMDICREATESTRUCT)&mcs);
+    g_in_layout = 0;
+}
+
 /* File > Save Picture As: the DIB with a BITMAPFILEHEADER in front of
    it IS a .BMP - the whole reason the wire format is what it is. */
 static void do_save_pic(HWND hwnd)
@@ -2553,11 +2937,22 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         } else if (event == NET_EV_CLOSE) {
             print_abort();
             img_abort();
+            mid_abort();
             set_status(err);
             say(2, "Disconnected.");
         }
         return 0;
     }
+
+    case MM_MCINOTIFY:
+        /* The tune ran out. Background music loops until told
+           otherwise - the same contract the SID player has. */
+        if (wParam == MCI_NOTIFY_SUCCESSFUL && g_mus_state == 1
+                && g_mus_opened) {
+            mciSendString("seek llm64mid to start", NULL, 0, NULL);
+            mciSendString("play llm64mid notify", NULL, 0, hwnd);
+        }
+        return 0;
 
     /* A 256-colour driver arbitrates the hardware palette through
        these; the picture's colours are the only ones we bargain for.
@@ -2703,6 +3098,15 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
             case 2:
                 act_toggle(hwnd);
                 break;
+            case 3:
+                /* The Music window floats over the desk rather than
+                   claiming a column - it is controls, not a document. */
+                if (g_mus_wnd)
+                    SendMessage(g_mdi, WM_MDIDESTROY,
+                                (WPARAM)g_mus_wnd, 0L);
+                else
+                    mus_open_wnd();
+                break;
             }
             if (!g_user_arranged)
                 layout_default();
@@ -2742,6 +3146,13 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         if (g_img_mem)
             GlobalFree(g_img_mem);
         shelf_clear();
+        mus_mci_close();
+        if (g_mid_mem)
+            GlobalFree(g_mid_mem);
+        if (g_mus_file[0]) {
+            OFSTRUCT of;
+            OpenFile(g_mus_file, &of, OF_DELETE);
+        }
         for (i = 0; i < MAX_PAPER; i++)
             if (g_paper[i].live)
                 sb_free(&g_paper[i].sb);
@@ -2880,6 +3291,16 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
         wc.hbrBackground = GetStockObject(LTGRAY_BRUSH);
         wc.lpszMenuName = NULL;
         wc.lpszClassName = ACT_CLASS;
+        if (!RegisterClass(&wc))
+            return 1;
+
+        /* The Music window: playback controls for the MIDI pipeline. */
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = MusProc;
+        wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+        wc.hbrBackground = GetStockObject(LTGRAY_BRUSH);
+        wc.lpszMenuName = NULL;
+        wc.lpszClassName = MUS_CLASS;
         if (!RegisterClass(&wc))
             return 1;
 

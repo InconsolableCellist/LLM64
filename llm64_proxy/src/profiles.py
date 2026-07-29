@@ -29,10 +29,10 @@ from typing import Dict
 CAP_ZERO_WIDTH_MARKERS = 0x0001  # markers occupy no screen cell
 CAP_RICH_TEXT          = 0x0002  # italic/underline/heading, 64 colours
 CAP_DIB_IMAGES         = 0x0004  # images as 8-bit DIBs (IMG_BEGIN fmt=2)
+CAP_MIDI               = 0x0008  # music as .MID files (MIDI_* frames)
 
-# Reserved, and NOT yet consumed by anything - the phases that will read
-# them are named so the numbers are not reused meanwhile.
-CAP_MIDI               = 0x0008  # phase 5: MIDI_* frames
+# Reserved, and NOT yet consumed by anything - the phase that will read
+# it is named so the number is not reused meanwhile.
 CAP_PRINT_GDI          = 0x0010  # phase 6: a printer DC sink
 
 
@@ -179,7 +179,8 @@ WIN16 = ClientProfile(
     pace=False,
     marker_cells=False,
     rich_text=True,
-    music_fmt=None,     # 'midi' once there is a MIDI pipeline to serve
+    music_fmt=None,     # 'midi' arrives via CAP_MIDI in the hello, not
+                        # the table: an older win16 build has no parser
     image_style=VGA_STYLE,
     palette=PALETTE_RICH,
 )
@@ -241,7 +242,10 @@ def from_hello(payload: bytes):
         # Capability-gated for the same reason as the palette below: a
         # client without the fmt=2 parser must never be sent one.
         dib_images=bool(caps & CAP_DIB_IMAGES),
-        music_fmt=base.music_fmt,
+        # A machine that claims CAP_MIDI can eat .MIDs whoever it is;
+        # otherwise it keeps its table row's answer (None for anything
+        # that is not a C64 - see above).
+        music_fmt='midi' if caps & CAP_MIDI else base.music_fmt,
         image_style=base.image_style,
         # The palette follows the CAPABILITY, never the table entry. A
         # win16 build that predates rich text still matches the win16

@@ -65,4 +65,7 @@
    window, click to open or close it. */
 #define IDC_LAUNCHBASE  1500
 
+/* The Music window's playback controls. */
+#define IDC_MUSBASE     1600
+
 #endif /* RESOURCE_H */

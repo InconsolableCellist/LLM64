@@ -1,0 +1,13 @@
+{
+  "moods": ["festive", "calm"],
+  "tunes": [
+    {
+      "id": "fixture_festive",
+      "file": "festive.mid",
+      "title": "Festive Fixture",
+      "author": "LLM64 Tests",
+      "moods": {"festive": 1.0, "calm": 0.4},
+      "confidence": 1.0
+    }
+  ]
+}

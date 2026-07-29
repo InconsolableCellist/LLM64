@@ -12,7 +12,7 @@ import logging
 from .modes import (Mode, AdventureMode, RoleplayMode, ClaudeMode,
                     CharacterCard, find_cards)
 from .claude_session import ClaudeSession
-from .music import MusicLibrary, MusicDirectiveFilter
+from .music import MusicLibrary, MidiLibrary, MusicDirectiveFilter
 from .dice import expand as expand_dice
 from .dice import pool as dice_pool
 from .advsetup import (AdventureSetup, STAGES, ACT_QUICK,
@@ -78,7 +78,7 @@ class MessageType(IntEnum):
     #                     title\0 author\0 mood\0 (jukebox module)
     MENU_LIST = 0x5E  # '^' - menu entries: [n][more] then
     #                   [key][label\0][cmd\0] each; cmd "!x" = client-local
-    MUSIC_STOP = 0x61  # 'a' - silence a streamed SID (no ACK)
+    MUSIC_STOP = 0x61  # 'a' - silence whatever music plays (no ACK)
     PRINT_BEGIN = 0x62  # 'b' - [flags][nblocks]; open IEC device 4.
     #                     flags bit0 = business charset (secondary
     #                     address 7), bit1 = form feed before close
@@ -86,6 +86,12 @@ class MessageType(IntEnum):
     #                    the client ACKs each one, and nothing else is
     #                    on the wire while it prints (docs/14 §3)
     PRINT_END = 0x64  # 'd' - close the channel
+    # MIDI music, for a CAP_MIDI client (docs/16 section 6.2). The same
+    # offset-tagged bulk stream as everything else, with fmt=2's 4-byte
+    # offsets: a .MID can pass 64 KB.
+    MIDI_BEGIN = 0x65  # 'e' - [window][len:4][title\0][author\0][mood\0]
+    MIDI_DATA = 0x66  # 'f' - [offset:4][bytes]
+    MIDI_END = 0x67  # 'g' - hand the file to the MIDI Mapper
 
 
 class ProtocolState(IntEnum):
@@ -198,6 +204,13 @@ class ProtocolHandler:
         if self.music.available:
             self.logger.info(
                 f"Music library: {len(self.music.tunes)} tunes")
+        # ...and its MIDI twin for machines with a MIDI Mapper instead
+        # of a SID. Same database shape, same tagging tools.
+        self.midi = MidiLibrary(
+            Path(self.config.data_dir) / 'midi' / 'moods.json')
+        if self.midi.available:
+            self.logger.info(
+                f"MIDI library: {len(self.midi.tunes)} tunes")
 
         # Scene illustrations (optional: needs Pillow + a configured
         # backend, or the LLM64_IMG_FIXTURE test hook)
@@ -709,15 +722,20 @@ class ProtocolHandler:
             await self._send_canned("\n".join(lines))
 
         elif cmd == 'music':
-            if self.profile.music_fmt != 'sid':
+            lib = self._music_lib()
+            if lib is None:
                 await self._send_canned(
-                    "Music is SID-only so far, and this machine has no "
-                    "SID. A MIDI library is on the roadmap.")
-            elif not self.music.available:
-                await self._send_canned("No music library on this server.")
+                    "This machine has no way to play the server's "
+                    "music yet.")
+            elif not lib.available:
+                await self._send_canned(
+                    "No music library on this server."
+                    if self.profile.music_fmt == 'sid' else
+                    "No MIDI library on this server yet - it lives in "
+                    "data/midi/ beside the SIDs.")
             elif not arg:
                 await self._send_canned(
-                    "Moods: " + ", ".join(self.music.moods)
+                    "Moods: " + ", ".join(lib.moods)
                     + "\nUse: /music <mood>, /music next for another of "
                       "the same,\n/auto to give the soundtrack back to "
                       "the narrator.")
@@ -739,14 +757,14 @@ class ProtocolHandler:
                             "Nothing is playing. /music <mood> starts "
                             "something.")
                         return
-                tune = self.music.pick(mood)
+                tune = lib.pick(mood)
                 if tune:
                     if arg.lower() != 'next':
                         self._music_manual = True
                         self._manual_notice_sent = False
                     await self._send_canned(
                         f"Playing: {tune['title']} ({tune['author']})")
-                    self._spawn_media(self.send_sid(tune))
+                    self._spawn_media(self._send_tune(tune, mood))
                     self.conv_manager.set_meta('music', {
                         'mood': mood, 'tune': tune['id']})
                     self.conv_manager.save()
@@ -867,8 +885,13 @@ class ProtocolHandler:
         """Give an AdventureMode the directive instructions for whichever
         media services are live on this server."""
         snippet = ''
-        if self.music.available:
-            snippet += self.music.prompt_snippet()
+        # The mood vocabulary offered is the vocabulary of the library
+        # THIS client can hear - a C64 and a Windows box in the same
+        # world may be offered different mood lists, and that is
+        # correct: a directive resolves against the listener's library.
+        lib = self._music_lib()
+        if lib is not None and lib.available:
+            snippet += lib.prompt_snippet()
         if self.images.available:
             snippet += self.images.prompt_snippet()
         # The map is adventure-only: nothing else has a geography to
@@ -1099,13 +1122,13 @@ class ProtocolHandler:
         await asyncio.sleep(self.RETRY_DELAY)
         await self.send_sid(tune, is_retry=True)
 
-    async def _resume_tune(self, tune, frames: int):
+    async def _resume_tune(self, tune, frames: int, mood: str = ''):
         """Resume a loaded conversation's soundtrack once the client has
         had time to render the load (a SID streamed into that backlog
         overflowed its RX ring in the field; the BEGIN handshake also
         gates this, the sleep is belt and braces)."""
         await asyncio.sleep(min(5.0, 1.0 + 0.2 * frames))
-        await self.send_sid(tune)
+        await self._send_tune(tune, mood)
 
     async def _send_begin(self, msg_type: MessageType,
                           payload: bytes) -> bool:
@@ -1163,6 +1186,69 @@ class ProtocolHandler:
                     self._flow_ack = asyncio.Event()
         finally:
             self._flow_ack = None
+
+    def _music_lib(self):
+        """The music library this client's machine can play from, or
+        None. Every music decision goes through here so the C64 gets
+        SIDs, a CAP_MIDI client gets .MIDs, and nobody gets bytes their
+        hardware cannot play."""
+        fmt = self.profile.music_fmt
+        if fmt == 'sid':
+            return self.music
+        if fmt == 'midi':
+            return self.midi
+        return None
+
+    async def _send_tune(self, tune, mood: str = ''):
+        """One tune, in whatever format this client's machine plays."""
+        if self.profile.music_fmt == 'midi':
+            await self.send_midi(tune, mood)
+        else:
+            await self.send_sid(tune)
+
+    async def send_midi(self, tune, mood: str = ''):
+        """Ship a .MID whole to a client with a MIDI Mapper. No
+        relocation, no memory window - the client writes it to a temp
+        file and hands it to MCI, which is the entire point of choosing
+        MIDI (docs/16 section 6.2). BEGIN carries what the playback
+        controls display; data frames use fmt=2's 4-byte offsets and
+        window because a .MID can pass 64 KB. No retry machinery: this
+        only ever travels over TCP."""
+        if self.profile.music_fmt != 'midi':
+            self.logger.debug(
+                f"MIDI withheld: {self.profile.name} has no MIDI path")
+            return
+        try:
+            data = self.midi.payload(tune)
+        except OSError as e:
+            self.logger.error(f"MIDI {tune['id']}: unreadable file: {e}")
+            return
+        if len(data) > 0x40000:
+            self.logger.error(f"MIDI {tune['id']} is {len(data)} bytes - "
+                              "past any sane .MID, not sending")
+            return
+        window = 16
+        head = (bytes([window]) + struct.pack('<I', len(data))
+                + (tune.get('title') or '?')[:40]
+                .encode('ascii', errors='replace') + b'\x00'
+                + (tune.get('author') or '')[:32]
+                .encode('ascii', errors='replace') + b'\x00'
+                + (mood or '')[:16]
+                .encode('ascii', errors='replace') + b'\x00')
+        chunk = max(256, self.profile.max_payload - 8)
+        async with self._media_lock:
+            if not await self._send_begin(MessageType.MIDI_BEGIN, head):
+                self.logger.error("MIDI_BEGIN never ACKed - aborting send")
+                return
+            await self._send_bulk_stream(MessageType.MIDI_DATA, data,
+                                         wide=True, chunk=chunk,
+                                         window=window)
+            await self._send_bulk(MessageType.MIDI_END, b'')
+        self._tunes_sent += 1
+        self._music_stopped = False
+        self.midi.tune_started = time.monotonic()
+        await self._send_hint()
+        self.logger.info(f"Sent MIDI {tune['id']} ({len(data)} bytes)")
 
     async def send_sid(self, tune, is_retry: bool = False):
         """Stream a relocated SID into the client's $B000 window, paced
@@ -2258,8 +2344,9 @@ class ProtocolHandler:
                     "OPTIONAL: leave them unused if nothing this turn is "
                     "genuinely uncertain. Never invent a check just to "
                     "spend one.")
-            if (mfilter and self.music.available and self.music.stale()
-                    and sys_prompt):
+            _mlib = self._music_lib()
+            if (mfilter and _mlib is not None and _mlib.available
+                    and _mlib.stale() and sys_prompt):
                 sys_prompt += ("\n(The background music has been looping "
                                "for several minutes; if the scene's tone "
                                "warrants it, this reply is a good moment "
@@ -2376,12 +2463,13 @@ class ProtocolHandler:
             # Model asked for a music change: honor at most one, after the
             # text is fully delivered (the client is idle again), unless a
             # change happened too recently
-            if mfilter and mfilter.moods and self.profile.music_fmt != 'sid':
-                # Don't pick, relocate and record a tune this client can
-                # never hear - meta would then claim music is playing.
+            _mlib = self._music_lib()
+            if mfilter and mfilter.moods and _mlib is None:
+                # Don't pick and record a tune this client can never
+                # hear - meta would then claim music is playing.
                 self.logger.debug(
                     f"Music directive dropped: {self.profile.name} "
-                    "has no SID")
+                    "has no music path")
             elif mfilter and mfilter.moods:
                 if self._music_manual:
                     # Stay in the fiction rather than posting a mode
@@ -2395,11 +2483,11 @@ class ProtocolHandler:
                             "(The scene calls for different music, but "
                             "you have chosen your own. /auto gives the "
                             "soundtrack back to the narrator.)")
-                elif self.music.rate_limited():
+                elif _mlib.rate_limited():
                     self.logger.info(
                         f"Music directive rate-limited: {mfilter.moods}")
                 else:
-                    tune = self.music.pick(mfilter.moods[0])
+                    tune = _mlib.pick(mfilter.moods[0])
                     if tune:
                         # Say WHY the music changed. Until now a tune
                         # simply appeared, with the title flashing past
@@ -2410,8 +2498,8 @@ class ProtocolHandler:
                             f"{mfilter.moods[0]}.\n"
                             "(/music next for another, /music <mood> to "
                             "choose your own.)")
-                        await self.send_sid(tune)
-                        self.music.mark_changed()
+                        await self._send_tune(tune, mfilter.moods[0])
+                        _mlib.mark_changed()
                         # Remember what's playing: loading this
                         # conversation later resumes the soundtrack
                         self.conv_manager.set_meta('music', {
@@ -2608,7 +2696,9 @@ class ProtocolHandler:
                 ('r', 'Roleplay characters', '/chars'),
                 ('m', 'Models', '/models'),
             ]
-        if self.music.available:
+        # The jukebox panel is the C64's; a MIDI client has its own
+        # playback controls in the Music window.
+        if self.profile.music_fmt == 'sid' and self.music.available:
             entries.append(('j', 'Jukebox / now playing', '!j'))
         # No 'Music: next / stop' entry. It was the only way to stop a
         # streamed SID, so removing it needed somewhere else for stop to
@@ -2748,20 +2838,21 @@ class ProtocolHandler:
         itself: the narrator must be able to take the soundtrack the
         moment the story opens, which is the whole point of starting one
         here rather than making the player ask."""
+        lib = self._music_lib()
         if (self._adv_music or self._music_manual
-                or not self.music.available):
+                or lib is None or not lib.available):
             return
         self._adv_music = True
         for mood in self.SETUP_MOODS:
-            tune = self.music.pick(mood)
+            tune = lib.pick(mood)
             if not tune:
                 continue
-            self.music.mark_changed()
+            lib.mark_changed()
             self.conv_manager.set_meta('music', {'mood': mood,
                                                  'tune': tune['id']})
-            # Spawned, never awaited: send_sid waits for an ACK that only
+            # Spawned, never awaited: the send waits for an ACK that only
             # the reader task can dispatch, and this runs ON that task.
-            self._spawn_media(self.send_sid(tune))
+            self._spawn_media(self._send_tune(tune, mood))
             self.logger.info("setup music: %s (%s)", tune['title'], mood)
             return
 
@@ -2843,6 +2934,7 @@ class ProtocolHandler:
         self._music_manual = True
         self._manual_notice_sent = False
         self.music.tune_started = None
+        self.midi.tune_started = None
         await self.send_message(MessageType.MUSIC_STOP, b'')
         await self._send_hint()
         await self._send_canned(
@@ -2852,7 +2944,8 @@ class ProtocolHandler:
     def _current_tune(self):
         """(tune, mood) for whatever is playing, or (None, '')."""
         meta = self.conv_manager.get_meta('music') or {}
-        tune = self.music.find(meta.get('tune')) if meta.get('tune') else None
+        lib = self._music_lib() or self.music
+        tune = lib.find(meta.get('tune')) if meta.get('tune') else None
         return tune, meta.get('mood', '')
 
     async def handle_get_nowplaying(self):
@@ -3062,11 +3155,13 @@ class ProtocolHandler:
             # else another tune of the same mood). The transfer starts only
             # after the last CONVERSATION_DATA frame so nothing interleaves.
             music_meta = self.conv_manager.get_meta('music')
-            if music_meta and self.music.available:
-                tune = (self.music.find(music_meta.get('tune'))
-                        or self.music.pick(music_meta.get('mood', '')))
+            _mlib = self._music_lib()
+            if music_meta and _mlib is not None and _mlib.available:
+                tune = (_mlib.find(music_meta.get('tune'))
+                        or _mlib.pick(music_meta.get('mood', '')))
                 if tune:
-                    self._spawn_media(self._resume_tune(tune, len(frames)))
+                    self._spawn_media(self._resume_tune(
+                        tune, len(frames), music_meta.get('mood', '')))
 
             # The tally belongs to the conversation, so a load has to
             # restate it - otherwise the corner keeps showing the count

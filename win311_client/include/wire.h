@@ -68,6 +68,20 @@
 #define MSG_PRINT_DATA          0x63
 #define MSG_PRINT_END           0x64
 
+/* MIDI music, sent only to a client that claimed CAP_MIDI. The file
+   ships whole - the client hands it to MCI's sequencer, and synthesis
+   is the machine's business (FM, MT-32, a SoundFont under emulation).
+
+   MIDI_BEGIN:  0     flow window, data frames per ACK
+                1-4   total length in bytes, LE
+                5..   title\0 author\0 mood\0   (the controls' display)
+   MIDI_DATA:   [offset:4 LE][bytes] - 4-byte offsets like IMG fmt=2,
+                because a .MID can pass 64 KB
+   MIDI_END:    play it */
+#define MSG_MIDI_BEGIN          0x65
+#define MSG_MIDI_DATA           0x66
+#define MSG_MIDI_END            0x67
+
 /* Not wire values: parser verdicts outside the protocol's type range */
 #define WIRE_NONE               0x00
 #define WIRE_CRC_FAIL           0xFE
@@ -120,6 +134,7 @@
 #define CAP_ZERO_WIDTH_MARKERS  0x0001  /* markers occupy no cell */
 #define CAP_RICH_TEXT           0x0002  /* italic/underline/head, 64 colours */
 #define CAP_DIB_IMAGES          0x0004  /* images as 8-bit DIBs, fmt 2 */
+#define CAP_MIDI                0x0008  /* music as .MID files */
 
 /* IMG_BEGIN's first payload byte says what is coming. 0 and 1 are the
    C64's hires and multicolor blobs; 2 is ours, sent only to a client
