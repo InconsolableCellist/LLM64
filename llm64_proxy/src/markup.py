@@ -1,24 +1,34 @@
-"""Inline colour markup: [color=grey]steel door[/color] -> marker cells.
+"""Inline markup: [color=grey]steel door[/color] -> marker cells.
 
-See docs/08-inline-color.md for the full design. The short version:
+See docs/08-inline-color.md for the original design and
+docs/16-windows-311-client.md section 7 for how it became per-client.
+The short version:
 
 Cell values 0x00-0x1F render as a space on the soft-80 client (soft80.s
 clamps a font index that underflows to glyph 0), so a marker can live
 IN the text as an ordinary cell. That is what makes this free - colour
 rides inside the 80 columns it decorates, costing no scrollback RAM.
 
-Because a marker occupies a column, we do not ADD one: we swallow the
-space beside the tag. Spacing on screen is then identical to the plain
-text, and since the C64's colour matrix is one entry per TWO characters,
-the only cells ever caught by that granularity are the marker-spaces
-themselves - which are invisible.
+Because a marker occupies a column ON THE C64, we do not ADD one: we
+swallow the space beside the tag. Spacing on screen is then identical to
+the plain text, and since the C64's colour matrix is one entry per TWO
+characters, the only cells ever caught by that granularity are the
+marker-spaces themselves - which are invisible.
+
+**That swallow is C64-specific and it is why this file takes a profile.**
+A client that draws markers as zero-width (the Windows client's painter
+advances by the run length and a marker contributes nothing) never
+needed the column, so taking the space from it deletes a real space:
+"You see a [color=grey]steel door[/color] ahead." arrives as
+"You see asteel doorahead." Profile.marker_cells decides.
 
 Tags are NOT stripped from stored history: the model should see its own
-past usage and stay consistent. This transform runs at egress to the
-C64 only.
+past usage and stay consistent. This transform runs at egress only.
 """
 
 import re
+
+from .profiles import C64, WIRE_COLORS, PALETTE_C64, PALETTE_RICH
 
 # Common Unicode punctuation -> ASCII approximations, applied before the
 # ascii/replace encode so LLM typography doesn't become '?' on the C64.
@@ -36,21 +46,50 @@ UNICODE_TO_ASCII = str.maketrans({
 M_CLOSE = 0x01
 M_BOLD_ON = 0x02
 M_BOLD_OFF = 0x03
-M_COLOR_BASE = 0x10        # 0x10|c, c = 1..14
+M_COLOR_BASE = 0x10        # 0x10|c, c = 1..14 (1..15 for rich text)
 
-# Readable-on-black only. Colour 15 is deliberately absent: it would let
-# an encoded line_color collide with the 0xFF rainbow sentinel. Blue (6)
-# is illegible on black, so it maps to light blue.
-PALETTE = {
-    'white': 1, 'red': 2, 'cyan': 3, 'purple': 4, 'violet': 4,
-    'magenta': 4, 'green': 5, 'yellow': 7, 'orange': 8, 'brown': 9,
-    'pink': 10, 'lightred': 10, 'grey': 12, 'gray': 12, 'silver': 12,
-    'lightgreen': 13, 'lime': 13, 'blue': 14, 'lightblue': 14,
-}
+# Rich text only. A C64 has one face and no attributes beyond reverse, so
+# these are never emitted to it - the tags strip to plain text instead.
+M_ITALIC_ON = 0x04
+M_ITALIC_OFF = 0x05
+M_ULINE_ON = 0x06
+M_ULINE_OFF = 0x07
+M_HEAD_ON = 0x0E
+M_HEAD_OFF = 0x0F
+
+# Colour beyond the sixteen the one-byte marker can encode:
+#
+#     0x1B 'C' (0x40 | slot)      slot 0..63
+#
+# The operand is biased into 0x40-0x7F so it can never be a NUL (payloads
+# are C strings), a newline, or another marker - which keeps a client's
+# marker scanner able to resynchronise on any byte. Three bytes buys 64
+# slots; the one-byte form still carries 1..15, so the extended marker
+# only appears when a colour actually needs it.
+M_ESC = 0x1B
+ESC_COLOR = 0x43           # 'C'
+ESC_OPERAND_BIAS = 0x40
+
+# Kept as the module-level name it has always been: this is the C64's
+# palette, and every existing importer means that one.
+PALETTE = PALETTE_C64
 
 OPEN_RE = re.compile(r"\[\s*colou?r\s*[=:]\s*([a-z]+)\s*\]", re.IGNORECASE)
 CLOSE_RE = re.compile(r"\[\s*/\s*colou?r\s*\]", re.IGNORECASE)
 BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
+
+# Attribute tags. Bracketed rather than markdown's asterisks and
+# underscores on purpose: UNICODE_TO_ASCII turns a bullet into '*', so a
+# single-asterisk italic rule would eat every bullet list, and '_' is
+# ordinary inside a filename or an identifier. Bracket tags cannot
+# collide with either, and they read like the colour tag beside them.
+ATTR_TAGS = {
+    'i': (M_ITALIC_ON, M_ITALIC_OFF),
+    'u': (M_ULINE_ON, M_ULINE_OFF),
+    'h': (M_HEAD_ON, M_HEAD_OFF),
+}
+ATTR_OPEN_RE = re.compile(r"\[\s*([iuh])\s*\]", re.IGNORECASE)
+ATTR_CLOSE_RE = re.compile(r"\[\s*/\s*([iuh])\s*\]", re.IGNORECASE)
 
 # A close tag sitting before punctuation reads better after it, and it
 # keeps the close marker next to a space it can swallow.
@@ -64,13 +103,29 @@ def _swallow_before(out: list) -> None:
         out.pop()
 
 
-def colorize_for_wire(text: str) -> bytes:
+def _emit_color(out: bytearray, slot: int) -> None:
+    """Append whichever colour marker can carry this slot."""
+    if slot <= 15:
+        out.append(M_COLOR_BASE | slot)
+    else:
+        out.append(M_ESC)
+        out.append(ESC_COLOR)
+        out.append(ESC_OPERAND_BIAS | slot)
+
+
+def colorize_for_wire(text: str, profile=C64) -> bytes:
     """Text with markup -> ASCII bytes with in-band marker cells.
 
     Unknown colour names strip to plain text: a tag must never reach the
     screen as literal characters, and a missing colour is a cosmetic
-    absence rather than garbage.
+    absence rather than garbage. The same goes for an attribute tag sent
+    to a client with one typeface.
+
+    With the default profile this is byte-for-byte what it always was.
     """
+    palette = profile.palette
+    top = profile.max_color_slot
+
     # Punctuation first, so the close tag is already adjacent to the
     # space it will swallow.
     text = HOIST_RE.sub(lambda m: m.group(2) + m.group(1), text)
@@ -83,10 +138,11 @@ def colorize_for_wire(text: str) -> bytes:
     while i < n:
         m = OPEN_RE.match(text, i)
         if m:
-            c = PALETTE.get(m.group(1).lower())
-            if c:
-                _swallow_before(out)
-                out.append(M_COLOR_BASE | c)
+            c = palette.get(m.group(1).lower())
+            if c and c <= top:
+                if profile.marker_cells:
+                    _swallow_before(out)
+                _emit_color(out, c)
             i = m.end()
             continue
         m = CLOSE_RE.match(text, i)
@@ -94,9 +150,22 @@ def colorize_for_wire(text: str) -> bytes:
             out.append(M_CLOSE)
             i = m.end()
             # The close marker took its own column, so eat the space
-            # that follows it instead of the one before.
-            if i < n and text[i] == ' ':
+            # that follows it instead of the one before. A zero-width
+            # marker took no column and owes nothing back.
+            if profile.marker_cells and i < n and text[i] == ' ':
                 i += 1
+            continue
+        m = ATTR_OPEN_RE.match(text, i)
+        if m:
+            if profile.rich_text:
+                out.append(ATTR_TAGS[m.group(1).lower()][0])
+            i = m.end()
+            continue
+        m = ATTR_CLOSE_RE.match(text, i)
+        if m:
+            if profile.rich_text:
+                out.append(ATTR_TAGS[m.group(1).lower()][1])
+            i = m.end()
             continue
         ch = text[i]
         out.append(ord(ch) if ord(ch) < 0x80 else 0x3F)
@@ -105,23 +174,36 @@ def colorize_for_wire(text: str) -> bytes:
 
 
 def strip_markup(text: str) -> str:
-    """Plain text with every tag removed - for anything that is not the
-    C64 (titles, logs, the caption of an image)."""
+    """Plain text with every tag removed - for anything that is not a
+    client screen (titles, logs, the caption of an image)."""
     text = HOIST_RE.sub(lambda m: m.group(2) + m.group(1), text)
     text = BOLD_RE.sub(lambda m: m.group(1), text)
     text = OPEN_RE.sub('', text)
-    return CLOSE_RE.sub('', text)
+    text = CLOSE_RE.sub('', text)
+    text = ATTR_OPEN_RE.sub('', text)
+    return ATTR_CLOSE_RE.sub('', text)
 
 
-def prompt_snippet() -> str:
+def prompt_snippet(profile=C64) -> str:
     """Teaches the markup. Deliberately short - the adventure prompt
     already carries state and music instructions - and deliberately
-    strict about sparing use: everything coloured is nothing coloured,
-    and each tag costs a column on an 80-character screen."""
+    strict about sparing use: everything coloured is nothing coloured.
+
+    Only the vocabulary is per-client. The DISCIPLINE is not: a model
+    told it may decorate freely does, and a wall of colour reads worse
+    than none on a 16-colour VGA than it does on a VIC-II.
+    """
+    attrs = (
+        " Use [i]...[/i] for a title or a remembered voice, [u]...[/u] "
+        "for something written down, and [h]...[/h] for a heading on its "
+        "own line."
+        if profile.rich_text else
+        " Each tag costs a column on an 80-character screen."
+    )
     return (
         "\nColour: wrap a noun in [color=NAME]...[/color] to tint it on "
         "the player's screen, and **word** for emphasis. Colours: "
-        + ", ".join(sorted(set(PALETTE))) +
+        + ", ".join(sorted(set(profile.palette))) +
         ". Tag the WHOLE noun phrase, not just its head word: write "
         "[color=blue]pool of dark water[/color] and "
         "[color=brown]rusted iron key[/color], NOT "
@@ -129,7 +211,7 @@ def prompt_snippet() -> str:
         "phrases belong inside the tag. Use it SPARINGLY - objects the "
         "player can take, exits, and hazards. Most sentences should have "
         "no colour at all. Never colour a whole sentence, and never nest "
-        "tags."
+        "tags." + attrs
     )
 
 

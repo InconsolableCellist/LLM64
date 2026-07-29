@@ -113,6 +113,19 @@ class MockHandler(BaseHTTPRequestHandler):
             # marker transform runs. Both a colour run and **bold**.
             text = ('You approach the [color=grey]steel door[/color], '
                     'your torch guttering. Go **north** now.')
+        elif 'RICHTEST' in upper:
+            # Everything only a rich-text client can render: a colour past
+            # the C64's fifteen (so the three-byte extended marker), and
+            # each attribute. A C64 asking for this must see the words and
+            # none of the tags - which is the assertion worth making, so
+            # the same prompt is useful on both machines.
+            text = ('The [color=teal]brass astrolabe[/color] rests on '
+                    '[color=gold]gilded velvet[/color]. The plate reads '
+                    '[i]Ad Astra[/i], and the ledger beneath it is '
+                    '[u]countersigned[/u].\n'
+                    '[h]Chapter One[/h]\n'
+                    'A [color=crimson]cracked ruby[/color] holds the '
+                    'light. Go **north** now.')
         elif 'ATMOSPHERIC CAPTION' in upper:
             # Deterministic caption: the e2e converter probe bakes the
             # same text into its expected caption band

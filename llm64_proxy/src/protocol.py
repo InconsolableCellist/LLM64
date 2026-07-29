@@ -25,6 +25,7 @@ from . import printcups
 from . import printpic
 from .scenecomp import compose_question
 from .markup import colorize_for_wire, split_safe, UNICODE_TO_ASCII
+from .profiles import C64 as PROFILE_C64, from_hello
 from .markup import prompt_snippet as color_prompt_snippet
 from .images import ImageService
 from .imagegen import make_backend
@@ -47,6 +48,9 @@ class MessageType(IntEnum):
     GET_NOWPLAYING = 0x3C  # '<' - jukebox asks what is playing
     FAV_TUNE = 0x3D  # '=' - toggle favorite on the current tune
     SET_BAUD = 0x3E  # '>' - client's wire rate: 2 bytes LE, nominal/100
+    # '?' - what kind of machine is on the other end (see profiles.py).
+    # Absence of it means the C64, so an existing client is unaffected.
+    CLIENT_HELLO = 0x3F
     ACK = 0x40  # '@' - was 0x10
     NAK = 0x41  # 'A' - was 0x11
 
@@ -119,6 +123,11 @@ class ProtocolHandler:
         # announces it via SET_BAUD; falls back to config.wire_baud (the
         # old-client default). Only bulk pacing reads it.
         self._wire_baud = None
+        # What kind of machine is on the other end (see profiles.py).
+        # The C64 until a CLIENT_HELLO says otherwise, which is what
+        # keeps every existing client working unchanged.
+        self.profile = PROFILE_C64
+        self._caps = 0
         # BEGIN handshake event: set when the client ACKs a SID/IMG
         # BEGIN (music silenced, rendering drained - clear to stream)
         self._begin_ack = None
@@ -299,6 +308,8 @@ class ProtocolHandler:
                 await self.handle_get_nowplaying()
             elif msg_type == MessageType.FAV_TUNE:
                 await self.handle_fav_tune()
+            elif msg_type == MessageType.CLIENT_HELLO:
+                self.handle_client_hello()
             elif msg_type == MessageType.SET_BAUD:
                 self.handle_set_baud()
             elif msg_type == MessageType.ACK:
@@ -376,10 +387,13 @@ class ProtocolHandler:
             self.logger.error(f"Payload too large: {len(payload)}")
             return
         # The CLIENT's buffer is the binding limit: an oversized frame
-        # desyncs its parser (field bug: 1000-char load messages)
-        if len(payload) > 512:
+        # desyncs its parser (field bug: 1000-char load messages). 512
+        # for a C64; a client that told us its own buffer in CLIENT_HELLO
+        # is held to that instead.
+        if len(payload) > self.profile.max_payload:
             self.logger.error(
-                f"Payload {len(payload)} exceeds client buffer (512) - "
+                f"Payload {len(payload)} exceeds client buffer "
+                f"({self.profile.max_payload}) - "
                 f"dropping {msg_type.name} frame")
             return
 
@@ -853,7 +867,7 @@ class ProtocolHandler:
             snippet += advmap.prompt_snippet()
         # Colour needs no server capability - the client renders it - so
         # it is unconditional, unlike music and images.
-        snippet += color_prompt_snippet()
+        snippet += color_prompt_snippet(self.profile)
         mode.music_snippet = snippet
 
     def _switch_mode(self, mode):
@@ -988,9 +1002,40 @@ class ProtocolHandler:
             f"SET_BAUD: pacing bulk to {nominal} baud "
             f"({self.bulk_pace_per_byte*1000:.3f} ms/byte)")
 
+    def handle_client_hello(self):
+        """Client announced what kind of machine it is (CLIENT_HELLO).
+
+        Fire-and-forget, matching SET_BAUD: there is nothing useful to
+        say back, and inventing an ACK here would collide with the one
+        the BEGIN handshake and the flow window already use.
+
+        A malformed hello leaves the C64 profile in place. That is the
+        same outcome as no hello at all, which is the point - a client
+        that cannot introduce itself is served rather than refused.
+        """
+        got = from_hello(bytes(self.payload))
+        if got is None:
+            self.logger.warning(
+                f"CLIENT_HELLO: unusable payload ({len(self.payload)} B), "
+                f"keeping the {self.profile.name} profile")
+            return
+        self.profile, self._caps = got
+        p = self.profile
+        self.logger.info(
+            f"CLIENT_HELLO: {p.name} - {p.text_width} cols, "
+            f"{p.max_payload} B payload, caps {self._caps:#06x} "
+            f"(markers {'occupy a cell' if p.marker_cells else 'zero-width'}"
+            f"{', rich text' if p.rich_text else ''}"
+            f"{'' if p.pace else ', unpaced'})")
+
     async def _send_bulk(self, msg_type: MessageType, payload: bytes):
         """Send one bulk frame and sleep out its wire time."""
         await self.send_message(msg_type, payload)
+        # A socket has its own flow control. The pacing exists for a
+        # serial line behind a bridge that drops burst tails, and on
+        # anything else it is only latency.
+        if not self.profile.pace:
+            return
         await asyncio.sleep(self.BULK_PACE_BASE
                             + len(payload) * self.bulk_pace_per_byte)
 
@@ -1743,7 +1788,7 @@ class ProtocolHandler:
         # and markup cut across one matches nothing and prints literally.
         emit, self._wire_hold = split_safe(
             self._wire_hold + text.translate(UNICODE_TO_ASCII))
-        data = colorize_for_wire(emit)
+        data = colorize_for_wire(emit, self.profile)
         for i in range(0, len(data), self.CHUNK_TEXT_MAX):
             seq = await self._send_text_chunk(
                 seq, data[i:i + self.CHUNK_TEXT_MAX])
@@ -1755,7 +1800,7 @@ class ProtocolHandler:
         if not self._wire_hold:
             return seq
         held, self._wire_hold = self._wire_hold, ''
-        data = colorize_for_wire(held)
+        data = colorize_for_wire(held, self.profile)
         for i in range(0, len(data), self.CHUNK_TEXT_MAX):
             seq = await self._send_text_chunk(
                 seq, data[i:i + self.CHUNK_TEXT_MAX])
@@ -2762,17 +2807,19 @@ class ProtocolHandler:
             if omitted > 0:
                 frames.append((2, colorize_for_wire(
                     f'(... {omitted} earlier messages '
-                    f'not shown - /history has them ...)')))
+                    f'not shown - /history has them ...)',
+                    self.profile)))
             for m in window:
                 role = 0 if m['role'] == 'user' else 1
-                data = colorize_for_wire(clip(m['content']))
+                data = colorize_for_wire(clip(m['content']), self.profile)
                 for i in range(0, len(data), FRAME_TEXT):
                     frames.append((role if i == 0 else role | 0x80,
                                    data[i:i + FRAME_TEXT]))
             # Zero frames would leave the client waiting forever: the
             # 'load done' signal is the final more=0 frame
             if not frames:
-                frames.append((2, colorize_for_wire('(empty conversation)')))
+                frames.append((2, colorize_for_wire('(empty conversation)',
+                                                    self.profile)))
 
             # One message per frame: the C64 client's payload buffer is
             # small (512 bytes), so keep each frame well under that.
