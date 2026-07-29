@@ -206,9 +206,10 @@ class ProtocolHandler:
             self.logger.info(
                 f"Music library: {len(self.music.tunes)} tunes")
         # ...and its MIDI twin for machines with a MIDI Mapper instead
-        # of a SID. Same database shape, same tagging tools.
+        # of a SID. Same database shape, same tagging tools; midi.json
+        # is the name the corpus pipeline writes (tools/midi_makedb.py).
         self.midi = MidiLibrary(
-            Path(self.config.data_dir) / 'midi' / 'moods.json')
+            Path(self.config.data_dir) / 'midi' / 'midi.json')
         if self.midi.available:
             self.logger.info(
                 f"MIDI library: {len(self.midi.tunes)} tunes")

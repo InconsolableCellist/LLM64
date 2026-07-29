@@ -27,13 +27,13 @@ MID = (b'MThd' + (6).to_bytes(4, 'big') + b'\x00\x00\x00\x01\x00\x60'
 with tempfile.TemporaryDirectory() as td:
     d = Path(td)
     (d / 'tune.mid').write_bytes(MID)
-    (d / 'moods.json').write_text(json.dumps({
+    (d / 'midi.json').write_text(json.dumps({
         'moods': ['festive'],
         'tunes': [{'id': 't1', 'file': 'tune.mid', 'title': 'T',
                    'author': 'A', 'moods': {'festive': 1.0},
                    'confidence': 1.0}],
     }))
-    lib = MidiLibrary(d / 'moods.json')
+    lib = MidiLibrary(d / 'midi.json')
     check("library loads", lib.available, True)
     check("shares the picker", lib.pick('festive')['id'], 't1')
     check("no tune for an unknown mood", lib.pick('dirge'), None)
