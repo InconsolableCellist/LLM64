@@ -42,6 +42,7 @@
 #include <commdlg.h>
 #include <string.h>
 #include <stdlib.h>
+#include <i86.h>        /* FP_OFF, for segment-boundary math */
 #include "wire.h"
 #include "net.h"
 #include "scroll.h"
@@ -960,9 +961,13 @@ static int  g_shelf_count;
 static int  g_shelf_cur = -1;   /* index on display */
 static HWND g_pic_lb;           /* the browser listbox, in the pic window */
 
-/* Write a global block to an open file in segment-safe bites. Huge
-   pointers normalize their offsets small, so a 16 KB bite handed on as
-   a far pointer never wraps mid-write. Returns 0 on a short write. */
+/* Write a global block to an open file in segment-safe bites. The bite
+   is 16 KB because 16 K divides 64 K: starting from GlobalLock's offset
+   0, every bite ends exactly at or before a segment boundary, and the
+   huge increment carries into the next segment between bites. (Watcom
+   huge arithmetic does NOT normalize offsets - a bite size that let a
+   far pointer run off the segment end would wrap to offset 0, the
+   img_data bug.) Returns 0 on a short write. */
 static int hfile_write(HFILE f, HGLOBAL mem, unsigned long size)
 {
     unsigned char __huge *src;
@@ -1244,16 +1249,34 @@ static void img_data(const unsigned char *p, unsigned len)
     if (n) {
         dst = (unsigned char __huge *)GlobalLock(g_img_mem);
         if (dst) {
-            /* One _fmemcpy, not a byte loop: huge arithmetic
-               normalizes the offset small, so a 2 KB frame never wraps
-               the segment - and per-byte huge indexing re-derives the
-               segment on every access, which on a real 486 was a
-               visible chunk of the transfer time. */
+            /* _fmemcpy instead of a per-byte huge loop (which re-derives
+               the segment on every access - a visible chunk of the
+               transfer time on a real 486) - but split at the segment
+               boundary, because Watcom huge arithmetic does NOT
+               normalize the offset small: dst+off can sit anywhere in
+               the segment, and a far copy that runs off the end WRAPS
+               to offset 0 - which is the DIB header. Field signature:
+               the transfer completes, the caption registers, and
+               StretchDIBits paints black, because the frames straddling
+               each 64 KB line overwrote biSize with pixels. */
+            const unsigned char far *src = p + 4;
+            unsigned span;
+            unsigned long room;
+
             dst += off;
-            _fmemcpy((void far *)dst, (const void far *)(p + 4), n);
+            while (n) {
+                room = 0x10000UL - FP_OFF(dst);
+                span = (unsigned long)n < room ? n : (unsigned)room;
+                _fmemcpy((void far *)dst, (const void far *)src, span);
+                dst += span;    /* huge: carries into the next segment */
+                src += span;
+                n   -= span;
+                g_img_got += span;
+            }
             GlobalUnlock(g_img_mem);
+        } else {
+            g_img_got += n;
         }
-        g_img_got += n;
     }
     /* The proxy stops and waits for this every g_img_win frames - the
        same flow control the C64 does with its 256-byte bites. */
