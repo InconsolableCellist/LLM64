@@ -719,9 +719,12 @@ static void launch_create(HWND frame)
     HINSTANCE inst = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
     int i;
 
+    /* Owner-drawn so a button can show that its window is OPEN: 3.1 has
+       no push-like checkbox, so the latched look is ours to draw
+       (launch_draw, down with FrameProc). */
     for (i = 0; i < LAUNCH_N; i++)
         g_launch[i] = CreateWindow("BUTTON", label[i],
-                                   WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                   WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                                    0, 0, 10, 10, frame,
                                    (HMENU)(IDC_LAUNCHBASE + i), inst,
                                    NULL);
@@ -4783,6 +4786,95 @@ static HWND conv_create(HWND frame)
     return w;
 }
 
+/* ---------------------------------------------------------------- */
+/* The launcher's latched buttons                                    */
+/* ---------------------------------------------------------------- */
+
+/* Which of the launcher's windows are open, as a bitmask indexed by
+   button. Lives here rather than up with the strip because it has to see
+   every window handle in the file. */
+static unsigned launch_state(void)
+{
+    return (g_conv     ? 0x0002u : 0)
+         | (g_pic_wnd  ? 0x0004u : 0)
+         | (g_mus_wnd  ? 0x0008u : 0)
+         | (g_chr_wnd  ? 0x0010u : 0)
+         | (g_inv_wnd  ? 0x0020u : 0)
+         | (g_note_wnd ? 0x0040u : 0)
+         | (g_map_wnd  ? 0x0080u : 0);
+}
+
+static unsigned g_launch_shown = 0xFFFFu;   /* forces the first paint */
+
+/* Repaint the buttons when what they report has changed. Called on every
+   toggle for an immediate answer, and off a timer as the backstop: a
+   window can also be closed from its own system menu, with Ctrl+F4, or
+   from the Window menu, and a button that lies about that is worse than
+   no button at all. */
+static void launch_sync(void)
+{
+    unsigned now = launch_state();
+    int i;
+
+    if (now == g_launch_shown)
+        return;
+    g_launch_shown = now;
+    for (i = 1; i < LAUNCH_N; i++)
+        if (g_launch[i])
+            InvalidateRect(g_launch[i], NULL, TRUE);
+}
+
+#define ID_LAUNCHTIMER  1
+#define LAUNCH_TICK_MS  400
+
+/* A 1993 toolbar button, drawn by hand because 3.1 has no push-like
+   checkbox (BS_PUSHLIKE is a Win32 style) and no DrawFrameControl. Raised
+   when its window is closed, sunken when it is open - the same bevel the
+   status strip uses, in the other direction. */
+static void launch_draw(LPDRAWITEMSTRUCT di)
+{
+    int idx = (int)di->CtlID - IDC_LAUNCHBASE;
+    /* Slot 0 is the Menu button: an action, not a window, so it is never
+       latched - only pushed while the mouse holds it. */
+    int on = idx > 0 && (launch_state() & (1u << idx)) != 0;
+    int down = on || (di->itemState & ODS_SELECTED) != 0;
+    RECT r = di->rcItem;
+    HPEN hi, sh, old;
+    char text[28];
+    int n;
+
+    FillRect(di->hDC, &r, GetStockObject(LTGRAY_BRUSH));
+    hi = CreatePen(PS_SOLID, 1, RGB(0xFF, 0xFF, 0xFF));
+    sh = CreatePen(PS_SOLID, 1, RGB(0x80, 0x80, 0x80));
+    old = SelectObject(di->hDC, down ? sh : hi);
+    MoveTo(di->hDC, r.left, r.bottom - 1);
+    LineTo(di->hDC, r.left, r.top);
+    LineTo(di->hDC, r.right - 1, r.top);
+    SelectObject(di->hDC, down ? hi : sh);
+    LineTo(di->hDC, r.right - 1, r.bottom - 1);
+    LineTo(di->hDC, r.left, r.bottom - 1);
+    SelectObject(di->hDC, old);
+    DeleteObject(hi);
+    DeleteObject(sh);
+
+    n = GetWindowText(di->hwndItem, text, sizeof(text) - 1);
+    text[n < 0 ? 0 : n] = '\0';
+    SetBkMode(di->hDC, TRANSPARENT);
+    SelectObject(di->hDC, g_font ? g_font : GetStockObject(SYSTEM_FONT));
+    SetTextColor(di->hDC, RGB(0, 0, 0));
+    if (down) {                 /* the label rides the bevel down */
+        r.left += 1;
+        r.top += 1;
+    }
+    DrawText(di->hDC, text, -1, &r,
+             DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    if (di->itemState & ODS_FOCUS) {
+        RECT fr = di->rcItem;
+        InflateRect(&fr, -3, -3);
+        DrawFocusRect(di->hDC, &fr);
+    }
+}
+
 long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                                   LONG lParam)
 {
@@ -4828,6 +4920,10 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         if (!g_mdi)
             return -1;
         launch_create(hwnd);
+        /* The buttons report what is open, and a window can close without
+           going through them - the system menu, Ctrl+F4, the Window menu.
+           A slow tick is the honest way to keep them true. */
+        SetTimer(hwnd, ID_LAUNCHTIMER, LAUNCH_TICK_MS, NULL);
         g_conv = conv_create(hwnd);
         /* The picture window is part of the default desk, empty or not:
            an adventure fills it, and until then it says what it is.
@@ -4866,6 +4962,21 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
     case WM_PAINT:
         paint_status(hwnd);
         return 0;
+
+    case WM_DRAWITEM:
+        if (wParam >= IDC_LAUNCHBASE
+                && wParam < IDC_LAUNCHBASE + LAUNCH_N) {
+            launch_draw((LPDRAWITEMSTRUCT)lParam);
+            return TRUE;
+        }
+        break;
+
+    case WM_TIMER:
+        if (wParam == ID_LAUNCHTIMER) {
+            launch_sync();
+            return 0;
+        }
+        break;
 
     case NET_WM_SOCKET: {
         unsigned event = net_on_socket_msg(wParam, lParam, err, sizeof(err));
@@ -5097,6 +5208,9 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
             }
             if (!g_user_arranged)
                 layout_default();
+            /* Answer the click immediately rather than waiting for the
+               tick: the button IS the feedback. */
+            launch_sync();
             /* The click parked the focus on a toolbar button; give it
                back to something that can type. */
             if (g_input)
@@ -5111,6 +5225,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
 
     case WM_DESTROY: {
         int i;
+        KillTimer(hwnd, ID_LAUNCHTIMER);
         net_shutdown();
         /* From 1: g_fonts[0] is the stock fixed font and is not ours
            to delete. */

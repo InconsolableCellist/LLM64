@@ -3025,6 +3025,11 @@ class ProtocolHandler:
     # One page of the conversation manager's list; also the cap for the
     # legacy no-payload request (the client stores 17 entries max)
     LIST_PAGE = 16
+    # And how long a title may be on the wire. NOT a taste decision: the
+    # C64's list entry is `char title[37]` (modapi.h), 36 characters and
+    # the NUL, so this number belongs to a deployed client and cannot grow
+    # without rebuilding one.
+    LIST_TITLE = 36
 
     def _resolve_masked_id(self, masked_id: int) -> int:
         """The wire id is 32-bit; stored ids may be wider (ms
@@ -3046,8 +3051,18 @@ class ProtocolHandler:
 
         conversations = self.conv_manager.list_conversations()
         for conv in conversations:
+            # Everything the browser shows is decided here - the client
+            # renders the title as-is, on both machines. The star, and the
+            # message count: "Absurd Dungeon Roleplay (50)" says at a
+            # glance which of two similarly named games is the one that
+            # was actually played. The count is trimmed for FIRST, because
+            # a title clipped mid-word still reads and a count clipped to
+            # "(5" does not.
+            suffix = f" ({conv.get('message_count', 0)})"
+            title = str(conv['title'])
             if conv.get('starred'):
-                conv['title'] = '*' + str(conv['title'])
+                title = '*' + title
+            conv['title'] = title[:self.LIST_TITLE - len(suffix)] + suffix
         start = page * self.LIST_PAGE
         window = conversations[start:start + self.LIST_PAGE]
         more_pages = 1 if len(conversations) > start + self.LIST_PAGE else 0
@@ -3084,7 +3099,7 @@ class ProtocolHandler:
                         '<II',
                         int(conv['id']) & 0xFFFFFFFF,
                         int(conv['timestamp']) & 0xFFFFFFFF))
-                    title = str(conv['title'])[:36]
+                    title = str(conv['title'])[:self.LIST_TITLE]
                     entry.extend(title.encode('ascii', errors='replace'))
                     entry.append(0x00)
                 except (ValueError, TypeError) as e:
