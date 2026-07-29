@@ -4827,10 +4827,55 @@ static void launch_sync(void)
 #define ID_LAUNCHTIMER  1
 #define LAUNCH_TICK_MS  400
 
-/* A 1993 toolbar button, drawn by hand because 3.1 has no push-like
-   checkbox (BS_PUSHLIKE is a Win32 style) and no DrawFrameControl. Raised
-   when its window is closed, sunken when it is open - the same bevel the
-   status strip uses, in the other direction. */
+/* One edge of a bevel: a thin filled rectangle, which is easier to get
+   right than a pen and a cursor. */
+static void bevel(HDC hdc, int x, int y, int cx, int cy, HBRUSH b)
+{
+    RECT r;
+
+    r.left = x;
+    r.top = y;
+    r.right = x + cx;
+    r.bottom = y + cy;
+    FillRect(hdc, &r, b);
+}
+
+/* The 50% stipple a 3.1 toolbar used for a latched button - Word 2 and
+   Excel 4 both did this, and it is what makes "held down" read as a state
+   rather than as a mouse still being held. A monochrome pattern brush
+   takes its two colours from the DC's text and background, so the same
+   brush works in any colour scheme. Built once. */
+static HBRUSH g_stipple;
+
+static HBRUSH stipple_brush(void)
+{
+    static const unsigned short bits[8] = {
+        0x5555, 0xAAAA, 0x5555, 0xAAAA, 0x5555, 0xAAAA, 0x5555, 0xAAAA
+    };
+    HBITMAP bmp;
+
+    if (g_stipple)
+        return g_stipple;
+    bmp = CreateBitmap(8, 8, 1, 1, (LPSTR)bits);
+    if (!bmp)
+        return NULL;
+    g_stipple = CreatePatternBrush(bmp);
+    DeleteObject(bmp);          /* the brush keeps its own copy */
+    return g_stipple;
+}
+
+/* A button in the default Windows 3.1 style, drawn by hand because 3.1
+   has no push-like checkbox (BS_PUSHLIKE is Win32) and no
+   DrawFrameControl. That style is not one bevel line but four rings: a
+   black outer frame, a white highlight inside it on the top and left, and
+   TWO pixels of shadow on the bottom and right. Pressed, or latched
+   because its window is open, the whole arrangement inverts - which is
+   what makes it obvious across the room, and what a single-pixel toolbar
+   bevel never quite managed.
+
+   Colours come from GetSysColor, so the strip still looks like the rest of
+   the desktop under whatever scheme is loaded (3.11 shipped a dozen, and
+   two of them are not grey at all). */
 static void launch_draw(LPDRAWITEMSTRUCT di)
 {
     int idx = (int)di->CtlID - IDC_LAUNCHBASE;
@@ -4839,38 +4884,79 @@ static void launch_draw(LPDRAWITEMSTRUCT di)
     int on = idx > 0 && (launch_state() & (1u << idx)) != 0;
     int down = on || (di->itemState & ODS_SELECTED) != 0;
     RECT r = di->rcItem;
-    HPEN hi, sh, old;
+    RECT in;
+    HBRUSH face, hi, sh, frm;
+    COLORREF facec = GetSysColor(COLOR_BTNFACE);
+    COLORREF hic = GetSysColor(COLOR_BTNHIGHLIGHT);
+    COLORREF shc = GetSysColor(COLOR_BTNSHADOW);
+    int w, h, n;
     char text[28];
-    int n;
 
-    FillRect(di->hDC, &r, GetStockObject(LTGRAY_BRUSH));
-    hi = CreatePen(PS_SOLID, 1, RGB(0xFF, 0xFF, 0xFF));
-    sh = CreatePen(PS_SOLID, 1, RGB(0x80, 0x80, 0x80));
-    old = SelectObject(di->hDC, down ? sh : hi);
-    MoveTo(di->hDC, r.left, r.bottom - 1);
-    LineTo(di->hDC, r.left, r.top);
-    LineTo(di->hDC, r.right - 1, r.top);
-    SelectObject(di->hDC, down ? hi : sh);
-    LineTo(di->hDC, r.right - 1, r.bottom - 1);
-    LineTo(di->hDC, r.left, r.bottom - 1);
-    SelectObject(di->hDC, old);
+    face = CreateSolidBrush(facec);
+    hi   = CreateSolidBrush(hic);
+    sh   = CreateSolidBrush(shc);
+    frm  = CreateSolidBrush(GetSysColor(COLOR_WINDOWFRAME));
+
+    FillRect(di->hDC, &r, face);
+    FrameRect(di->hDC, &r, frm);            /* the black outline */
+    in = r;
+    InflateRect(&in, -1, -1);
+    w = in.right - in.left;
+    h = in.bottom - in.top;
+    if (w > 4 && h > 4) {
+        if (!down) {
+            bevel(di->hDC, in.left, in.top, w, 1, hi);           /* top */
+            bevel(di->hDC, in.left, in.top, 1, h, hi);           /* left */
+            bevel(di->hDC, in.left, in.bottom - 2, w, 2, sh);    /* under */
+            bevel(di->hDC, in.right - 2, in.top, 2, h, sh);      /* right */
+        } else {
+            /* Sunken: the shadow moves to the top and left and doubles,
+               and the face carries the toolbar stipple when the button is
+               latched rather than merely held. */
+            bevel(di->hDC, in.left, in.top, w, 2, sh);
+            bevel(di->hDC, in.left, in.top, 2, h, sh);
+            bevel(di->hDC, in.left, in.bottom - 1, w, 1, hi);
+            bevel(di->hDC, in.right - 1, in.top, 1, h, hi);
+            if (on && !(di->itemState & ODS_SELECTED)) {
+                HBRUSH st = stipple_brush();
+                if (st) {
+                    RECT fr = in;
+                    /* Inset past the bevel on every side: the bevel is
+                       the signal, the stipple only says "and it stayed
+                       that way". Face against highlight rather than
+                       shadow against highlight - at 1:1 that is a faint
+                       dither, where grey-on-white was a checkerboard
+                       loud enough to bury the bevel it sits inside. */
+                    fr.left += 3;
+                    fr.top += 3;
+                    fr.right -= 2;
+                    fr.bottom -= 2;
+                    SetTextColor(di->hDC, facec);
+                    SetBkColor(di->hDC, hic);
+                    FillRect(di->hDC, &fr, st);
+                }
+            }
+        }
+    }
+    DeleteObject(face);
     DeleteObject(hi);
     DeleteObject(sh);
+    DeleteObject(frm);
 
     n = GetWindowText(di->hwndItem, text, sizeof(text) - 1);
     text[n < 0 ? 0 : n] = '\0';
     SetBkMode(di->hDC, TRANSPARENT);
     SelectObject(di->hDC, g_font ? g_font : GetStockObject(SYSTEM_FONT));
-    SetTextColor(di->hDC, RGB(0, 0, 0));
+    SetTextColor(di->hDC, GetSysColor(COLOR_BTNTEXT));
     if (down) {                 /* the label rides the bevel down */
-        r.left += 1;
-        r.top += 1;
+        r.left += 2;
+        r.top += 2;
     }
     DrawText(di->hDC, text, -1, &r,
              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     if (di->itemState & ODS_FOCUS) {
         RECT fr = di->rcItem;
-        InflateRect(&fr, -3, -3);
+        InflateRect(&fr, -4, -4);
         DrawFocusRect(di->hDC, &fr);
     }
 }
@@ -5226,6 +5312,10 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
     case WM_DESTROY: {
         int i;
         KillTimer(hwnd, ID_LAUNCHTIMER);
+        if (g_stipple) {
+            DeleteObject(g_stipple);
+            g_stipple = NULL;
+        }
         net_shutdown();
         /* From 1: g_fonts[0] is the stock fixed font and is not ours
            to delete. */
