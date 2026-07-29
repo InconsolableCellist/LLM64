@@ -221,8 +221,15 @@ class MusicDirectiveFilter:
 
     # Image descriptions can be a sentence and a state block carries a
     # whole JSON object; hold generously before concluding a '[[' wasn't
-    # a directive after all
-    MAX_HOLD = 600
+    # a directive after all.
+    #
+    # 600 was too mean, and the failure was silent in the worst way: a
+    # [[STATE:]] block longer than the hold was forwarded verbatim into
+    # the player's transcript AND never parsed, so the raw JSON appeared
+    # on screen and the game state quietly stopped updating from then on.
+    # A dozen inventory items plus a described companion already reaches
+    # 700. 1500 is still far inside the 2048-byte frame cap.
+    MAX_HOLD = 1500
 
     def __init__(self):
         self.held = ""

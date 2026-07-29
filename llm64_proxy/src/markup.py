@@ -104,8 +104,21 @@ def _swallow_before(out: list) -> None:
 
 
 def _emit_color(out: bytearray, slot: int) -> None:
-    """Append whichever colour marker can carry this slot."""
-    if slot <= 15:
+    """Append whichever colour marker can carry this slot.
+
+    Slot 11 is the exception, and it was a bug for as long as a palette
+    had one: M_COLOR_BASE | 11 is 0x1B, which IS M_ESC. A client scanning
+    for markers must read the escape byte as an escape byte - so it looks
+    at the next byte for the 'C' verb, does not find it, and gives up on
+    the whole marker: the 0x1B lands in the text as an undrawable glyph
+    ("the []slate rooftops"), or, when the tinted phrase happens to start
+    with C, eats two characters and sets a nonsense colour.
+
+    Only PALETTE_RICH has a slot 11 (darkgrey), so only a client that
+    asked for rich text ever sees this - and such a client necessarily
+    has the extended-marker parser. The C64's bytes do not change.
+    """
+    if slot <= 15 and (M_COLOR_BASE | slot) != M_ESC:
         out.append(M_COLOR_BASE | slot)
     else:
         out.append(M_ESC)

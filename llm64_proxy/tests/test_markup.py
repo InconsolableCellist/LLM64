@@ -149,7 +149,12 @@ def visible(data: bytes, profile) -> str:
     i = 0
     while i < len(data):
         b = data[i]
-        if b == M_ESC and profile.rich_text and i + 2 < len(data):
+        # The verb is checked because the CLIENT checks it (scroll.c
+        # sb_marker_len): an escape byte not followed by 'C' is not a
+        # marker there, and a helper that swallows it anyway hides
+        # exactly the bug that shipped as "the []slate rooftops".
+        if (b == M_ESC and profile.rich_text and i + 2 < len(data)
+                and data[i + 1] == ESC_COLOR):
             i += 3           # ESC, verb, operand - all consumed
             continue
         if b < 0x20 and b not in (0x0A, 0x0D):
@@ -209,6 +214,29 @@ check("a slot past 15 uses the three-byte marker",
 check("a slot within 15 still uses the one-byte marker",
       colorize_for_wire("a [color=red]bowl[/color]", WIN16),
       b"a " + bytes([RED]) + b"bowl" + bytes([M_CLOSE]))
+
+# Slot 11's one-byte form IS the escape byte, so it has to travel in the
+# three-byte form even though it is within 15. The field symptom was a
+# box glyph glued to the tinted word, and - when the phrase began with
+# 'C' - two characters eaten as a bogus operand.
+check("slot 11 escapes rather than colliding with M_ESC",
+      colorize_for_wire("the [color=darkgrey]slate[/color] roof", WIN16),
+      b"the " + bytes([M_ESC, ESC_COLOR,
+                       ESC_OPERAND_BIAS | PALETTE_RICH['darkgrey']])
+      + b"slate" + bytes([M_CLOSE]) + b" roof")
+check("that phrase shows no stray glyph",
+      visible(colorize_for_wire(
+          "the [color=darkgrey]slate[/color] roof", WIN16), WIN16),
+      "the slate roof")
+
+# The general rule, over the whole palette: no one-byte colour marker may
+# be a byte a client reads as something else.
+for name, slot in PALETTE_RICH.items():
+    if slot <= 15 and (0x10 | slot) == M_ESC:
+        got = colorize_for_wire(f"a [color={name}]bowl[/color]", WIN16)
+        if bytes([M_ESC, ESC_COLOR, ESC_OPERAND_BIAS | slot]) not in got:
+            failures.append(f"colour {name} (slot {slot}) emits a bare "
+                            f"escape byte as a one-byte marker")
 
 # Every operand has to stay clear of NUL, CR/LF and the marker range, or
 # a client cannot resynchronise on it.
