@@ -213,6 +213,106 @@ def test_comfyui():
         stop()
 
 
+def test_comfyui_templating():
+    """Every token, and the type coercion that makes them usable.
+
+    ComfyUI validates node input types and rejects the whole graph on a
+    mismatch, so "{WIDTH}" has to arrive as an int and not as "1024".
+    That failure is a 400 with a validation body - easy to miss, and
+    nothing else in the suite would catch it."""
+    print("comfyui templating")
+
+    TEMPLATED = {
+        "_comment": ["not a node - must never be submitted"],
+        "5": {"class_type": "EmptySD3LatentImage",
+              "inputs": {"width": "{WIDTH}", "height": "{HEIGHT}",
+                         "batch_size": 1}},
+        "6": {"class_type": "CLIPTextEncode",
+              "inputs": {"text": "{STYLE}{PROMPT}"}},
+        "7": {"class_type": "CLIPTextEncode",
+              "inputs": {"text": "{NEGATIVE}"}},
+        "8": {"class_type": "KSampler",
+              "inputs": {"seed": "{SEED}", "steps": "{STEPS}",
+                         "cfg": "{CFG}", "sampler_name": "{SAMPLER}",
+                         "denoise": 1, "latent_image": ["5", 0]}},
+        "9": {"class_type": "UNETLoader",
+              "inputs": {"unet_name": "{MODEL}"}},
+        "10": {"class_type": "SaveImage", "inputs": {"images": ["8", 0]}},
+    }
+    path = Path(TMP) / "templated.json"
+    path.write_text(json.dumps(TEMPLATED))
+
+    be = ComfyUIBackend({"url": "http://127.0.0.1:1", "workflow": str(path),
+                         "width": 640, "height": 400, "steps": 12,
+                         "cfg": 2.5, "style": "PIXEL ART. ",
+                         "negative": "no text", "model": "m.safetensors",
+                         "vars": {"unused": "x"}}, TMP)
+    check("a templated workflow loads", be.available())
+    g = be._prepare(be._load(), "a dark room")
+
+    check("the comment key is not submitted", "_comment" not in g,
+          sorted(g))
+    check("width is an int, not a string", g["5"]["inputs"]["width"] == 640
+          and isinstance(g["5"]["inputs"]["width"], int),
+          repr(g["5"]["inputs"]["width"]))
+    check("height too", g["5"]["inputs"]["height"] == 400
+          and isinstance(g["5"]["inputs"]["height"], int))
+    check("steps is an int", isinstance(g["8"]["inputs"]["steps"], int))
+    check("cfg is a float", g["8"]["inputs"]["cfg"] == 2.5
+          and isinstance(g["8"]["inputs"]["cfg"], float))
+    check("seed is an int", isinstance(g["8"]["inputs"]["seed"], int))
+    check("a string token stays a string",
+          g["8"]["inputs"]["sampler_name"] == "res_multistep")
+    check("style and prompt concatenate",
+          g["6"]["inputs"]["text"] == "PIXEL ART. a dark room",
+          g["6"]["inputs"]["text"])
+    check("the negative prompt is filled",
+          g["7"]["inputs"]["text"] == "no text")
+    check("the model filename is filled",
+          g["9"]["inputs"]["unet_name"] == "m.safetensors")
+    check("untouched values survive", g["8"]["inputs"]["denoise"] == 1)
+    check("node links survive", g["8"]["inputs"]["latent_image"] == ["5", 0])
+
+    # Defaults, and the geometry that matters: 1.6:1 is the C64 frame, so
+    # a default run must not letterbox.
+    plain = ComfyUIBackend({"url": "http://127.0.0.1:1",
+                            "workflow": str(path)}, TMP)
+    gp = plain._prepare(plain._load(), "x")
+    w, h = gp["5"]["inputs"]["width"], gp["5"]["inputs"]["height"]
+    check("the default aspect matches the C64 frame",
+          abs(w / h - 320 / 200) < 0.001, f"{w}x{h}")
+    check("style defaults to empty so style_prefix owns the look",
+          gp["6"]["inputs"]["text"] == "x", gp["6"]["inputs"]["text"])
+
+    # A seed varies per run, or is pinned when asked.
+    a = plain._prepare(plain._load(), "x")["8"]["inputs"]["seed"]
+    b = plain._prepare(plain._load(), "x")["8"]["inputs"]["seed"]
+    check("{SEED} varies between runs", a != b, f"{a} == {b}")
+    pinned = ComfyUIBackend({"url": "http://127.0.0.1:1",
+                             "workflow": str(path), "seed": 99}, TMP)
+    check("a pinned seed is honoured",
+          pinned._prepare(pinned._load(), "x")["8"]["inputs"]["seed"] == 99)
+
+    # Junk in the config must not take the proxy down mid-adventure.
+    bad = ComfyUIBackend({"url": "http://127.0.0.1:1", "workflow": str(path),
+                          "width": "wide", "cfg": "loud", "seed": "soon"},
+                         TMP)
+    gb = bad._prepare(bad._load(), "x")
+    check("a non-numeric width falls back to the default",
+          gb["5"]["inputs"]["width"] == 1024, repr(gb["5"]["inputs"]["width"]))
+    check("a non-numeric cfg falls back too",
+          isinstance(gb["8"]["inputs"]["cfg"], float))
+    check("a non-numeric seed still varies",
+          isinstance(gb["8"]["inputs"]["seed"], int))
+
+    # An untokenized workflow keeps the legacy literal-seed randomization.
+    legacy = comfy_backend("http://127.0.0.1:1")
+    gl = legacy._prepare(legacy._load(), "a dark room")
+    check("a literal seed is still randomized", gl["3"]["inputs"]["seed"] != 42)
+    check("and {PROMPT} inside a longer string still works",
+          gl["6"]["inputs"]["text"] == "flat colors, a dark room")
+
+
 def test_comfyui_available():
     print("comfyui availability (no network)")
     path = Path(TMP) / "wf-check.json"
@@ -523,6 +623,7 @@ if __name__ == "__main__":
                                         sleep=lambda s: _time.sleep(0.01))
 
         test_comfyui_available()
+        test_comfyui_templating()
         test_comfyui()
         test_openai()
         test_gemini_keys()

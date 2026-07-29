@@ -56,14 +56,59 @@ model = "gemini-2.5-flash-image"
 # key = "..."
 
 # --- backend: comfyui (local, free per image, full style control).
-# Export your workflow in API format (Workflow -> Export (API)) and put
-# the literal token {PROMPT} in the positive-prompt text box. ComfyUI has
-# NO authentication: keep it on localhost or a trusted LAN/tailnet.
+# ComfyUI has NO authentication: keep it on localhost or a trusted
+# LAN/tailnet.
+#
+# workflows/flux2-klein-retro.json ships ready to use. To adapt your own,
+# export it in API format (Workflow -> Export (API)) and put {PROMPT} in
+# the positive-prompt box; the tokens below work anywhere in any node
+# input, and a box holding EXACTLY one token keeps that token's type, so
+# "width": "{WIDTH}" arrives as an integer.
+#
 # [images.comfyui]
 # url = "http://127.0.0.1:8188"
-# workflow = "./comfyui_workflow_api.json"   # relative to this file
+# workflow = "./workflows/flux2-klein-retro.json"  # relative to this file
 # timeout = 300           # seconds; raise on slow GPUs
 # randomize_seed = true   # off = identical prompts return ComfyUI's cache
+# seed = 12345            # pin it to compare prompts; omit to vary
+#
+# {WIDTH}/{HEIGHT} - default 1024x640. Keep the 1.6:1: the C64 frame is
+#   320x200 and imaging.py letterboxes into it, so a square generation
+#   throws a third of the picture away as black bars.
+# width = 1024
+# height = 640
+#
+# {STEPS} {CFG} {SAMPLER} {SCHEDULER} {SHIFT} - sampler settings. The
+#   defaults suit flux-2-klein (8 steps, cfg 1). NOTE cfg = 1 disables
+#   classifier-free guidance, which means the NEGATIVE PROMPT DOES
+#   NOTHING - the style has to live in the positive prompt. That is
+#   normal for a guidance-distilled model, and raising cfg to make the
+#   negative bite usually costs more quality than it buys.
+# steps = 8
+# cfg = 1.0
+#
+# {MODEL} {CLIP} {VAE} - checkpoint filenames as ComfyUI sees them.
+# model = "flux-2-klein-9b-fp8.safetensors"
+#
+# {NEGATIVE} - see the cfg note above before tuning this.
+# negative = "text, watermark, border, blurry"
+#
+# {STYLE} - era styling, and empty by default so that [images].style_prefix
+#   above is the single place style comes from. Set style_prefix = "" if
+#   you move it here instead; setting both applies both.
+#
+#   For a C64 client, style_prefix's built-in text is already right: bold
+#   16-colour, flat areas, strong silhouettes - which is what survives a
+#   160x200 dither. For a Windows 3.11 / DOS client, more detail survives,
+#   so a VGA look pays off:
+#
+# style = "256-color VGA pixel art from a 1993 MS-DOS adventure game, hand-dithered gradients, visible pixels, painted backdrop in the style of Sierra and LucasArts VGA, no text, no UI, no border. Scene: "
+#
+# Anything else your workflow templates, for nodes this proxy has never
+# heard of - {LORA} and {LORA_STRENGTH} here:
+# [images.comfyui.vars]
+# LORA = "c64-art.safetensors"
+# LORA_STRENGTH = "0.8"
 
 # --- backend: fixture (dry runs: always returns this file)
 # [images.fixture]
