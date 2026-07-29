@@ -31,6 +31,8 @@ CAP_RICH_TEXT          = 0x0002  # italic/underline/heading, 64 colours
 CAP_DIB_IMAGES         = 0x0004  # images as 8-bit DIBs (IMG_BEGIN fmt=2)
 CAP_MIDI               = 0x0008  # music as .MID files (MIDI_* frames)
 CAP_STATE_JSON         = 0x0020  # the adventure STATE block, forwarded
+CAP_CHAR_SHEET         = 0x0040  # the static half of the sheet (CHAR_SHEET)
+CAP_MAP_DATA           = 0x0080  # the map as structure (MAP_DATA)
 
 # Reserved, and NOT yet consumed by anything - the phase that will read
 # it is named so the number is not reused meanwhile.
@@ -155,6 +157,19 @@ class ClientProfile:
     # prompt re-injects. Capability-gated like everything with a parser.
     state_json: bool = False
 
+    # The STATIC half of the character sheet - name, race, class, the
+    # rolled ability scores, skills, spells, starting kit - as depth-1
+    # JSON (CHAR_SHEET frames). chargen.py has always rolled these and
+    # then flattened them into prose for the system prompt; a client with
+    # a sheet window can be told the structure instead, and then race and
+    # class come from the dice rather than from the narrator's memory.
+    char_sheet: bool = False
+
+    # The adventure map as structure rather than as the ASCII art /print
+    # and the C64 get: grid coordinates, room flags and edges (MAP_DATA
+    # frames), for a client that draws its own.
+    map_data: bool = False
+
     # Colour name -> wire slot.
     palette: Dict[str, int] = field(default_factory=lambda: PALETTE_C64)
 
@@ -166,13 +181,19 @@ class ClientProfile:
 
 C64 = ClientProfile()
 
-# What a 1993 PC's pictures should look like. 640x400 in 256 colours is
-# what the client-side DIB actually is, so the prompt asks for art that
-# is honest at that resolution rather than a downsampled oil painting.
+# What a 1993 PC's pictures should look like. The client-side DIB is
+# 320x200 in a fixed 8-bit palette (imaging.convert_to_dib8), so the
+# prompt asks for art that is honest at that resolution rather than a
+# downsampled oil painting: the converter can take fidelity away, but it
+# cannot put hard edges back into something airbrushed. The named games
+# are all 1991-93 VGA and all things an image model has actually seen.
 VGA_STYLE = (
-    "256-color VGA pixel art from a 1993 MS-DOS adventure game, "
-    "hand-dithered gradients, visible pixels, painted backdrop in the "
-    "style of Sierra and LucasArts VGA, no text, no UI, no border. "
+    "320x200 256-color VGA pixel art, hand-drawn for a 1993 MS-DOS "
+    "adventure game in the style of Monkey Island 2, Indiana Jones and "
+    "the Fate of Atlantis, King's Quest VI. Visible chunky pixels, hard "
+    "aliased edges, ordered dithering in the gradients, flat painted "
+    "backdrop, no anti-aliasing, no soft focus, no depth of field, no "
+    "film grain, no photographic lighting. No text, no UI, no border. "
     "Scene: ")
 
 WIN16 = ClientProfile(
@@ -254,6 +275,8 @@ def from_hello(payload: bytes):
         # that is not a C64 - see above).
         music_fmt='midi' if caps & CAP_MIDI else base.music_fmt,
         state_json=bool(caps & CAP_STATE_JSON),
+        char_sheet=bool(caps & CAP_CHAR_SHEET),
+        map_data=bool(caps & CAP_MAP_DATA),
         image_style=base.image_style,
         # The palette follows the CAPABILITY, never the table entry. A
         # win16 build that predates rich text still matches the win16

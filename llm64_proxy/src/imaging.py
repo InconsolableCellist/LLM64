@@ -433,29 +433,107 @@ def render_preview(bitmap, matrix):
 # (IMG_BEGIN fmt=2), and saving it to disk client-side is nothing but
 # prepending a BITMAPFILEHEADER.
 
-DIB_MAX_W, DIB_MAX_H = 640, 400
+DIB_MAX_W, DIB_MAX_H = 320, 200
+
+# The palette a 1993 PC actually drew with. An adaptive median-cut
+# palette fitted to each image is why the Windows pictures looked like
+# downsampled modern paintings and not like period art: when the palette
+# is chosen FOR the picture there is nothing to dither, so a diffusion
+# model's smooth gradients survive intact. A FIXED palette plus error
+# diffusion is what every DOS-era converter did instead, and the dither
+# pattern is most of what the eye reads as "1993".
+#
+# The table is the 6x6x6 RGB cube - the halftone palette Windows itself
+# synthesised for 8-bit displays - plus a 16-step grey ramp for skies and
+# stone, plus the 16 EGA/VGA entries so period-bright primaries land
+# exactly instead of near-miss. 236 colours; the rest of the 256-entry
+# table is padding, because the DIB header says 256 and the client's
+# StretchDIBits reads a fixed 1024-byte colour table.
+_CUBE_LEVELS = (0, 51, 102, 153, 204, 255)
+_EGA16 = [
+    (0x00, 0x00, 0x00), (0x00, 0x00, 0xAA), (0x00, 0xAA, 0x00),
+    (0x00, 0xAA, 0xAA), (0xAA, 0x00, 0x00), (0xAA, 0x00, 0xAA),
+    (0xAA, 0x55, 0x00), (0xAA, 0xAA, 0xAA), (0x55, 0x55, 0x55),
+    (0x55, 0x55, 0xFF), (0x55, 0xFF, 0x55), (0x55, 0xFF, 0xFF),
+    (0xFF, 0x55, 0x55), (0xFF, 0x55, 0xFF), (0xFF, 0xFF, 0x55),
+    (0xFF, 0xFF, 0xFF),
+]
+_period_pal_img = None
 
 
-def convert_to_dib8(img, max_w=DIB_MAX_W, max_h=DIB_MAX_H):
+def period_palette():
+    """The fixed 8-bit palette, as a list of (r, g, b)."""
+    cols = [(r, g, b)
+            for r in _CUBE_LEVELS
+            for g in _CUBE_LEVELS
+            for b in _CUBE_LEVELS]
+    seen = set(cols)
+    for i in range(16):
+        v = round(i * 255 / 15)
+        if (v, v, v) not in seen:
+            seen.add((v, v, v))
+            cols.append((v, v, v))
+    for c in _EGA16:
+        if c not in seen:
+            seen.add(c)
+            cols.append(c)
+    return cols[:256]
+
+
+def _period_palette_image():
+    """A 'P' image carrying that palette, which is how Pillow is told to
+    quantize against a palette it did not choose. Cached: building it per
+    picture is pointless, and quantize() only reads it."""
+    global _period_pal_img
+    if _period_pal_img is None:
+        cols = period_palette()
+        flat = [v for c in cols for v in c]
+        flat += flat[-3:] * (256 - len(cols))   # padding, never selected
+        img = Image.new("P", (1, 1))
+        img.putpalette(flat[:768])
+        _period_pal_img = img
+    return _period_pal_img
+
+
+def convert_to_dib8(img, max_w=DIB_MAX_W, max_h=DIB_MAX_H, period=True):
     """PIL image -> (packed 8-bit DIB bytes, width, height).
 
-    Scaled down to fit max_w x max_h (never up), quantized to 256
-    colours with error diffusion. No letterboxing: the client aspect-fits
-    at paint time, so baking bars in would only waste wire bytes. The
-    default 640x400 is the era's resolution, a quarter megabyte at
-    worst - a real 486 has to hold this in its global heap - and an
-    exact 0.625 scale of the generator's 1024x640 frame.
+    Scaled down to fit max_w x max_h (never up). No letterboxing: the
+    client aspect-fits at paint time, so baking bars in would only waste
+    wire bytes.
+
+    `period` is the 1993 treatment: the levels crunch the C64 path has
+    always had, then a dither against the fixed palette above instead of
+    an adaptive one. Off gives the old behaviour - a clean adaptive
+    quantize, no dither, which is what "high fidelity" looked like.
+
+    320x200 is Mode 13h, the resolution the VGA art this is imitating was
+    drawn at, and the client upscales it with pixel replication - which is
+    the chunky look, for free. It is also 65 KB on the wire rather than
+    160 KB, and a real 486 has to hold it in its global heap.
     """
     import struct
 
     img = trim_border(img.convert("RGB"))
+    if period:
+        # The same stretch the C64 gets (auto_levels): a fixed palette
+        # needs the picture to reach for its extremes, or every entry it
+        # lands on is a muddy mid-tone.
+        img = auto_levels(img)
     scale = min(max_w / img.width, max_h / img.height, 1.0)
     w = max(1, round(img.width * scale))
     h = max(1, round(img.height * scale))
     if (w, h) != img.size:
         img = img.resize((w, h), Image.LANCZOS)
 
-    q = img.quantize(colors=256)        # median cut + Floyd-Steinberg
+    if period:
+        q = img.quantize(palette=_period_palette_image(),
+                         dither=Image.Dither.FLOYDSTEINBERG)
+    else:
+        # Adaptive median cut. Pillow ignores `dither` unless a palette
+        # is given, so this really is undithered - the old behaviour,
+        # whatever its docstring used to claim.
+        q = img.quantize(colors=256)
     pal = q.getpalette() or []
     pal = (pal + [0] * 768)[:768]       # always a full 256-entry table
 

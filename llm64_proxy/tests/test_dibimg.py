@@ -18,7 +18,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PIL import Image
 
-from src.imaging import convert_to_dib8
+from src.imaging import (convert_to_dib8, period_palette, auto_levels,
+                         trim_border)
 from src.images import ImageService, DEFAULT_STYLE_PREFIX
 from src.profiles import (from_hello, CAP_DIB_IMAGES, CAP_RICH_TEXT,
                           VGA_STYLE, WIN16, C64)
@@ -42,7 +43,7 @@ for x in range(120):
         src.putpixel((1023 - x, 639 - y), (30, 250, 30))  # bottom-right
 
 dib, w, h = convert_to_dib8(src)
-check("1024x640 scales to the exact era frame", (w, h), (640, 400))
+check("1024x640 scales to the exact era frame", (w, h), (320, 200))
 
 hdr = struct.unpack("<IiiHHIIiiII", dib[:40])
 check("biSize", hdr[0], 40)
@@ -78,6 +79,61 @@ for y in range(20):
 d2, w2, h2 = convert_to_dib8(small)
 check("no upscale", (w2, h2), (37, 20))
 check("odd width pads to 4", len(d2), 40 + 1024 + 40 * 20)
+
+# --- the 1993 treatment -----------------------------------------------
+#
+# What makes the picture read as period art rather than as a downsampled
+# modern painting: a FIXED palette (so there is something to dither
+# against) and the dither itself. The proof is in the colour table, which
+# is the same table for every picture in period mode and a per-image one
+# without it.
+
+
+def table_colours(d):
+    return [tuple(d[40 + i * 4:40 + i * 4 + 3]) for i in range(256)]
+
+
+grad = Image.new("RGB", (256, 160))
+for y in range(160):
+    for x in range(256):
+        grad.putpixel((x, y), (x, 128, 255 - x))
+
+dp, _, _ = convert_to_dib8(grad, period=True)
+dc, _, _ = convert_to_dib8(grad, period=False)
+check("the period table is the fixed palette, not this image's",
+      table_colours(dp) == table_colours(convert_to_dib8(
+          src, period=True)[0]), True)
+check("...and the clean one is chosen per image",
+      table_colours(dc) == table_colours(convert_to_dib8(
+          src, period=False)[0]), False)
+
+# And the dither itself is on. Compared against the same fixed palette
+# applied with NO error diffusion: a nearest-colour mapping is what the
+# smooth ramp would collapse to, so a large fraction of pixels differing
+# from it is the diffusion doing its work. (Counting colour transitions
+# along a row does not prove this - a coarse palette produces bands
+# either way.)
+ref = Image.new("P", (1, 1))
+ref.putpalette([v for c in period_palette() for v in c]
+               + [0] * (768 - 3 * len(period_palette())))
+plain = auto_levels(trim_border(grad.convert("RGB")))
+plain = plain.resize((85, 160), Image.LANCZOS).quantize(
+    palette=ref, dither=Image.Dither.NONE).tobytes()
+dithered = dp[40 + 1024:]
+stride_p = (85 + 3) & ~3
+got = b"".join(dithered[y * stride_p:y * stride_p + 85]
+               for y in range(159, -1, -1))
+differing = sum(1 for a, b in zip(got, plain) if a != b)
+check("the period path diffuses error rather than snapping",
+      differing > len(plain) // 10, True)
+
+# The palette is a wire contract of its own: a client reads 256 entries
+# whatever we put in them.
+check("the fixed palette fits the table", len(period_palette()) <= 256,
+      True)
+check("black and white are both in it",
+      ((0, 0, 0) in period_palette(), (255, 255, 255) in period_palette()),
+      (True, True))
 
 # --- profile capability plumbing --------------------------------------
 

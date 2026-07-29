@@ -60,10 +60,15 @@ DEFAULT_STYLE_PREFIX = (
 
 class ImageService:
     def __init__(self, data_dir: Path, mode: str = "ask", backend=None,
-                 style_prefix: str = None):
+                 style_prefix: str = None, dib_period: bool = True):
         self.dir = Path(data_dir) / "images"
         self.mode = mode
         self.backend = backend
+        # The 1993 treatment on the Windows client's DIBs: 320x200, the
+        # levels crunch, and a dither against a fixed VGA palette
+        # (imaging.convert_to_dib8). [images] dib_style = "clean" turns it
+        # off for an operator who wants the generator's own fidelity.
+        self.dib_period = dib_period
         # None means "unset" (use the default); "" is a real choice.
         # An operator who set one keeps it for EVERY client - it beats
         # the per-profile style, so _configured has to remember which
@@ -102,7 +107,7 @@ class ImageService:
         from .imaging import convert_to_dib8
         from PIL import Image
         with Image.open(self.dir / f"{stem}.png") as img:
-            return convert_to_dib8(img)
+            return convert_to_dib8(img, period=self.dib_period)
 
     def prompt_snippet(self) -> str:
         """Instruction block appended to the adventure system prompt."""
