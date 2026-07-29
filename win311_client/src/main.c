@@ -2033,6 +2033,10 @@ static void do_connect(void)
     }
 }
 
+/* Input history lives with the editor keys (EditProc, further down);
+   sending is what records a line into it. */
+static void hist_push(const char *text);
+
 static void send_input(void)
 {
     char text[512];
@@ -2044,6 +2048,7 @@ static void send_input(void)
     if (n <= 0)
         return;
     text[n] = '\0';
+    hist_push(text);                /* C-p brings it back (EditProc) */
     SetWindowText(g_input, "");
 
     if (net_state() != NET_UP) {
@@ -2128,19 +2133,177 @@ static HWND pane_create(HWND parent, View *v)
     return p;
 }
 
-/* The input box is a stock EDIT control; subclassing is how it learns
-   that Return means send. */
+/* --- the input line's emacs fingers --------------------------------
+
+   Parity with the C64's editor: C-b/f/a/e move, M-b/f move by word,
+   C-d/k and M-d delete (C-h arrives as 0x08 and the stock EDIT already
+   backspaces on it), and C-p/C-n walk the input history - the one
+   meaning those keys can have on a single-line box. Control letters
+   arrive as WM_CHAR 1..26; the meta keys arrive as WM_SYSCHAR, and
+   swallowing those costs Alt+F's menu while the input has focus - F10
+   still reaches the menu bar, and emacs fingers were the point. */
+
+#define HIST_N   16
+#define HIST_LEN 256
+
+static char g_hist[HIST_N][HIST_LEN];
+static int  g_hist_count;
+static int  g_hist_browse = -1;     /* -1 = editing a fresh line */
+static char g_hist_stash[HIST_LEN]; /* the fresh line, while browsing */
+
+static void hist_push(const char *text)
+{
+    int i;
+
+    g_hist_browse = -1;
+    if (!text[0])
+        return;
+    /* Repeating the last line must not fill the ring with copies. */
+    if (g_hist_count && lstrcmp(g_hist[0], text) == 0)
+        return;
+    for (i = (g_hist_count < HIST_N ? g_hist_count : HIST_N - 1);
+         i > 0; i--)
+        lstrcpy(g_hist[i], g_hist[i - 1]);
+    lstrcpyn(g_hist[0], text, HIST_LEN - 1);
+    g_hist[0][HIST_LEN - 1] = '\0';
+    if (g_hist_count < HIST_N)
+        g_hist_count++;
+}
+
+static int edit_pos(HWND e)
+{
+    return (int)HIWORD(SendMessage(e, EM_GETSEL, 0, 0L));
+}
+
+static void edit_setpos(HWND e, int pos)
+{
+    SendMessage(e, EM_SETSEL, 0, MAKELONG(pos, pos));
+}
+
+static void edit_cut(HWND e, int from, int to)
+{
+    SendMessage(e, EM_SETSEL, 0, MAKELONG(from, to));
+    SendMessage(e, EM_REPLACESEL, 0, (LONG)(LPSTR)"");
+}
+
+static int is_wordch(char c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z')
+        || (c >= 'a' && c <= 'z');
+}
+
+static int word_left(const char *t, int pos)
+{
+    while (pos > 0 && !is_wordch(t[pos - 1]))
+        pos--;
+    while (pos > 0 && is_wordch(t[pos - 1]))
+        pos--;
+    return pos;
+}
+
+static int word_right(const char *t, int n, int pos)
+{
+    while (pos < n && !is_wordch(t[pos]))
+        pos++;
+    while (pos < n && is_wordch(t[pos]))
+        pos++;
+    return pos;
+}
+
+static void hist_recall(HWND e, int older)
+{
+    if (!g_hist_count)
+        return;
+    if (older) {
+        if (g_hist_browse + 1 >= g_hist_count)
+            return;                 /* already at the oldest */
+        if (g_hist_browse < 0)
+            GetWindowText(e, g_hist_stash, sizeof(g_hist_stash) - 1);
+        g_hist_browse++;
+    } else {
+        if (g_hist_browse < 0)
+            return;                 /* already on the fresh line */
+        g_hist_browse--;
+    }
+    SetWindowText(e, g_hist_browse < 0 ? g_hist_stash
+                                       : g_hist[g_hist_browse]);
+    edit_setpos(e, GetWindowTextLength(e));
+}
+
 long FAR PASCAL _export EditProc(HWND hwnd, UINT msg, UINT wParam,
                                  LONG lParam)
 {
-    if (msg == WM_CHAR && wParam == VK_RETURN) {
-        send_input();
-        return 0;
-    }
-    if (msg == WM_KEYDOWN && (wParam == VK_PRIOR || wParam == VK_NEXT)) {
-        SendMessage(g_conv_view.pane, WM_VSCROLL,
-                    wParam == VK_PRIOR ? SB_PAGEUP : SB_PAGEDOWN, 0L);
-        return 0;
+    char t[512];
+    int pos, n;
+
+    switch (msg) {
+    case WM_CHAR:
+        switch (wParam) {
+        case VK_RETURN:
+            send_input();
+            return 0;
+        case 1:                     /* C-a: line start */
+            edit_setpos(hwnd, 0);
+            return 0;
+        case 5:                     /* C-e: line end */
+            edit_setpos(hwnd, GetWindowTextLength(hwnd));
+            return 0;
+        case 2:                     /* C-b: back a char */
+            pos = edit_pos(hwnd);
+            if (pos > 0)
+                edit_setpos(hwnd, pos - 1);
+            return 0;
+        case 6:                     /* C-f: forward a char */
+            pos = edit_pos(hwnd);
+            if (pos < GetWindowTextLength(hwnd))
+                edit_setpos(hwnd, pos + 1);
+            return 0;
+        case 4:                     /* C-d: delete right */
+            pos = edit_pos(hwnd);
+            if (pos < GetWindowTextLength(hwnd))
+                edit_cut(hwnd, pos, pos + 1);
+            return 0;
+        case 11:                    /* C-k: kill to end of line */
+            pos = edit_pos(hwnd);
+            n = GetWindowTextLength(hwnd);
+            if (pos < n)
+                edit_cut(hwnd, pos, n);
+            return 0;
+        case 16:                    /* C-p: an older line */
+            hist_recall(hwnd, 1);
+            return 0;
+        case 14:                    /* C-n: back toward the fresh one */
+            hist_recall(hwnd, 0);
+            return 0;
+        }
+        break;
+
+    case WM_SYSCHAR:
+        switch (wParam) {
+        case 'b': case 'B':         /* M-b: back a word */
+            GetWindowText(hwnd, t, sizeof(t) - 1);
+            edit_setpos(hwnd, word_left(t, edit_pos(hwnd)));
+            return 0;
+        case 'f': case 'F':         /* M-f: forward a word */
+            n = GetWindowText(hwnd, t, sizeof(t) - 1);
+            edit_setpos(hwnd, word_right(t, n, edit_pos(hwnd)));
+            return 0;
+        case 'd': case 'D':         /* M-d: delete the word ahead */
+            n = GetWindowText(hwnd, t, sizeof(t) - 1);
+            pos = edit_pos(hwnd);
+            if (pos < n)
+                edit_cut(hwnd, pos, word_right(t, n, pos));
+            return 0;
+        }
+        break;
+
+    case WM_KEYDOWN:
+        if (wParam == VK_PRIOR || wParam == VK_NEXT) {
+            SendMessage(g_conv_view.pane, WM_VSCROLL,
+                        wParam == VK_PRIOR ? SB_PAGEUP : SB_PAGEDOWN, 0L);
+            return 0;
+        }
+        break;
     }
     return CallWindowProc(g_old_edit_proc, hwnd, msg, wParam, lParam);
 }

@@ -64,8 +64,19 @@
 #define IDC_BARBASE     1300
 
 /* The launcher strip across the top of the frame: one button per big
-   window, click to open or close it. */
+   window, click to open or close it. The named aliases exist for the
+   Window menu and the Ctrl+1..6 accelerators, which toggle the same
+   windows through the same WM_COMMAND ids the buttons use - one
+   handler, three ways in. (These sit above IDM_FIRSTCHILD on purpose:
+   the frame's handler consumes them before DefFrameProc could mistake
+   them for Window-menu child picks.) */
 #define IDC_LAUNCHBASE  1500
+#define IDM_TOGCONV     (IDC_LAUNCHBASE + 0)
+#define IDM_TOGPIC      (IDC_LAUNCHBASE + 1)
+#define IDM_TOGACT      (IDC_LAUNCHBASE + 2)
+#define IDM_TOGMUS      (IDC_LAUNCHBASE + 3)
+#define IDM_TOGCHR      (IDC_LAUNCHBASE + 4)
+#define IDM_TOGINV      (IDC_LAUNCHBASE + 5)
 
 /* The Music window's playback controls. */
 #define IDC_MUSBASE     1600
