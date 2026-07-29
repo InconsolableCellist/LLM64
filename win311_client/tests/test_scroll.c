@@ -42,9 +42,13 @@ static void render(const Scrollback *sb, char *out, unsigned cap)
     if (!sb_view(sb, 0, &v))
         return;
     while (sb_view_next(&v, &r)) {
-        for (i = 0; i < r.len && n + 2 < cap; i++) {
-            if (!sb_is_marker((unsigned char)r.text[i]))
-                out[n++] = r.text[i];
+        for (i = 0; i < r.len && n + 2 < cap; ) {
+            unsigned m = sb_marker_len(r.text + i, r.len - i);
+            if (m) {
+                i += m;         /* operand bytes are not text either */
+                continue;
+            }
+            out[n++] = r.text[i++];
         }
         if (n + 2 < cap)
             out[n++] = ' ';
@@ -77,9 +81,15 @@ static unsigned widest(const Scrollback *sb)
         return 0;
     while (sb_view_next(&v, &r)) {
         cells = 0;
-        for (i = 0; i < r.len; i++)
-            if (!sb_is_marker((unsigned char)r.text[i]))
+        for (i = 0; i < r.len; ) {
+            unsigned m = sb_marker_len(r.text + i, r.len - i);
+            if (m)
+                i += m;
+            else {
                 cells++;
+                i++;
+            }
+        }
         if (cells > w)
             w = cells;
     }
@@ -246,6 +256,98 @@ int main(void)
             buf[i] != 'd' && buf[i] != 'y' && buf[i] != ' ')
             break;
     check(buf[i] == '\0', "and nothing else is introduced at the seam");
+
+    /* --- rich text (docs/16 section 7) ------------------------------
+       The extended colour marker is THREE bytes, and that is the one
+       thing about it that can break everything else: a wrapper counting
+       bytes instead of markers charges two cells for it, and every line
+       carrying one wraps short. */
+    {
+        char esc[4];
+        unsigned long rows_plain;
+
+        esc[0] = MARK_ESC;
+        esc[1] = MARK_ESC_COLOR;
+        esc[2] = (char)(MARK_ESC_BIAS | 20);    /* gold */
+        esc[3] = '\0';
+
+        sb_clear(&sb);
+        sb_width(&sb, 20);
+        sb_say(&sb, 13, "aaaa bbbb cccc dddd eeee");
+        rows_plain = sb_rows(&sb);
+
+        sb_clear(&sb);
+        sb_say(&sb, 13, "aaaa bbbb cccc dddd eeee");
+        sb_newline(&sb);
+        check(sb_rows(&sb) >= rows_plain, "baseline holds");
+
+        sb_clear(&sb);
+        sb_width(&sb, 20);
+        sb_color(&sb, 13);
+        sb_puts(&sb, esc);
+        sb_puts(&sb, "aaaa bbbb cccc dddd eeee");
+        sb_newline(&sb);
+        check(sb_rows(&sb) == rows_plain,
+              "a 3-byte colour marker costs no cells");
+        check(widest(&sb) <= 20, "and does not overflow the width");
+
+        render(&sb, buf, sizeof(buf));
+        check(strstr(buf, "aaaa bbbb") != NULL, "the text survives it");
+        check(strchr(buf, MARK_ESC_COLOR) == NULL,
+              "and its operand bytes are not text");
+
+        /* The slot has to arrive intact and de-biased. Observed on the
+           SECOND row, because r.color is the state at a row's first cell
+           and a marker sitting at position 0 has not been applied yet -
+           the same reason the one-byte colour case above reads row 1. */
+        sb_clear(&sb);
+        sb_width(&sb, 10);
+        sb_color(&sb, 1);
+        sb_puts(&sb, esc);
+        sb_puts(&sb, "aaaa bbbb cccc");
+        sb_newline(&sb);
+        check(sb_view(&sb, 1, &v) && sb_view_next(&v, &r), "row fetched");
+        check(r.color == 20, "the extended slot decodes to itself");
+        check(r.base == 1, "and the line's base colour is untouched");
+
+        /* A marker cut off by the end of a row is not a marker. Rows are
+           slices of an arena block, so consuming bytes that are not
+           there is a fault and not a stray glyph. */
+        check(sb_marker_len(esc, 3) == MARK_ESC_LEN, "a whole escape is 3");
+        check(sb_marker_len(esc, 2) == 0, "a truncated escape is not one");
+        check(sb_marker_len(esc, 1) == 0, "nor is a lone ESC");
+        check(sb_marker_len("x", 1) == 0, "a glyph is not a marker");
+
+        /* Attributes carry across a wrap exactly as colour does, and
+           they are independent of each other. */
+        sb_clear(&sb);
+        sb_width(&sb, 10);
+        sb_color(&sb, 1);
+        sb_putc(&sb, MARK_ITALIC_ON);
+        sb_putc(&sb, MARK_ULINE_ON);
+        sb_puts(&sb, "aaaa bbbb cccc");
+        sb_newline(&sb);
+        check(sb_view(&sb, 1, &v) && sb_view_next(&v, &r),
+              "the second row exists");
+        check((r.attr & SB_ATTR_ITALIC) != 0, "italic survives the wrap");
+        check((r.attr & SB_ATTR_ULINE) != 0, "so does underline");
+        check((r.attr & SB_ATTR_BOLD) == 0, "and bold was never set");
+
+        /* Turning one off leaves the others standing. */
+        sb_clear(&sb);
+        sb_width(&sb, 40);
+        sb_color(&sb, 1);
+        sb_putc(&sb, MARK_ITALIC_ON);
+        sb_putc(&sb, MARK_BOLD_ON);
+        sb_puts(&sb, "aa");
+        sb_putc(&sb, MARK_ITALIC_OFF);
+        sb_puts(&sb, "bb");
+        sb_newline(&sb);
+        sb_width(&sb, 2);       /* force "bb" onto its own row */
+        check(sb_view(&sb, 1, &v) && sb_view_next(&v, &r), "second row");
+        check((r.attr & SB_ATTR_BOLD) != 0, "bold outlives italic-off");
+        check((r.attr & SB_ATTR_ITALIC) == 0, "and italic is off");
+    }
 
     sb_free(&sb);
     printf("\n%s\n", failures ? "FAILURES" : "all transcript tests passed");

@@ -85,7 +85,14 @@ static HWND     g_frame;    /* the one top-level window */
 static HWND     g_mdi;      /* MDICLIENT, between the frame and its docs */
 static HWND     g_conv;     /* the conversation document */
 static HWND     g_input;    /* the conversation's input box */
-static HFONT    g_font, g_font_bold;
+/* One font per combination of bold, italic and underline. SB_ATTR_BOLD,
+   _ITALIC and _ULINE are 1, 2 and 4, so the attribute bits index this
+   table directly. g_fonts[0] is the plain face and is never NULL; the
+   rest may be, and attr_font degrades rather than substituting the
+   wrong metrics (see fonts_init). */
+#define FONT_VARIANTS 8
+static HFONT    g_fonts[FONT_VARIANTS];
+static HFONT    g_font;                 /* == g_fonts[0], read constantly */
 static int      g_cw = 8, g_ch = 16;    /* character cell */
 static FARPROC  g_old_edit_proc;
 static char     g_status[128] = "Not connected.";
@@ -115,16 +122,32 @@ static int      g_prt_formfeed;
 /* Colour                                                            */
 /* ---------------------------------------------------------------- */
 
+/* Slots the two tables below define: the C64's sixteen, then the
+   extended marker's. A proxy whose colour table has outgrown this
+   client's will send a slot past the end - a cosmetic miss, and not a
+   reason to index off the end of an array (see pal_color). */
+#define PAL_SLOTS  32
+
 /* Pepto's C64 palette, the same table the proxy converts images with
    (llm64_proxy/src/imaging.py). Index 0 is black and never used as a
    text colour. */
-static const COLORREF g_pal_screen[16] = {
+static const COLORREF g_pal_screen[PAL_SLOTS] = {
     RGB(0x00,0x00,0x00), RGB(0xFF,0xFF,0xFF), RGB(0x68,0x37,0x2B),
     RGB(0x70,0xA4,0xB2), RGB(0x6F,0x3D,0x86), RGB(0x58,0x8D,0x43),
     RGB(0x35,0x28,0x79), RGB(0xB8,0xC7,0x6F), RGB(0x6F,0x4F,0x25),
     RGB(0x43,0x39,0x00), RGB(0x9A,0x67,0x59), RGB(0x44,0x44,0x44),
     RGB(0x6C,0x6C,0x6C), RGB(0x9A,0xD2,0x84), RGB(0x6C,0x5E,0xB5),
-    RGB(0x95,0x95,0x95)
+    RGB(0x95,0x95,0x95),
+    /* Slots 16-31: the extended marker's, and the reason CLIENT_HELLO
+       announces rich text. Not on a C64 at any brightness - these are
+       what a VGA can say and a VIC-II cannot. Tuned for the dark
+       background, so they are lit rather than inked. */
+    RGB(0x2E,0xB8,0xB8), RGB(0x50,0x60,0xC8), RGB(0xB8,0x40,0x40),
+    RGB(0xA8,0xB0,0x40), RGB(0xE0,0xB8,0x40), RGB(0xE0,0x50,0x60),
+    RGB(0xC0,0xA8,0xE8), RGB(0x88,0xC8,0xF0), RGB(0xF0,0x90,0xA8),
+    RGB(0x88,0xE0,0xB8), RGB(0xF0,0xA8,0x40), RGB(0x90,0xA0,0xB0),
+    RGB(0xC8,0x80,0xC0), RGB(0xE0,0xD0,0xA0), RGB(0x88,0xA8,0x70),
+    RGB(0xB0,0xB0,0xB8)
 };
 
 /* The same fourteen marker slots as inks on white paper. Not the C64
@@ -134,14 +157,25 @@ static const COLORREF g_pal_screen[16] = {
    *hue* and takes a value that reads as ink. Index 1, the default text
    colour, becomes black; index 13 becomes a dark green, which is what
    makes a reply legible rather than merely present. */
-static const COLORREF g_pal_paper[16] = {
+static const COLORREF g_pal_paper[PAL_SLOTS] = {
     RGB(0x00,0x00,0x00), RGB(0x00,0x00,0x00), RGB(0xB0,0x14,0x14),
     RGB(0x00,0x70,0x80), RGB(0x80,0x20,0x90), RGB(0x1C,0x70,0x20),
     RGB(0x18,0x28,0xA8), RGB(0x80,0x70,0x00), RGB(0xB0,0x5A,0x00),
     RGB(0x70,0x44,0x10), RGB(0xC0,0x40,0x38), RGB(0x50,0x50,0x50),
     RGB(0x68,0x68,0x68), RGB(0x00,0x64,0x1E), RGB(0x40,0x40,0xB0),
-    RGB(0x78,0x78,0x78)
+    RGB(0x78,0x78,0x78),
+    /* The same extended slots as INKS. Same hues as the screen table
+       above, taken down to a value that reads on white - which is the
+       whole reason the wire carries a slot number and not an RGB
+       triple: the proxy cannot know which background this is. */
+    RGB(0x00,0x68,0x70), RGB(0x20,0x30,0x90), RGB(0x80,0x18,0x18),
+    RGB(0x60,0x66,0x10), RGB(0x90,0x6C,0x00), RGB(0xA8,0x18,0x30),
+    RGB(0x60,0x48,0x98), RGB(0x18,0x60,0x90), RGB(0xA8,0x40,0x60),
+    RGB(0x18,0x78,0x58), RGB(0x98,0x60,0x00), RGB(0x48,0x58,0x68),
+    RGB(0x78,0x28,0x70), RGB(0x80,0x68,0x30), RGB(0x40,0x58,0x20),
+    RGB(0x58,0x58,0x60)
 };
+
 
 #define THEME_PAPER   0
 #define THEME_SCREEN  1
@@ -149,6 +183,85 @@ static const COLORREF g_pal_paper[16] = {
 static int       g_theme = THEME_PAPER;
 static const COLORREF *g_pal = g_pal_paper;
 static COLORREF  g_bg = RGB(0xFF,0xFF,0xFF);
+
+/* Clamped, because the slot arrives off the wire. */
+static COLORREF pal_color(unsigned char slot)
+{
+    slot &= SB_COLOR_MASK;
+    return g_pal[slot < PAL_SLOTS ? slot : 1];
+}
+
+/* Build the face for every attribute combination, from the plain one.
+ *
+ * Each variant is MEASURED and kept only if it came back at the same cell
+ * width. That check is not paranoia: the pane is a grid the painter
+ * positions runs on, and a bold or italic face one pixel wider makes a
+ * mixed row drift out of alignment with the rows above it. This is the
+ * same test the bold-only version did, applied to seven faces instead
+ * of one.
+ */
+static void fonts_init(HDC hdc)
+{
+    LOGFONT lf;
+    TEXTMETRIC tm;
+    unsigned i;
+
+    g_fonts[0] = g_font;
+    if (!GetObject(g_font, sizeof(lf), (LPSTR)&lf))
+        return;                 /* no template: everything degrades to plain */
+
+    for (i = 1; i < FONT_VARIANTS; i++) {
+        LOGFONT v = lf;
+        HFONT f;
+
+        v.lfWeight    = (i & SB_ATTR_BOLD) ? FW_BOLD : lf.lfWeight;
+        v.lfItalic    = (i & SB_ATTR_ITALIC) ? 1 : 0;
+        v.lfUnderline = (i & SB_ATTR_ULINE) ? 1 : 0;
+        v.lfWidth     = g_cw;
+
+        f = CreateFontIndirect(&v);
+        if (!f)
+            continue;
+        SelectObject(hdc, f);
+        GetTextMetrics(hdc, &tm);
+        if (tm.tmAveCharWidth == g_cw && tm.tmHeight == g_ch)
+            g_fonts[i] = f;
+        else
+            DeleteObject(f);
+    }
+    SelectObject(hdc, g_font);
+}
+
+/* The face for a run of text.
+ *
+ * A heading is NOT a fourth face. A larger one would be the obvious
+ * reading of it and it cannot be had: the painter positions every run at
+ * a multiple of g_cw and fills to a multiple of g_ch, so a font with
+ * different metrics would slide out of the grid and leave the row it
+ * shares torn. A heading is therefore bold and underlined, which is what
+ * a fixed-pitch 1993 application would have done anyway.
+ *
+ * Degrading rather than substituting: if the italic face could not be
+ * had at the cell width, italic text is drawn upright rather than in
+ * something a column wider. Losing the slant is a cosmetic miss; losing
+ * the grid is a corrupted pane.
+ */
+static HFONT attr_font(unsigned char attr)
+{
+    unsigned idx;
+
+    if (attr & SB_ATTR_HEAD)
+        attr |= SB_ATTR_BOLD | SB_ATTR_ULINE;
+    idx = attr & (SB_ATTR_BOLD | SB_ATTR_ITALIC | SB_ATTR_ULINE);
+
+    if (g_fonts[idx])
+        return g_fonts[idx];
+    if (g_fonts[idx & ~SB_ATTR_ITALIC])
+        return g_fonts[idx & ~SB_ATTR_ITALIC];
+    if (g_fonts[idx & SB_ATTR_BOLD])
+        return g_fonts[idx & SB_ATTR_BOLD];
+    return g_font;
+}
 /* Kept alive because WM_CTLCOLOR returns it rather than copying it: the
    brush has to outlive the message. */
 static HBRUSH    g_bg_brush;
@@ -304,10 +417,10 @@ static void set_status(const char *s)
    which never hold text - are filled separately. */
 static void paint_row(HDC hdc, int x0, int y, int right, const SbRow *r)
 {
-    unsigned i, run_start = 0;
+    unsigned i, run_start = 0, mlen;
     int x = x0, n;
     unsigned char color = r->color;
-    unsigned char bold = r->bold;
+    unsigned char attr = r->attr;
     RECT rr;
 
     if (x0 > 0) {
@@ -320,28 +433,27 @@ static void paint_row(HDC hdc, int x0, int y, int right, const SbRow *r)
        block, and in protected mode reading one past it is a fault, not
        a stray byte. The Phase 0 version got away with this because its
        lines were NUL-terminated arrays. */
-    for (i = 0; i <= r->len; i++) {
-        unsigned char c = (i < r->len) ? (unsigned char)r->text[i] : 0;
-        int is_marker = (i < r->len) && sb_is_marker(c);
+    for (i = 0; i <= r->len; ) {
+        mlen = (i < r->len) ? sb_marker_len(r->text + i, r->len - i) : 0;
 
-        if (i == r->len || is_marker) {
+        if (i == r->len || mlen) {
             n = (int)(i - run_start);
             if (n > 0) {
-                SetTextColor(hdc, g_pal[color & 0x0F]);
-                SelectObject(hdc, bold ? g_font_bold : g_font);
+                SetTextColor(hdc, pal_color(color));
+                SelectObject(hdc, attr_font(attr));
                 rr.left = x; rr.top = y;
                 rr.right = x + n * g_cw; rr.bottom = y + g_ch;
                 ExtTextOut(hdc, x, y, ETO_OPAQUE, &rr,
                            (LPSTR)(r->text + run_start), n, NULL);
                 x += n * g_cw;
             }
-            if (is_marker) {
-                if (c == MARK_CLOSE)         color = r->base;
-                else if (c == MARK_BOLD_ON)  bold = 1;
-                else if (c == MARK_BOLD_OFF) bold = 0;
-                else                         color = (unsigned char)(c & 0x0F);
-            }
-            run_start = i + 1;
+            if (i == r->len)
+                break;
+            sb_mark_apply(r->text + i, mlen, r->base, &color, &attr);
+            i += mlen;
+            run_start = i;
+        } else {
+            i++;
         }
     }
 
@@ -459,6 +571,45 @@ static void send_text_frame(unsigned char type, const char *text)
     if (len > WIRE_MAX_PAYLOAD)
         return;
     send_frame(type, (const unsigned char *)text, len);
+}
+
+/* What this build can render. Kept as a named constant next to the
+   sender so the two can never drift: the day the painter learns the
+   rich markers, this is the line that changes with it. */
+#define OUR_CAPS  (CAP_ZERO_WIDTH_MARKERS | CAP_RICH_TEXT)
+
+/* Introduce ourselves, before anything that could produce text.
+ *
+ * This is what stops the proxy treating us as a C64, and the first thing
+ * it buys is correct SPACING. A C64's marker occupies a screen column,
+ * so the proxy swallows the space beside every colour tag to keep the
+ * line the same length; our painter draws a marker as nothing at all, so
+ * that swallowed space is simply missing - "You see asteel doorahead."
+ * CAP_ZERO_WIDTH_MARKERS is the whole fix.
+ *
+ * Fire-and-forget: there is no reply, matching SET_BAUD. Sent on every
+ * connect, so a reconnect through Settings > Server re-announces.
+ */
+static void send_hello(void)
+{
+    unsigned char p[16];
+    int cols = g_conv ? view_cols(&g_conv_view) : 0;
+
+    /* The pane is resizable, so the width is a runtime fact rather than
+       a property of the machine. Zero means "use your default" and is
+       the honest answer before the first WM_SIZE. */
+    if (cols < 0 || cols > 255)
+        cols = 0;
+
+    p[0] = HELLO_VERSION;
+    p[1] = (unsigned char)cols;
+    p[2] = (unsigned char)(WIRE_MAX_PAYLOAD & 0xFF);
+    p[3] = (unsigned char)((WIRE_MAX_PAYLOAD >> 8) & 0xFF);
+    p[4] = (unsigned char)(OUR_CAPS & 0xFF);
+    p[5] = (unsigned char)((OUR_CAPS >> 8) & 0xFF);
+    p[6] = 5;
+    p[7] = 'w'; p[8] = 'i'; p[9] = 'n'; p[10] = '1'; p[11] = '6';
+    send_frame(MSG_CLIENT_HELLO, p, 12);
 }
 
 /* ---------------------------------------------------------------- */
@@ -1417,7 +1568,6 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
 {
     char err[128];
     TEXTMETRIC tm;
-    LOGFONT lf;
     HDC hdc;
     CLIENTCREATESTRUCT ccs;
 
@@ -1444,27 +1594,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         GetTextMetrics(hdc, &tm);
         g_cw = tm.tmAveCharWidth;
         g_ch = tm.tmHeight;
-
-        /* A bold face for the proxy's bold markers. It has to keep the
-           cell width or the pane stops being a grid, so ask for the
-           measured width explicitly and check we got it. */
-        g_font_bold = g_font;
-        if (GetObject(g_font, sizeof(lf), (LPSTR)&lf)) {
-            HFONT f;
-            lf.lfWeight = FW_BOLD;
-            lf.lfWidth  = g_cw;
-            f = CreateFontIndirect(&lf);
-            if (f) {
-                SelectObject(hdc, f);
-                GetTextMetrics(hdc, &tm);
-                if (tm.tmAveCharWidth == g_cw)
-                    g_font_bold = f;
-                else
-                    DeleteObject(f);
-                SelectObject(hdc, g_font);
-                GetTextMetrics(hdc, &tm);
-            }
-        }
+        fonts_init(hdc);
         ReleaseDC(hwnd, hdc);
 
         /* The MDI client owns the documents. It wants the Window menu
@@ -1509,6 +1639,10 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         if (event == NET_EV_CONNECT) {
             if (net_state() == NET_UP) {
                 set_status("Connected. Pinging...");
+                /* First frame on the wire: everything the proxy sends
+                   after it is shaped for this machine rather than for a
+                   6510 (see send_hello). */
+                send_hello();
                 send_frame(MSG_PING, NULL, 0);
                 /* Fetch the menu now so F1 has something in it. */
                 send_frame(MSG_GET_MENU, NULL, 0);
@@ -1623,8 +1757,14 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
     case WM_DESTROY: {
         int i;
         net_shutdown();
-        if (g_font_bold && g_font_bold != g_font)
-            DeleteObject(g_font_bold);
+        /* From 1: g_fonts[0] is the stock fixed font and is not ours
+           to delete. */
+        {
+            unsigned i;
+            for (i = 1; i < FONT_VARIANTS; i++)
+                if (g_fonts[i])
+                    DeleteObject(g_fonts[i]);
+        }
         if (g_bg_brush)
             DeleteObject(g_bg_brush);
         for (i = 0; i < MAX_PAPER; i++)

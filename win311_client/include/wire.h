@@ -36,6 +36,7 @@
 #define MSG_GET_NOWPLAYING      0x3C
 #define MSG_FAV_TUNE            0x3D
 #define MSG_SET_BAUD            0x3E
+#define MSG_CLIENT_HELLO        0x3F
 #define MSG_ACK                 0x40
 #define MSG_NAK                 0x41
 
@@ -72,7 +73,47 @@
 #define MARK_CLOSE       0x01
 #define MARK_BOLD_ON     0x02
 #define MARK_BOLD_OFF    0x03
-#define MARK_COLOR_BASE  0x10   /* 0x10|c, c = 1..14 */
+#define MARK_COLOR_BASE  0x10   /* 0x10|c, c = 1..15 */
+
+/* Rich text: only ever sent to a client that asked for it in
+   CLIENT_HELLO (see below). A C64 has one face, so these do not exist
+   on the wire to it - the proxy strips the tags instead. */
+#define MARK_ITALIC_ON   0x04
+#define MARK_ITALIC_OFF  0x05
+#define MARK_ULINE_ON    0x06
+#define MARK_ULINE_OFF   0x07
+#define MARK_HEAD_ON     0x0E
+#define MARK_HEAD_OFF    0x0F
+
+/* Colour past the fifteen the one-byte marker can hold:
+
+       0x1B 'C' (0x40 | slot)        slot 0..63
+
+   Three bytes, and the operand is biased into 0x40-0x7F so it can never
+   be mistaken for a NUL, a newline, or another marker - which is what
+   lets the scanner resynchronise on any byte in the stream. */
+#define MARK_ESC         0x1B
+#define MARK_ESC_COLOR   0x43   /* 'C' */
+#define MARK_ESC_BIAS    0x40
+#define MARK_ESC_LEN     3
+
+/* CLIENT_HELLO payload (llm64_proxy/src/profiles.py), all little-endian:
+
+       0     hello version (1)
+       1     text width in columns, 0 = unknown
+       2-3   the largest payload our frame buffer can hold
+       4-5   capability bits
+       6     profile name length
+       7..   profile name, ASCII
+
+   Capability bits are a WIRE CONTRACT: never renumber one, because a
+   proxy built later still has to read a client built today. Announce
+   only what this build can actually RENDER - claiming rich text before
+   the painter handles it makes the proxy send markers that would print
+   as literal characters. */
+#define HELLO_VERSION           1
+#define CAP_ZERO_WIDTH_MARKERS  0x0001  /* markers occupy no cell */
+#define CAP_RICH_TEXT           0x0002  /* italic/underline/head, 64 colours */
 
 enum wire_state {
     WS_SYNC = 0,
