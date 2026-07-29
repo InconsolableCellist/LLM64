@@ -398,6 +398,97 @@ it - so re-running the tagger cannot undo them. A tune the tagger
 guessed at is `source: auto` at runtime; one a person heard is
 `source: manual` with the date.
 
+### Music for the Windows client (MIDI)
+
+The Windows 3.11 client has no SID chip, and a relocated 6502 memory
+image means nothing to a 486. What that machine would actually have
+played in 1993 is a `.MID` file through the MIDI Mapper, so it gets its
+own library, built the same way from a different corpus. The moods are
+the same words - `tools/midi_mood.py` imports its vocabulary from
+`sid_mood.py` rather than copying it - so one narrator can score a
+C64 and a PC in the same adventure and neither is offered a mood it
+cannot play.
+
+Same licence position as the SIDs, for the same reason: every file in
+the corpus is copyrighted by whoever sequenced it, so you build your own
+from your own copy and nothing lands in git.
+
+The corpus is [VGMusic](https://www.vgmusic.com/), which is worth the
+crawl for one specific reason. HVSC gives the tagger a path; a VGMusic
+index page gives it the **game**, a **human-written song title** and the
+**sequencer's name** for every file. "Undertale / An Ending" is evidence;
+`AN_END.MID` is not.
+
+There is no single `midi_build.py` yet - four steps, run from the repo
+root:
+
+```
+# 1. Fetch. ~10k files, 300 MB, roughly an hour of polite crawling.
+#    --platforms picks which of VGMusic's sections you want.
+llm64_proxy/tools/midi_fetch.py
+
+# 2. Scan. Parses every file: exact duration, instruments, and the
+#    filters (too short, drum loops, MT-32-voiced). ~93% survive.
+llm64_proxy/tools/midi_scan.py
+
+# 3. Tag. Same LLM endpoint the SID tagger uses. Resumable.
+#    Two workers, not more - three times out against one llama.cpp.
+llm64_proxy/tools/midi_mood.py llm64_proxy/data/midi/scan.json \
+    --base-url http://localhost:5000/v1 --workers 2 \
+    -o llm64_proxy/data/midi/tags.json
+
+# 4. Assemble the database the proxy reads.
+llm64_proxy/tools/midi_makedb.py llm64_proxy/data/midi/scan.json \
+    llm64_proxy/data/midi/tags.json -o llm64_proxy/data/midi/midi.json
+```
+
+Step 3 is the long pole, exactly as the mood stage is for SIDs: budget
+several hours for a full 10k corpus. `--pilot 48` tags a small batch
+first so you can read the results before committing to the run.
+
+#### Listening to it before you trust it
+
+The tags say what a tune is *for*. Nothing in them says whether the
+result is pleasant, which is what `tools/sid_review.py` exists for on the
+SID side. The MIDI equivalent renders the library to audio:
+
+```
+llm64_proxy/tools/midi_audition.py --per-mood 3
+xdg-open llm64_proxy/data/midi/audition/index.html
+```
+
+That writes a page of clips grouped by mood, with the tags and scores
+beside each one. Nothing on it is hand-picked: it calls
+`MidiLibrary.pick(mood)` - the real selection path, with the real
+weighting and the real iconic damping - so if the audition sounds wrong,
+the library is wrong.
+
+Rendering needs FluidSynth and a General MIDI SoundFont. Any will do;
+on Arch, `soundfont-fluid` puts `FluidR3_GM.sf2` in
+`/usr/share/soundfonts/`. Point the tool at it with `--sf2` if it is not
+under `data/midi/soundfonts/`.
+
+#### Which tune is any good, without a DeepSID
+
+The SID library weights selection by the C64 scene's own published
+opinion (above). Nothing publishes a ranking of game-music MIDI
+sequences, so `midi_makedb.py` computes a `quality` percentile from the
+file itself: velocity spread first (a human performs dynamics, a
+converter emits 100, 100, 100), then how many parts are playing, length,
+and drum balance. Like the SID ranking it is a weighting and never a
+filter. It is a weaker signal than an audience voting at a demoparty,
+and it is honest about being a proxy.
+
+#### Status
+
+The library and the pipeline are built and tested
+(`tests/test_midi_library.py`). The wire side - `MIDI_BEGIN/DATA/END`
+and the client's MCI player - is phase 5 of
+[docs/16](docs/16-windows-311-client.md) and is not done, so the win16
+profile still resolves to no music at runtime. `tools/midi_dualcheck.py`
+shows what both machines *would* hear from one `[[MUSIC:]]` directive,
+against the two real libraries.
+
 ### Printing
 
 `/print` composes the document on the proxy and sends it to the 

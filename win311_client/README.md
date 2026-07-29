@@ -124,6 +124,70 @@ Host=192.168.1.10
 Port=6400
 ```
 
+## Music
+
+**Music here is MIDI, not SID.** The C64 gets a relocated 6502 memory
+image and runs its play routine off the raster IRQ; a 486 has no SID,
+and what this machine would actually have played in 1993 is a `.MID`
+through the MIDI Mapper. The proxy keeps a separate mood-tagged MIDI
+library for exactly this client — building it is documented in the
+[main README](../README.md#music-for-the-windows-client-midi), and the
+mood vocabulary is shared with the SID side, so one narrator can score
+both machines in the same adventure.
+
+**The client does not play it yet.** `MIDI_BEGIN/DATA/END` and the MCI
+player are phase 5 (§6.2 of
+[docs/16](../docs/16-windows-311-client.md)); until then the win16
+profile resolves to no music and the jukebox says so.
+
+### What has been measured, so phase 5 does not have to rediscover it
+
+A standalone Win16 probe (`mciSendString` against the `sequencer`
+device) was built with the same toolchain and run under Wine 11.6:
+
+| question | answer |
+|---|---|
+| does a 16-bit binary see a MIDI device? | yes — `midiOutGetNumDevs()` = 2, device 0 was the running FluidSynth |
+| does `open … type sequencer` work? | yes |
+| does it play? | yes — a 76.8 s tune took **76.67 s** wall clock, so the tempo is right |
+| is `status … length` trustworthy? | **no** |
+
+That last one is a real trap. For a tune that is 76.8 s, MCI reported
+**96,000 ms** — exactly the 500000/400000 ratio between the SMF default
+tempo and the file's own. Wine computes the length at 120 bpm and
+ignores the tempo map. Playback is unaffected, but any progress display
+must take its duration from the proxy's database, never from MCI.
+
+Two more things that constrain the design:
+
+- **`MCI_OPEN` takes a filename.** There is no play-from-memory form, so
+  the client has to spool the streamed bytes to a temp file and
+  `MCI_CLOSE` before overwriting it on the next mood change.
+- **Files are bigger than §6.2 assumed.** It says 5–50 KB; measured over
+  a real 9,301-tune corpus the median is 22 KB but the 99th percentile
+  is 171 KB and the largest is 380 KB. Still one transfer over a socket,
+  but size the buffers for the tail.
+
+### Getting sound out of Wine
+
+Wine routes MIDI to the ALSA sequencer, so it needs something listening
+there. FluidSynth with a General MIDI SoundFont is the easy one:
+
+```sh
+fluidsynth -is -a alsa -m alsa_seq /usr/share/soundfonts/FluidR3_GM.sf2 &
+aconnect -o          # 'FLUID Synth' should appear as a client
+```
+
+Anything else that registers an ALSA sequencer port works the same way,
+which is where the period options live: **Munt** for a real MT-32, an
+OPL3 emulator for Adlib/Sound Blaster FM. On actual 1993 hardware this
+is a Control Panel setting and costs the client nothing either way — the
+choice of synthesis belongs to the machine, not to us.
+
+With no synth running, `midiOutGetNumDevs()` still returns the kernel's
+`Midi Through` port, so "no devices" is not a reliable no-op test; the
+notes simply go nowhere.
+
 ## In a VM
 
 `make floppy` writes a 1.44 MB image holding the EXE and a matching INI:
