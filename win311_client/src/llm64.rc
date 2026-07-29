@@ -11,6 +11,7 @@ BEGIN
         MENUITEM "&Disconnect",           IDM_DISCONNECT
         MENUITEM SEPARATOR
         MENUITEM "&New Conversation\tF2", IDM_NEWCONV
+        MENUITEM "C&onversations...\tF5", IDM_CONVS
         MENUITEM SEPARATOR
         MENUITEM "&Save Picture As...",   IDM_SAVEPIC
         MENUITEM SEPARATOR
@@ -66,6 +67,7 @@ BEGIN
     VK_F1, IDM_MENU,    VIRTKEY
     VK_F2, IDM_NEWCONV, VIRTKEY
     VK_F3, IDM_CANCEL,  VIRTKEY
+    VK_F5, IDM_CONVS,   VIRTKEY
 END
 
 /* The server-fed menu, as a 1993 program would have shown it: a modal
@@ -78,6 +80,25 @@ CAPTION "Menu"
 BEGIN
     LTEXT       "", IDC_MENUTITLE, 10, 6, 240, 9
     PUSHBUTTON  "Close", IDCANCEL, 105, 150, 50, 14
+END
+
+/* The conversation browser: what the C64 does with a full-screen
+   module, done the way 1993 did it - a list box and the verbs down the
+   side. Load is the default button and a double-click; F5 is the same
+   key the C64 uses. The titles arrive server-rendered (a '*' prefix
+   means starred), so the box holds no opinions of its own. */
+LLM64CONVS DIALOG 16, 16, 248, 152
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Conversations"
+BEGIN
+    LISTBOX         IDC_CONVLIST, 8, 8, 164, 136,
+                    LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    DEFPUSHBUTTON   "&Load",          IDC_CONVLOAD, 180, 8,   60, 14
+    PUSHBUTTON      "&New",           IDC_CONVNEW,  180, 26,  60, 14
+    PUSHBUTTON      "&Star / Unstar", IDC_CONVSTAR, 180, 48,  60, 14
+    PUSHBUTTON      "&Delete...",     IDC_CONVDEL,  180, 66,  60, 14
+    PUSHBUTTON      "&More >",        IDC_CONVMORE, 180, 88,  60, 14
+    PUSHBUTTON      "Close",          IDCANCEL,     180, 130, 60, 14
 END
 
 /* Picture behaviour. One checkbox for now, but the box exists so the

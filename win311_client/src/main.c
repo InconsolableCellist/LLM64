@@ -1519,6 +1519,129 @@ static void mid_end(void)
     set_status(msg);
 }
 
+/* ---------------------------------------------------------------- */
+/* Conversations: the browser's wire side                            */
+/* ---------------------------------------------------------------- */
+
+/* The C64 pages through its conversations in a full-screen module
+   (mod_convmgr); here the same four messages feed a dialog. This half
+   is the wire: list frames accumulate into g_convs, a load streams
+   CONVERSATION_DATA into a cleared transcript, and the dialog half
+   (ConvDlgProc, further down with the other dialogs) only ever reads
+   what landed here. */
+
+#define MAX_CONVS 16            /* one server page (LIST_PAGE) */
+#define WM_CONVS_READY (WM_USER + 40)
+
+static struct {
+    unsigned long id;
+    unsigned long stamp;
+    char          title[40];
+} g_convs[MAX_CONVS];
+static int  g_conv_count;
+static int  g_conv_more_pages;  /* another page exists past this one */
+static int  g_conv_page;
+static int  g_conv_waiting;     /* 2 = request sent, 1 = frames landing */
+static HWND g_convdlg;          /* the open dialog, told when list lands */
+
+/* A conversation restore in progress: the transcript was cleared and
+   CONVERSATION_DATA frames are being replayed into it. */
+static int           g_load_active;
+static unsigned char g_load_role = 0xFF;
+
+/* ACKs the ping did not ask for: delete and star answer with a bare
+   ACK, and the default ACK case would announce "link is good" for
+   them. A small courtesy counter keeps the status honest. */
+static int g_ack_quiet;
+
+static void conv_request_page(int page)
+{
+    unsigned char p[1];
+
+    g_conv_waiting = 2;
+    p[0] = (unsigned char)page;
+    send_frame(MSG_LIST_CONVERSATIONS, p, 1);
+}
+
+static void conv_list_frame(const unsigned char *p, unsigned len)
+{
+    unsigned count, more, i = 2, j;
+
+    if (len < 2)
+        return;
+    count = p[0];
+    more  = p[1];
+    if (g_conv_waiting == 2) {      /* first frame of a fresh response */
+        g_conv_count = 0;
+        g_conv_waiting = 1;
+    }
+    while (count-- && i + 9 <= len && g_conv_count < MAX_CONVS) {
+        g_convs[g_conv_count].id =
+            (unsigned long)p[i] | ((unsigned long)p[i + 1] << 8)
+            | ((unsigned long)p[i + 2] << 16)
+            | ((unsigned long)p[i + 3] << 24);
+        g_convs[g_conv_count].stamp =
+            (unsigned long)p[i + 4] | ((unsigned long)p[i + 5] << 8)
+            | ((unsigned long)p[i + 6] << 16)
+            | ((unsigned long)p[i + 7] << 24);
+        i += 8;
+        j = 0;
+        while (i < len && p[i]) {
+            if (j + 1 < sizeof(g_convs[0].title))
+                g_convs[g_conv_count].title[j++] = (char)p[i];
+            i++;
+        }
+        g_convs[g_conv_count].title[j] = '\0';
+        if (i < len)
+            i++;                    /* the NUL */
+        g_conv_count++;
+    }
+    if (!(more & 1)) {              /* response complete */
+        g_conv_more_pages = (more >> 1) & 1;
+        g_conv_waiting = 0;
+        if (g_convdlg)
+            PostMessage(g_convdlg, WM_CONVS_READY, 0, 0L);
+    }
+}
+
+static void conv_data_frame(const unsigned char *p, unsigned len)
+{
+    unsigned more, role, base;
+
+    if (len < 4)
+        return;
+    more = p[1];
+    role = p[2];
+    if (!g_load_active) {
+        /* First frame of the restore: the old transcript makes way. */
+        g_load_active = 1;
+        g_load_role = 0xFF;
+        sb_clear(&g_conv_view.sb);
+    }
+    base = role & 0x7F;
+    if (!(role & 0x80)) {           /* a new block, not a continuation */
+        if (g_load_role != 0xFF) {
+            sb_newline(&g_conv_view.sb);
+            sb_newline(&g_conv_view.sb);
+        }
+        sb_color(&g_conv_view.sb,
+                 base == 0 ? 1 : base == 1 ? 13 : 12);
+        g_load_role = (unsigned char)base;
+    }
+    /* The text is already colorized marker bytes with the proxy's own
+       NUL terminator, exactly like a chat chunk. */
+    sb_puts(&g_conv_view.sb, (const char *)(p + 3));
+    view_touch(&g_conv_view);
+    if (!(more & 1)) {              /* restore complete */
+        g_load_active = 0;
+        sb_newline(&g_conv_view.sb);
+        sb_newline(&g_conv_view.sb);
+        view_touch(&g_conv_view);
+        set_status("Conversation loaded.");
+        input_enable(1);
+    }
+}
+
 static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
 {
     char note[160];
@@ -1560,7 +1683,18 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
         break;
 
     case MSG_ACK:
-        set_status("Proxy answered the ping - link is good.");
+        if (g_ack_quiet > 0)
+            g_ack_quiet--;          /* a delete or a star, not the ping */
+        else
+            set_status("Proxy answered the ping - link is good.");
+        break;
+
+    case MSG_CONVERSATION_LIST:
+        conv_list_frame(p, len);
+        break;
+
+    case MSG_CONVERSATION_DATA:
+        conv_data_frame(p, len);
         break;
 
     case MSG_MENU_LIST:
@@ -2664,6 +2798,161 @@ static void pics_dialog(HWND owner)
     }
 }
 
+/* ---------------------------------------------------------------- */
+/* Conversations: the browser's dialog side                          */
+/* ---------------------------------------------------------------- */
+
+static void conv_fill(HWND dlg)
+{
+    HWND lb = GetDlgItem(dlg, IDC_CONVLIST);
+    int i;
+
+    SendMessage(lb, LB_RESETCONTENT, 0, 0L);
+    if (g_conv_waiting) {
+        SendMessage(lb, LB_ADDSTRING, 0, (LONG)(LPSTR)"(loading...)");
+        return;
+    }
+    if (!g_conv_count) {
+        SendMessage(lb, LB_ADDSTRING, 0,
+                    (LONG)(LPSTR)"(no conversations yet)");
+        return;
+    }
+    for (i = 0; i < g_conv_count; i++)
+        SendMessage(lb, LB_ADDSTRING, 0, (LONG)(LPSTR)g_convs[i].title);
+    SendMessage(lb, LB_SETCURSEL, 0, 0L);
+    /* 'More' pages forward, wrapping home from the last page - the
+       C64's browser walks the same way. */
+    EnableWindow(GetDlgItem(dlg, IDC_CONVMORE),
+                 (g_conv_more_pages || g_conv_page > 0) ? TRUE : FALSE);
+}
+
+/* The selected row's entry, or -1. The placeholder rows above make a
+   selection index only trustworthy when real entries are listed. */
+static int conv_sel(HWND dlg)
+{
+    int i;
+
+    if (g_conv_waiting || !g_conv_count)
+        return -1;
+    i = (int)SendMessage(GetDlgItem(dlg, IDC_CONVLIST),
+                         LB_GETCURSEL, 0, 0L);
+    return (i >= 0 && i < g_conv_count) ? i : -1;
+}
+
+static void conv_send_id(unsigned char type, unsigned long id)
+{
+    unsigned char p[4];
+
+    p[0] = (unsigned char)(id & 0xFF);
+    p[1] = (unsigned char)((id >> 8) & 0xFF);
+    p[2] = (unsigned char)((id >> 16) & 0xFF);
+    p[3] = (unsigned char)((id >> 24) & 0xFF);
+    send_frame(type, p, 4);
+}
+
+BOOL FAR PASCAL _export ConvDlgProc(HWND dlg, UINT msg, UINT wParam,
+                                    LONG lParam)
+{
+    int i;
+    char q[96];
+
+    switch (msg) {
+    case WM_INITDIALOG:
+        g_convdlg = dlg;
+        conv_fill(dlg);
+        return TRUE;
+
+    case WM_CONVS_READY:
+        conv_fill(dlg);
+        return TRUE;
+
+    case WM_COMMAND:
+        /* Double-clicking a row is Load - every 1993 file box agrees. */
+        if (wParam == IDC_CONVLIST && HIWORD(lParam) == LBN_DBLCLK)
+            wParam = IDC_CONVLOAD;
+        switch (wParam) {
+        case IDC_CONVLOAD:
+            i = conv_sel(dlg);
+            if (i < 0)
+                return TRUE;
+            conv_send_id(MSG_LOAD_CONVERSATION, g_convs[i].id);
+            g_ack_quiet++;          /* the load leads with a bare ACK */
+            set_status("Loading conversation...");
+            EndDialog(dlg, 1);
+            return TRUE;
+
+        case IDC_CONVNEW:
+            EndDialog(dlg, 2);      /* the caller owns new_conversation */
+            return TRUE;
+
+        case IDC_CONVSTAR:
+            i = conv_sel(dlg);
+            if (i < 0)
+                return TRUE;
+            conv_send_id(MSG_STAR_CONVERSATION, g_convs[i].id);
+            g_ack_quiet++;
+            /* Re-list so the '*' prefix (the proxy renders it into the
+               title) appears without inventing client-side state. */
+            conv_request_page(g_conv_page);
+            conv_fill(dlg);
+            return TRUE;
+
+        case IDC_CONVDEL:
+            i = conv_sel(dlg);
+            if (i < 0)
+                return TRUE;
+            wsprintf(q, "Delete \"%s\"?\n\nThis cannot be undone.",
+                     (LPSTR)g_convs[i].title);
+            if (MessageBox(dlg, q, "Delete Conversation",
+                           MB_YESNO | MB_ICONQUESTION) != IDYES)
+                return TRUE;
+            conv_send_id(MSG_DELETE_CONVERSATION, g_convs[i].id);
+            g_ack_quiet++;
+            conv_request_page(g_conv_page);
+            conv_fill(dlg);
+            return TRUE;
+
+        case IDC_CONVMORE:
+            g_conv_page = g_conv_more_pages ? g_conv_page + 1 : 0;
+            conv_request_page(g_conv_page);
+            conv_fill(dlg);
+            return TRUE;
+
+        case IDCANCEL:
+            EndDialog(dlg, 0);
+            return TRUE;
+        }
+        break;
+
+    case WM_DESTROY:
+        g_convdlg = NULL;
+        break;
+    }
+    return FALSE;
+}
+
+/* Put the browser up. The list request goes out BEFORE the dialog so
+   the round trip overlaps the window appearing; the frames land in
+   conv_list_frame because the modal loop still dispatches the frame
+   window's socket messages. */
+static int conv_dialog(HWND owner)
+{
+    HINSTANCE inst = (HINSTANCE)GetWindowWord(owner, GWW_HINSTANCE);
+    FARPROC fn;
+    int r;
+
+    if (net_state() != NET_UP) {
+        say(2, "Not connected. Use File > Connect.");
+        return 0;
+    }
+    g_conv_page = 0;
+    conv_request_page(0);
+    fn = MakeProcInstance((FARPROC)ConvDlgProc, inst);
+    r = DialogBox(inst, "LLM64CONVS", owner, (DLGPROC)fn);
+    FreeProcInstance(fn);
+    return r;
+}
+
 BOOL FAR PASCAL _export ServerDlgProc(HWND dlg, UINT msg, UINT wParam,
                                       LONG lParam)
 {
@@ -2778,7 +3067,8 @@ static void menu_run(HWND owner, int idx)
         say(12, "Copying the client disk is a C64 problem.");
         break;
     case 'c':
-        say(12, "The conversation manager is not built yet.");
+        if (conv_dialog(owner) == 2)
+            new_conversation();
         break;
     case 'j':
         say(12, "The jukebox is not built yet - music is MIDI here, "
@@ -3017,6 +3307,11 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
 
         case IDM_PICSET:
             pics_dialog(hwnd);
+            return 0;
+
+        case IDM_CONVS:
+            if (conv_dialog(hwnd) == 2)
+                new_conversation();
             return 0;
 
         case IDM_MENU: {

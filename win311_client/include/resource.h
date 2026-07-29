@@ -32,6 +32,7 @@
 #define IDM_DEFLAYOUT   119
 #define IDM_SAVEPIC     120
 #define IDM_PICSET      121
+#define IDM_CONVS       122
 
 #define IDM_FIRSTCHILD  200
 
@@ -67,5 +68,13 @@
 
 /* The Music window's playback controls. */
 #define IDC_MUSBASE     1600
+
+/* The Conversations browser. */
+#define IDC_CONVLIST    1701
+#define IDC_CONVLOAD    1702
+#define IDC_CONVDEL     1703
+#define IDC_CONVSTAR    1704
+#define IDC_CONVMORE    1705
+#define IDC_CONVNEW     1706
 
 #endif /* RESOURCE_H */
