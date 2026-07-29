@@ -65,6 +65,10 @@ class ImageService:
         self.mode = mode
         self.backend = backend
         # None means "unset" (use the default); "" is a real choice.
+        # An operator who set one keeps it for EVERY client - it beats
+        # the per-profile style, so _configured has to remember which
+        # case this was.
+        self._configured = style_prefix is not None
         self.style_prefix = (DEFAULT_STYLE_PREFIX if style_prefix is None
                              else style_prefix)
         self.logger = logging.getLogger(__name__)
@@ -85,6 +89,20 @@ class ImageService:
         """Where a registered picture's blob lives. Old flat stems
         (conv_epoch) still resolve; new ones carry their folder."""
         return self.dir / f"{stem}.blob"
+
+    async def dib_from_stem(self, stem: str) -> tuple:
+        """The retained original PNG as (packed 8-bit DIB, w, h) for a
+        CAP_DIB_IMAGES client - one generation serves both machines,
+        each converted to what it can display. Raises OSError if the
+        PNG is gone (the caller falls back to the C64 blob, which is
+        registered pictures' one guaranteed artifact)."""
+        return await asyncio.to_thread(self._dib_sync, stem)
+
+    def _dib_sync(self, stem: str):
+        from .imaging import convert_to_dib8
+        from PIL import Image
+        with Image.open(self.dir / f"{stem}.png") as img:
+            return convert_to_dib8(img)
 
     def prompt_snippet(self) -> str:
         """Instruction block appended to the adventure system prompt."""
@@ -110,23 +128,29 @@ class ImageService:
         self._last_auto = time.monotonic()
 
     async def generate_blob(self, prompt: str, conv_id,
-                            caption: str = None, meta: dict = None) -> tuple:
+                            caption: str = None, meta: dict = None,
+                            style: str = None) -> tuple:
         """Generate + convert. Returns (blob bytes, stem, bg color).
         The blob is multicolor: bitmap(8000) + screen(1000) + colram(1000);
         bg travels in the IMG_BEGIN frame. A caption is burned into the
         bottom of the frame. `meta` is the trigger context saved in the
-        JSON sidecar (docs/13). Blocking work (API call, PIL) runs off the
-        event loop."""
+        JSON sidecar (docs/13). `style` is the requesting profile's art
+        prompt (profiles.py); an explicit config style_prefix outranks
+        it, absence of both means the C64 default. Blocking work (API
+        call, PIL) runs off the event loop."""
         return await asyncio.to_thread(self._generate_sync, prompt,
-                                       conv_id, caption, meta)
+                                       conv_id, caption, meta, style)
 
-    def _generate_sync(self, prompt: str, conv_id, caption=None, meta=None):
+    def _generate_sync(self, prompt: str, conv_id, caption=None, meta=None,
+                       style=None):
         from .imaging import convert_to_c64_mc
         from .imagegen import ImageGenError
         from PIL import Image
         import io
 
-        final_prompt = self.style_prefix + prompt
+        prefix = self.style_prefix if self._configured or style is None \
+            else style
+        final_prompt = prefix + prompt
         raw = self.backend.generate(final_prompt, purpose="adventure")
 
         # One folder per conversation, matching conversations/<id>.json.

@@ -13,6 +13,7 @@ from .modes import (Mode, AdventureMode, RoleplayMode, ClaudeMode,
                     CharacterCard, find_cards)
 from .claude_session import ClaudeSession
 from .music import MusicLibrary, MusicDirectiveFilter
+from .midi_library import MidiLibrary
 from .dice import expand as expand_dice
 from .dice import pool as dice_pool
 from .advsetup import (AdventureSetup, STAGES, ACT_QUICK,
@@ -23,8 +24,11 @@ from . import chargen
 from . import printdoc
 from . import printcups
 from . import printpic
-from .scenecomp import compose_question
+from .scenecomp import (compose_question, canon_build_question,
+                        canon_update_question, canon_stale,
+                        parse_canon_reply)
 from .markup import colorize_for_wire, split_safe, UNICODE_TO_ASCII
+from .profiles import C64 as PROFILE_C64, from_hello
 from .markup import prompt_snippet as color_prompt_snippet
 from .images import ImageService
 from .imagegen import make_backend
@@ -47,6 +51,10 @@ class MessageType(IntEnum):
     GET_NOWPLAYING = 0x3C  # '<' - jukebox asks what is playing
     FAV_TUNE = 0x3D  # '=' - toggle favorite on the current tune
     SET_BAUD = 0x3E  # '>' - client's wire rate: 2 bytes LE, nominal/100
+    SET_OPTION = 0x43  # 'C' - [opt][value] session toggle, fire-and-forget
+    # '?' - what kind of machine is on the other end (see profiles.py).
+    # Absence of it means the C64, so an existing client is unaffected.
+    CLIENT_HELLO = 0x3F
     ACK = 0x40  # '@' - was 0x10
     NAK = 0x41  # 'A' - was 0x11
 
@@ -73,7 +81,7 @@ class MessageType(IntEnum):
     #                     title\0 author\0 mood\0 (jukebox module)
     MENU_LIST = 0x5E  # '^' - menu entries: [n][more] then
     #                   [key][label\0][cmd\0] each; cmd "!x" = client-local
-    MUSIC_STOP = 0x61  # 'a' - silence a streamed SID (no ACK)
+    MUSIC_STOP = 0x61  # 'a' - silence whatever music plays (no ACK)
     PRINT_BEGIN = 0x62  # 'b' - [flags][nblocks]; open IEC device 4.
     #                     flags bit0 = business charset (secondary
     #                     address 7), bit1 = form feed before close
@@ -81,6 +89,21 @@ class MessageType(IntEnum):
     #                    the client ACKs each one, and nothing else is
     #                    on the wire while it prints (docs/14 §3)
     PRINT_END = 0x64  # 'd' - close the channel
+    # MIDI music, for a CAP_MIDI client (docs/16 section 6.2). The same
+    # offset-tagged bulk stream as everything else, with fmt=2's 4-byte
+    # offsets: a .MID can pass 64 KB.
+    MIDI_BEGIN = 0x65  # 'e' - [window][len:4][title\0][author\0][mood\0]
+    MIDI_DATA = 0x66  # 'f' - [offset:4][bytes]
+    MIDI_END = 0x67  # 'g' - hand the file to the MIDI Mapper
+    STATE_JSON = 0x68  # 'h' - the normalized [[STATE:]] JSON + NUL, for
+    #                    a CAP_STATE_JSON client's sheet windows
+    PIC_LIST = 0x69  # 'i' - [count] then [n][title\0]: the conversation's
+    #                  pictures, newest first, n = the /pic <n> index.
+    #                  Sent on load/new so the client's browser follows
+    #                  the conversation; empty list clears it.
+    MOOD_LIST = 0x6A  # 'j' - [count] then [mood\0]: the mood vocabulary
+    #                   of the library THIS listener plays from, for a
+    #                   client with a music picker to fill
 
 
 class ProtocolState(IntEnum):
@@ -119,6 +142,16 @@ class ProtocolHandler:
         # announces it via SET_BAUD; falls back to config.wire_baud (the
         # old-client default). Only bulk pacing reads it.
         self._wire_baud = None
+        # What kind of machine is on the other end (see profiles.py).
+        # The C64 until a CLIENT_HELLO says otherwise, which is what
+        # keeps every existing client working unchanged.
+        self.profile = PROFILE_C64
+        self._caps = 0
+        # SET_OPTION room_pics: illustrate every location change in an
+        # adventure. Off until the client turns it on - each picture may
+        # be a paid API call, so the spend is the player's choice.
+        self.room_pics = False
+        self._room_loc = None      # last location a picture was decided for
         # BEGIN handshake event: set when the client ACKs a SID/IMG
         # BEGIN (music silenced, rendering drained - clear to stream)
         self._begin_ack = None
@@ -183,6 +216,14 @@ class ProtocolHandler:
         if self.music.available:
             self.logger.info(
                 f"Music library: {len(self.music.tunes)} tunes")
+        # ...and its MIDI twin for machines with a MIDI Mapper instead
+        # of a SID. Same database shape, same tagging tools; midi.json
+        # is the name the corpus pipeline writes (tools/midi_makedb.py).
+        self.midi = MidiLibrary(
+            Path(self.config.data_dir) / 'midi' / 'midi.json')
+        if self.midi.available:
+            self.logger.info(
+                f"MIDI library: {len(self.midi.tunes)} tunes")
 
         # Scene illustrations (optional: needs Pillow + a configured
         # backend, or the LLM64_IMG_FIXTURE test hook)
@@ -299,8 +340,13 @@ class ProtocolHandler:
                 await self.handle_get_nowplaying()
             elif msg_type == MessageType.FAV_TUNE:
                 await self.handle_fav_tune()
+            elif msg_type == MessageType.CLIENT_HELLO:
+                self.handle_client_hello()
+                await self._send_moods()
             elif msg_type == MessageType.SET_BAUD:
                 self.handle_set_baud()
+            elif msg_type == MessageType.SET_OPTION:
+                self.handle_set_option()
             elif msg_type == MessageType.ACK:
                 self.logger.debug("ACK received")
                 if self._begin_ack is not None \
@@ -376,10 +422,13 @@ class ProtocolHandler:
             self.logger.error(f"Payload too large: {len(payload)}")
             return
         # The CLIENT's buffer is the binding limit: an oversized frame
-        # desyncs its parser (field bug: 1000-char load messages)
-        if len(payload) > 512:
+        # desyncs its parser (field bug: 1000-char load messages). 512
+        # for a C64; a client that told us its own buffer in CLIENT_HELLO
+        # is held to that instead.
+        if len(payload) > self.profile.max_payload:
             self.logger.error(
-                f"Payload {len(payload)} exceeds client buffer (512) - "
+                f"Payload {len(payload)} exceeds client buffer "
+                f"({self.profile.max_payload}) - "
                 f"dropping {msg_type.name} frame")
             return
 
@@ -687,11 +736,20 @@ class ProtocolHandler:
             await self._send_canned("\n".join(lines))
 
         elif cmd == 'music':
-            if not self.music.available:
-                await self._send_canned("No music library on this server.")
+            lib = self._music_lib()
+            if lib is None:
+                await self._send_canned(
+                    "This machine has no way to play the server's "
+                    "music yet.")
+            elif not lib.available:
+                await self._send_canned(
+                    "No music library on this server."
+                    if self.profile.music_fmt == 'sid' else
+                    "No MIDI library on this server yet - it lives in "
+                    "data/midi/ beside the SIDs.")
             elif not arg:
                 await self._send_canned(
-                    "Moods: " + ", ".join(self.music.moods)
+                    "Moods: " + ", ".join(lib.moods)
                     + "\nUse: /music <mood>, /music next for another of "
                       "the same,\n/auto to give the soundtrack back to "
                       "the narrator.")
@@ -713,14 +771,14 @@ class ProtocolHandler:
                             "Nothing is playing. /music <mood> starts "
                             "something.")
                         return
-                tune = self.music.pick(mood)
+                tune = lib.pick(mood)
                 if tune:
                     if arg.lower() != 'next':
                         self._music_manual = True
                         self._manual_notice_sent = False
                     await self._send_canned(
                         f"Playing: {tune['title']} ({tune['author']})")
-                    self._spawn_media(self.send_sid(tune))
+                    self._spawn_media(self._send_tune(tune, mood))
                     self.conv_manager.set_meta('music', {
                         'mood': mood, 'tune': tune['id']})
                     self.conv_manager.save()
@@ -841,8 +899,13 @@ class ProtocolHandler:
         """Give an AdventureMode the directive instructions for whichever
         media services are live on this server."""
         snippet = ''
-        if self.music.available:
-            snippet += self.music.prompt_snippet()
+        # The mood vocabulary offered is the vocabulary of the library
+        # THIS client can hear - a C64 and a Windows box in the same
+        # world may be offered different mood lists, and that is
+        # correct: a directive resolves against the listener's library.
+        lib = self._music_lib()
+        if lib is not None and lib.available:
+            snippet += lib.prompt_snippet()
         if self.images.available:
             snippet += self.images.prompt_snippet()
         # The map is adventure-only: nothing else has a geography to
@@ -853,7 +916,7 @@ class ProtocolHandler:
             snippet += advmap.prompt_snippet()
         # Colour needs no server capability - the client renders it - so
         # it is unconditional, unlike music and images.
-        snippet += color_prompt_snippet()
+        snippet += color_prompt_snippet(self.profile)
         mode.music_snippet = snippet
 
     def _switch_mode(self, mode):
@@ -863,6 +926,8 @@ class ProtocolHandler:
         self._manual_notice_sent = False
         # A parked image suggestion belongs to the old conversation
         self.images.pending_prompt = None
+        # ...as does the room the last picture was decided for
+        self._room_loc = None
         # ...as does the last thing typed: the kickoff turn has no
         # player command, and a stray one must not fill a map direction
         self._last_user_text = ''
@@ -988,9 +1053,58 @@ class ProtocolHandler:
             f"SET_BAUD: pacing bulk to {nominal} baud "
             f"({self.bulk_pace_per_byte*1000:.3f} ms/byte)")
 
+    def handle_client_hello(self):
+        """Client announced what kind of machine it is (CLIENT_HELLO).
+
+        Fire-and-forget, matching SET_BAUD: there is nothing useful to
+        say back, and inventing an ACK here would collide with the one
+        the BEGIN handshake and the flow window already use.
+
+        A malformed hello leaves the C64 profile in place. That is the
+        same outcome as no hello at all, which is the point - a client
+        that cannot introduce itself is served rather than refused.
+        """
+        got = from_hello(bytes(self.payload))
+        if got is None:
+            self.logger.warning(
+                f"CLIENT_HELLO: unusable payload ({len(self.payload)} B), "
+                f"keeping the {self.profile.name} profile")
+            return
+        self.profile, self._caps = got
+        p = self.profile
+        self.logger.info(
+            f"CLIENT_HELLO: {p.name} - {p.text_width} cols, "
+            f"{p.max_payload} B payload, caps {self._caps:#06x} "
+            f"(markers {'occupy a cell' if p.marker_cells else 'zero-width'}"
+            f"{', rich text' if p.rich_text else ''}"
+            f"{'' if p.pace else ', unpaced'})")
+
+    OPT_ROOM_PICS = 1
+
+    def handle_set_option(self):
+        """A session toggle from the client ([opt][value]), fire-and-
+        forget like SET_BAUD. Unknown options are logged and ignored so
+        a newer client degrades gracefully against this proxy."""
+        if len(self.payload) < 2:
+            self.logger.warning("SET_OPTION: short payload, ignored")
+            return
+        opt, val = self.payload[0], self.payload[1]
+        if opt == self.OPT_ROOM_PICS:
+            self.room_pics = bool(val)
+            self.logger.info(
+                f"SET_OPTION: a picture for every location is "
+                f"{'on' if self.room_pics else 'off'}")
+        else:
+            self.logger.info(f"SET_OPTION: unknown option {opt}, ignored")
+
     async def _send_bulk(self, msg_type: MessageType, payload: bytes):
         """Send one bulk frame and sleep out its wire time."""
         await self.send_message(msg_type, payload)
+        # A socket has its own flow control. The pacing exists for a
+        # serial line behind a bridge that drops burst tails, and on
+        # anything else it is only latency.
+        if not self.profile.pace:
+            return
         await asyncio.sleep(self.BULK_PACE_BASE
                             + len(payload) * self.bulk_pace_per_byte)
 
@@ -1022,13 +1136,13 @@ class ProtocolHandler:
         await asyncio.sleep(self.RETRY_DELAY)
         await self.send_sid(tune, is_retry=True)
 
-    async def _resume_tune(self, tune, frames: int):
+    async def _resume_tune(self, tune, frames: int, mood: str = ''):
         """Resume a loaded conversation's soundtrack once the client has
         had time to render the load (a SID streamed into that backlog
         overflowed its RX ring in the field; the BEGIN handshake also
         gates this, the sleep is belt and braces)."""
         await asyncio.sleep(min(5.0, 1.0 + 0.2 * frames))
-        await self.send_sid(tune)
+        await self._send_tune(tune, mood)
 
     async def _send_begin(self, msg_type: MessageType,
                           payload: bytes) -> bool:
@@ -1051,19 +1165,33 @@ class ProtocolHandler:
                 self._begin_ack = None
         return False
 
-    async def _send_bulk_stream(self, msg_type: MessageType, data: bytes):
+    async def _send_bulk_stream(self, msg_type: MessageType, data: bytes,
+                                wide: bool = False, chunk: int = None,
+                                window: int = None):
         """Chunk a large blob into paced, flow-controlled frames. Each
         frame carries its byte offset so the client can place it even
         after a gap; every FLOW_WINDOW frames the proxy waits for the
-        client's ACK so the modem's packet queue can never overflow."""
+        client's ACK so the modem's packet queue can never overflow.
+
+        `wide` widens the offset tag to 4 bytes: the 16-bit tag was
+        sized for C64 payloads (a 10 KB image, a 4 KB SID) and a
+        quarter-megabyte DIB laps it. Only a fmt=2 transfer - so only a
+        client whose parser expects it - ever sees the wide form.
+        `chunk` overrides the C64-sized SID_CHUNK for clients whose
+        frame buffer allows bigger bites. `window` must be whatever the
+        BEGIN frame advertised - the client ACKs on that cadence, and a
+        proxy waiting on a different one only ever times out."""
         n = 0
+        step = chunk or self.SID_CHUNK
+        win = window or self.FLOW_WINDOW
+        off_fmt = '<I' if wide else '<H'
         self._flow_ack = asyncio.Event()
         try:
-            for i in range(0, len(data), self.SID_CHUNK):
-                await self._send_bulk(msg_type, struct.pack('<H', i)
-                                      + data[i:i + self.SID_CHUNK])
+            for i in range(0, len(data), step):
+                await self._send_bulk(msg_type, struct.pack(off_fmt, i)
+                                      + data[i:i + step])
                 n += 1
-                if n % self.FLOW_WINDOW == 0:
+                if n % win == 0:
                     try:
                         await asyncio.wait_for(self._flow_ack.wait(), 3.0)
                     except asyncio.TimeoutError:
@@ -1073,11 +1201,82 @@ class ProtocolHandler:
         finally:
             self._flow_ack = None
 
+    def _music_lib(self):
+        """The music library this client's machine can play from, or
+        None. Every music decision goes through here so the C64 gets
+        SIDs, a CAP_MIDI client gets .MIDs, and nobody gets bytes their
+        hardware cannot play."""
+        fmt = self.profile.music_fmt
+        if fmt == 'sid':
+            return self.music
+        if fmt == 'midi':
+            return self.midi
+        return None
+
+    async def _send_tune(self, tune, mood: str = ''):
+        """One tune, in whatever format this client's machine plays."""
+        if self.profile.music_fmt == 'midi':
+            await self.send_midi(tune, mood)
+        else:
+            await self.send_sid(tune)
+
+    async def send_midi(self, tune, mood: str = ''):
+        """Ship a .MID whole to a client with a MIDI Mapper. No
+        relocation, no memory window - the client writes it to a temp
+        file and hands it to MCI, which is the entire point of choosing
+        MIDI (docs/16 section 6.2). BEGIN carries what the playback
+        controls display; data frames use fmt=2's 4-byte offsets and
+        window because a .MID can pass 64 KB. No retry machinery: this
+        only ever travels over TCP."""
+        if self.profile.music_fmt != 'midi':
+            self.logger.debug(
+                f"MIDI withheld: {self.profile.name} has no MIDI path")
+            return
+        try:
+            data = self.midi.payload(tune)
+        except OSError as e:
+            self.logger.error(f"MIDI {tune['id']}: unreadable file: {e}")
+            return
+        if len(data) > 0x40000:
+            self.logger.error(f"MIDI {tune['id']} is {len(data)} bytes - "
+                              "past any sane .MID, not sending")
+            return
+        window = 16
+        head = (bytes([window]) + struct.pack('<I', len(data))
+                + (tune.get('title') or '?')[:40]
+                .encode('ascii', errors='replace') + b'\x00'
+                + (tune.get('author') or '')[:32]
+                .encode('ascii', errors='replace') + b'\x00'
+                + (mood or '')[:16]
+                .encode('ascii', errors='replace') + b'\x00')
+        chunk = max(256, self.profile.max_payload - 8)
+        async with self._media_lock:
+            if not await self._send_begin(MessageType.MIDI_BEGIN, head):
+                self.logger.error("MIDI_BEGIN never ACKed - aborting send")
+                return
+            await self._send_bulk_stream(MessageType.MIDI_DATA, data,
+                                         wide=True, chunk=chunk,
+                                         window=window)
+            await self._send_bulk(MessageType.MIDI_END, b'')
+        self._tunes_sent += 1
+        self._music_stopped = False
+        self.midi.tune_started = time.monotonic()
+        await self._send_hint()
+        self.logger.info(f"Sent MIDI {tune['id']} ({len(data)} bytes)")
+
     async def send_sid(self, tune, is_retry: bool = False):
         """Stream a relocated SID into the client's $B000 window, paced
         like any other bulk transfer (the C64U modem drops burst tails).
         Data flows only after the client ACKs the BEGIN; a NAK
         afterwards (short/corrupt transfer) triggers spaced resends."""
+        if self.profile.music_fmt != 'sid':
+            # The last line of defence, covering every spawn site at
+            # once: retries, the jukebox, the narrator. A SID at a
+            # non-C64 is four BEGIN retries and an abort (field: the
+            # win16 client printing "[frame 0x57, 28 bytes]").
+            self.logger.debug(
+                f"SID withheld: {self.profile.name} has no SID")
+            return
         data = self.music.payload(tune)
         head = struct.pack('<HHHBHBBB', tune['load'], tune['init'],
                            tune['play'],
@@ -1132,6 +1331,61 @@ class ProtocolHandler:
         self.logger.info(f"Sent image ({len(blob)} bytes"
                          f"{', retry' if is_retry else ''})")
 
+    async def send_image_dib(self, dib: bytes, w: int, h: int,
+                             title: str = '', keep_music: bool = False):
+        """Stream a packed 8-bit DIB to a CAP_DIB_IMAGES client.
+
+        BEGIN payload for fmt=2 (all little-endian):
+
+            0     2 (the format byte the C64 variants also lead with)
+            1     flow window, in frames per ACK
+            2     keep_music flag
+            3-4   pixel width
+            5-6   pixel height
+            7-10  total DIB length in bytes
+            11..  title, NUL-terminated - the browser list's label
+
+        Data frames carry a 4-byte offset (wide=True below) because the
+        blob outgrows the 16-bit tag, and bites sized to the client's
+        own frame buffer rather than the C64's 256."""
+        self._img_sent = True
+        # The window is sized to the LINK, not the constant: 4 exists
+        # for a serial bridge whose queue overflows, and on a socket it
+        # just inserts a round-trip stall every 8 KB. 16 keeps the
+        # can't-runaway property (field: a real 486 measured ~36 KB/s
+        # with window 4 - every stall was pure loss).
+        window = self.FLOW_WINDOW if self.profile.pace else 16
+        head = bytes([2, window, 1 if keep_music else 0]) \
+            + struct.pack('<HHI', w, h, len(dib)) \
+            + title[:60].encode('ascii', errors='replace') + b'\x00'
+        chunk = max(256, self.profile.max_payload - 8)
+        async with self._media_lock:
+            if not await self._send_begin(MessageType.IMG_BEGIN, head):
+                self.logger.error("IMG_BEGIN never ACKed - aborting send")
+                await self.send_status("Image transfer couldn't start.")
+                return
+            await self._send_bulk_stream(MessageType.IMG_DATA, dib,
+                                         wide=True, chunk=chunk,
+                                         window=window)
+            await self._send_bulk(MessageType.IMG_END, b'')
+        self.logger.info(f"Sent DIB image ({w}x{h}, {len(dib)} bytes)")
+
+    async def _send_pic(self, blob: bytes, bg: int, stem: str,
+                        title: str = '', fmt: int = 1):
+        """One picture, in whatever format this client asked for. The
+        C64 blob is every registered picture's guaranteed artifact, so
+        it is both the C64 path and the fallback when a DIB profile's
+        original PNG has gone missing."""
+        if self.profile.dib_images:
+            try:
+                dib, w, h = await self.images.dib_from_stem(stem)
+                await self.send_image_dib(dib, w, h, title=title)
+                return
+            except OSError:
+                self.logger.warning(f"No PNG for {stem} - sending the "
+                                    "C64 blob to a DIB client")
+        await self.send_image_blob(blob, bg, fmt=fmt)
+
     async def _ask_model(self, question: str, limit: int = 300,
                          sampling: dict = None,
                          system_prompt: str = None) -> str:
@@ -1158,6 +1412,115 @@ class ProtocolHandler:
             return ''
         return out.strip()[:limit]
 
+    async def _send_state_json(self, state: str):
+        """Forward the normalized STATE block to a client that renders
+        sheet windows from it (CAP_STATE_JSON). Verbatim on purpose: the
+        client parses the same authoritative JSON the system prompt
+        re-injects, so the sheet can never disagree with the narrator.
+        An empty object clears the windows (new conversation)."""
+        if not self.profile.state_json or state is None:
+            return
+        data = state.encode('ascii', errors='replace') + b'\x00'
+        if len(data) > self.profile.max_payload:
+            # A state block past the client's frame buffer would desync
+            # its parser; better a stale sheet than a broken link.
+            self.logger.warning(
+                f"STATE block too large to forward ({len(data)} B)")
+            return
+        await self.send_message(MessageType.STATE_JSON, data)
+
+    async def _send_moods(self):
+        """The mood vocabulary, for a client whose Music window has a
+        picker to fill. MIDI clients only: the C64's jukebox learns the
+        moods from /music's own text."""
+        lib = self._music_lib()
+        if (self.profile.music_fmt != 'midi' or lib is None
+                or not lib.available):
+            return
+        moods = lib.moods[:24]
+        payload = bytearray([len(moods)])
+        for m in moods:
+            payload += m[:15].encode('ascii', errors='replace') + b'\x00'
+        await self.send_message(MessageType.MOOD_LIST, bytes(payload))
+
+    async def _send_pic_list(self):
+        """The conversation's pictures for the client-side browser:
+        newest first, each carrying its /pic index so a click on an
+        uncached entry can ask for exactly that picture. Sent on load
+        and on new - an EMPTY list is the signal that clears the shelf
+        of the previous conversation's pictures."""
+        if not self.profile.dib_images:
+            return
+        pics = list(reversed(self.conv_manager.get_meta('images', [])[-9:]))
+        payload = bytearray([len(pics)])
+        for i, p in enumerate(pics, 1):
+            title = p.get('caption') or p['prompt'][:60]
+            payload.append(i)
+            payload += title[:39].encode('ascii', errors='replace') + b'\x00'
+        await self.send_message(MessageType.PIC_LIST, bytes(payload))
+        # ...and the newest goes straight on display: loading a game
+        # brings its latest scene back without anyone asking.
+        if pics:
+            title = pics[0].get('caption') or pics[0]['prompt'][:60]
+            try:
+                data = self.images.blob_path(pics[0]['stem']).read_bytes()
+            except OSError:
+                return
+            if len(data) == 10001:
+                self._spawn_media(self._send_pic(
+                    data[:10000], data[10000], pics[0]['stem'],
+                    title=title))
+            else:
+                self._spawn_media(self._send_pic(
+                    data, 0, pics[0]['stem'], title=title, fmt=0))
+
+    def _adv_location(self):
+        """The location the authoritative state block last named, or
+        None. Read back from META for the same reason _ingest_map reads
+        it there: a turn whose state block was dropped must not look
+        like a move."""
+        try:
+            return (json.loads(self.conv_manager.get_meta('adv_state')
+                               or '{}') or {}).get('location')
+        except (ValueError, TypeError):
+            return None
+
+    async def _room_picture(self, illustrated: bool):
+        """A picture for every location (SET_OPTION room_pics).
+
+        Each room keeps ONE picture, mapped in conversation META: the
+        first visit generates it, every return re-sends it from cache
+        for free - which is also why loading a saved game brings the
+        room's art straight back. A narrator-directed shot that already
+        went out this turn is fresher and better-composed than a generic
+        room view, so it both suppresses the generation and (via
+        _generate_and_send_image) becomes the room's picture."""
+        loc = self._adv_location()
+        if not loc:
+            return
+        key = advmap.slug(str(loc))
+        if key == self._room_loc:
+            return                          # no move this turn
+        self._room_loc = key
+        rooms = self.conv_manager.get_meta('room_pics') or {}
+        stem = rooms.get(key)
+        if illustrated:
+            return
+        if stem:
+            try:
+                data = self.images.blob_path(stem).read_bytes()
+            except OSError:
+                data = None
+            if data and len(data) == 10001:
+                self.logger.info(f"Room picture for '{key}' from cache")
+                await self._send_pic(data[:10000], data[10000], stem,
+                                     title=str(loc))
+                return
+            # A registered room whose files are gone falls through to a
+            # fresh generation, which re-registers it.
+        await self._illustrate(
+            directive=f"the player's current location: {loc}")
+
     async def _derive_scene_prompt(self, instructions: str = '',
                                    directive: str = '') -> str:
         """Compose the illustrator's prompt for the current scene. Every
@@ -1183,10 +1546,65 @@ class ProtocolHandler:
         if m and m.get('at') is not None:
             room = m.get('rooms', {}).get(m['at'])
         character = getattr(self.mode, 'character', '')
+        # The settled visual ledger (docs/17): built once on the first
+        # illustration, injected verbatim into every composition, and
+        # amended only when the narrative contradicts it. Rides inside
+        # the "Studying the scene..." heartbeat the caller already runs.
+        canon = await self._ensure_canon(convo, adv_state, character)
         question = compose_question(
             convo, priors, adv_state, room, character,
-            instructions=instructions, directive=directive)
+            instructions=instructions, directive=directive, canon=canon)
         return await self._ask_model(question, limit=400)
+
+    @staticmethod
+    def _state_appearance(adv_state) -> str:
+        """The appearance phrase out of the STATE JSON, or ''."""
+        try:
+            return str((json.loads(adv_state or '{}') or {})
+                       .get('appearance') or '')
+        except (ValueError, TypeError):
+            return ''
+
+    async def _ensure_canon(self, convo: str, adv_state, character):
+        """The visual canon for this conversation (docs/17), building or
+        amending it when - and only when - that is due.
+
+        Happy path once built: one META read and one string comparison,
+        no model call. A failed build stores nothing and returns None -
+        composition degrades to exactly what it was before canon
+        existed, and the next illustration tries again."""
+        canon = self.conv_manager.get_meta('visual_canon')
+        appearance = self._state_appearance(adv_state)
+        if canon and not canon_stale(canon, appearance):
+            return canon
+        at = len(self.conv_manager.get_messages())
+        if canon:
+            self.logger.info("Visual canon: appearance changed, amending")
+            reply = await self._ask_model(
+                canon_update_question(canon, convo, appearance), limit=400)
+            got = parse_canon_reply(reply, prev=canon)
+            if not got:
+                # A failed amendment keeps the old ledger: stale canon
+                # beats no canon, and the trigger fires again next time.
+                return canon
+            got['built_at_msg'] = canon.get('built_at_msg', at)
+        else:
+            reply = await self._ask_model(
+                canon_build_question(convo, appearance, character),
+                limit=400)
+            got = parse_canon_reply(reply)
+            if not got:
+                self.logger.warning("Visual canon: build yielded nothing")
+                return None
+            got['built_at_msg'] = at
+            self.logger.info("Visual canon built "
+                             f"({len(got.get('npcs') or {})} npcs, "
+                             f"{len(got.get('places') or {})} places)")
+        got['appearance_seen'] = appearance
+        got['updated_at_msg'] = at
+        self.conv_manager.set_meta('visual_canon', got)
+        self.conv_manager.save()
+        return got
 
     async def _make_caption(self, prompt: str) -> str:
         """A short atmospheric caption, burned into the picture and
@@ -1662,13 +2080,15 @@ class ProtocolHandler:
         except OSError:
             await self._send_canned("That picture's data is gone.")
             return
-        await self._send_canned(
-            f"Showing: {pics[n - 1].get('caption') or pics[n - 1]['prompt'][:60]}")
+        pic = pics[n - 1]
+        title = pic.get('caption') or pic['prompt'][:60]
+        await self._send_canned(f"Showing: {title}")
         if len(data) == 10001:      # multicolor: blob + bg byte
-            self._spawn_media(self.send_image_blob(data[:10000],
-                                                   data[10000]))
+            self._spawn_media(self._send_pic(data[:10000], data[10000],
+                                             pic['stem'], title=title))
         else:                       # hires-era blob
-            self._spawn_media(self.send_image_blob(data, 0, fmt=0))
+            self._spawn_media(self._send_pic(data, 0, pic['stem'],
+                                             title=title, fmt=0))
 
     async def _illustrate(self, instructions: str = '',
                           directive: str = ''):
@@ -1707,9 +2127,16 @@ class ProtocolHandler:
             meta = {'instructions': instructions, 'directive': directive,
                     'caption': caption[:100],
                     'conv_id': str(self.conv_manager.current_id),
-                    'at_msg': len(self.conv_manager.get_messages())}
+                    'at_msg': len(self.conv_manager.get_messages()),
+                    # Which ledger this was composed under (docs/17
+                    # section 3) - a playtest lines the picture up
+                    # against the exact canon of its day. Absent when
+                    # the conversation never built one.
+                    'canon_version': (self.conv_manager.get_meta(
+                        'visual_canon') or {}).get('version')}
             blob, stem, bg = await self.images.generate_blob(
-                prompt, self.conv_manager.current_id, caption, meta=meta)
+                prompt, self.conv_manager.current_id, caption, meta=meta,
+                style=self.profile.image_style)
         except Exception as e:
             self.logger.error(f"Image generation failed: {e}")
             await self.send_status("Illustration failed.")
@@ -1721,12 +2148,20 @@ class ProtocolHandler:
                      'caption': caption[:100],
                      'at_msg': len(self.conv_manager.get_messages())})
         self.conv_manager.set_meta('images', pics)
+        # Whatever got illustrated while standing in a room becomes that
+        # room's picture - the narrator's shot of the place beats a
+        # generic one, and returning re-sends it from cache for free.
+        loc = self._adv_location() if self.mode.name == 'adventure' else None
+        if loc:
+            rooms = self.conv_manager.get_meta('room_pics') or {}
+            rooms[advmap.slug(str(loc))] = stem
+            self.conv_manager.set_meta('room_pics', rooms)
         self.conv_manager.save()
         await self._send_hint(0)      # the tally just went up
         # The caption lands in the scrollback before the screen freezes,
         # so it's also the last chat line when the picture is dismissed
         await self._send_canned(f'"{caption}"')
-        await self.send_image_blob(blob, bg)
+        await self._send_pic(blob, bg, stem, title=caption)
 
     async def _send_text(self, seq: int, text: str) -> int:
         """Every path that streams prose to the C64 goes through here.
@@ -1743,7 +2178,7 @@ class ProtocolHandler:
         # and markup cut across one matches nothing and prints literally.
         emit, self._wire_hold = split_safe(
             self._wire_hold + text.translate(UNICODE_TO_ASCII))
-        data = colorize_for_wire(emit)
+        data = colorize_for_wire(emit, self.profile)
         for i in range(0, len(data), self.CHUNK_TEXT_MAX):
             seq = await self._send_text_chunk(
                 seq, data[i:i + self.CHUNK_TEXT_MAX])
@@ -1755,7 +2190,7 @@ class ProtocolHandler:
         if not self._wire_hold:
             return seq
         held, self._wire_hold = self._wire_hold, ''
-        data = colorize_for_wire(held)
+        data = colorize_for_wire(held, self.profile)
         for i in range(0, len(data), self.CHUNK_TEXT_MAX):
             seq = await self._send_text_chunk(
                 seq, data[i:i + self.CHUNK_TEXT_MAX])
@@ -2046,8 +2481,9 @@ class ProtocolHandler:
                     "OPTIONAL: leave them unused if nothing this turn is "
                     "genuinely uncertain. Never invent a check just to "
                     "spend one.")
-            if (mfilter and self.music.available and self.music.stale()
-                    and sys_prompt):
+            _mlib = self._music_lib()
+            if (mfilter and _mlib is not None and _mlib.available
+                    and _mlib.stale() and sys_prompt):
                 sys_prompt += ("\n(The background music has been looping "
                                "for several minutes; if the scene's tone "
                                "warrants it, this reply is a good moment "
@@ -2124,6 +2560,7 @@ class ProtocolHandler:
                 if state is not None:
                     self.conv_manager.set_meta('adv_state', state)
                     self.conv_manager.save()
+                    await self._send_state_json(state)
 
             # Fold this reply into the map (docs/10). Both signals are in
             # hand: the filter has every directive from the whole stream
@@ -2138,6 +2575,7 @@ class ProtocolHandler:
 
             # Model requested a scene illustration: generate now (auto,
             # rate-limited) or park it as a /pic suggestion (ask)
+            illustrated = False
             if mfilter and mfilter.images and self.images.available:
                 directive = mfilter.images[0]
                 if self.images.auto_ok():
@@ -2146,16 +2584,31 @@ class ProtocolHandler:
                     # verbatim - the narrator's text is a suggestion for
                     # the shot (docs/13).
                     await self._illustrate(directive=directive)
+                    illustrated = True
                 elif self.images.mode == 'ask':
                     self.images.pending_prompt = directive
                     await self.send_status(
                         "Scene available - /pic to illustrate")
                     await self._send_hint(1)
 
+            # A picture for every location, for the client that asked
+            # for one (SET_OPTION). After the directive block so a
+            # narrator-directed shot wins the turn.
+            if (self.room_pics and self.images.available
+                    and self.mode.name == 'adventure'):
+                await self._room_picture(illustrated)
+
             # Model asked for a music change: honor at most one, after the
             # text is fully delivered (the client is idle again), unless a
             # change happened too recently
-            if mfilter and mfilter.moods:
+            _mlib = self._music_lib()
+            if mfilter and mfilter.moods and _mlib is None:
+                # Don't pick and record a tune this client can never
+                # hear - meta would then claim music is playing.
+                self.logger.debug(
+                    f"Music directive dropped: {self.profile.name} "
+                    "has no music path")
+            elif mfilter and mfilter.moods:
                 if self._music_manual:
                     # Stay in the fiction rather than posting a mode
                     # banner, and say it once - a reminder every turn
@@ -2168,11 +2621,11 @@ class ProtocolHandler:
                             "(The scene calls for different music, but "
                             "you have chosen your own. /auto gives the "
                             "soundtrack back to the narrator.)")
-                elif self.music.rate_limited():
+                elif _mlib.rate_limited():
                     self.logger.info(
                         f"Music directive rate-limited: {mfilter.moods}")
                 else:
-                    tune = self.music.pick(mfilter.moods[0])
+                    tune = _mlib.pick(mfilter.moods[0])
                     if tune:
                         # Say WHY the music changed. Until now a tune
                         # simply appeared, with the title flashing past
@@ -2183,8 +2636,8 @@ class ProtocolHandler:
                             f"{mfilter.moods[0]}.\n"
                             "(/music next for another, /music <mood> to "
                             "choose your own.)")
-                        await self.send_sid(tune)
-                        self.music.mark_changed()
+                        await self._send_tune(tune, mfilter.moods[0])
+                        _mlib.mark_changed()
                         # Remember what's playing: loading this
                         # conversation later resumes the soundtrack
                         self.conv_manager.set_meta('music', {
@@ -2381,7 +2834,9 @@ class ProtocolHandler:
                 ('r', 'Roleplay characters', '/chars'),
                 ('m', 'Models', '/models'),
             ]
-        if self.music.available:
+        # The jukebox panel is the C64's; a MIDI client has its own
+        # playback controls in the Music window.
+        if self.profile.music_fmt == 'sid' and self.music.available:
             entries.append(('j', 'Jukebox / now playing', '!j'))
         # No 'Music: next / stop' entry. It was the only way to stop a
         # streamed SID, so removing it needed somewhere else for stop to
@@ -2391,9 +2846,13 @@ class ProtocolHandler:
         entries += [
             ('x', 'Cancel reply', '!x'),
             ('e', 'Server config', '!e'),
-            ('d', 'Copy client disk', '!d'),
-            ('h', 'Help', '/help'),
         ]
+        # A C64 program has to be able to copy itself onto a blank disk;
+        # nothing any other machine runs does. The menu is the server's,
+        # so the entry simply never travels to a machine it cannot help.
+        if self.profile.name == 'c64':
+            entries.append(('d', 'Copy client disk', '!d'))
+        entries.append(('h', 'Help', '/help'))
         return entries[:13]  # the client panel caps at MAX_MENU
 
     async def handle_get_menu(self):
@@ -2521,20 +2980,21 @@ class ProtocolHandler:
         itself: the narrator must be able to take the soundtrack the
         moment the story opens, which is the whole point of starting one
         here rather than making the player ask."""
+        lib = self._music_lib()
         if (self._adv_music or self._music_manual
-                or not self.music.available):
+                or lib is None or not lib.available):
             return
         self._adv_music = True
         for mood in self.SETUP_MOODS:
-            tune = self.music.pick(mood)
+            tune = lib.pick(mood)
             if not tune:
                 continue
-            self.music.mark_changed()
+            lib.mark_changed()
             self.conv_manager.set_meta('music', {'mood': mood,
                                                  'tune': tune['id']})
-            # Spawned, never awaited: send_sid waits for an ACK that only
+            # Spawned, never awaited: the send waits for an ACK that only
             # the reader task can dispatch, and this runs ON that task.
-            self._spawn_media(self.send_sid(tune))
+            self._spawn_media(self._send_tune(tune, mood))
             self.logger.info("setup music: %s (%s)", tune['title'], mood)
             return
 
@@ -2616,6 +3076,7 @@ class ProtocolHandler:
         self._music_manual = True
         self._manual_notice_sent = False
         self.music.tune_started = None
+        self.midi.tune_started = None
         await self.send_message(MessageType.MUSIC_STOP, b'')
         await self._send_hint()
         await self._send_canned(
@@ -2625,7 +3086,8 @@ class ProtocolHandler:
     def _current_tune(self):
         """(tune, mood) for whatever is playing, or (None, '')."""
         meta = self.conv_manager.get_meta('music') or {}
-        tune = self.music.find(meta.get('tune')) if meta.get('tune') else None
+        lib = self._music_lib() or self.music
+        tune = lib.find(meta.get('tune')) if meta.get('tune') else None
         return tune, meta.get('mood', '')
 
     async def handle_get_nowplaying(self):
@@ -2716,6 +3178,9 @@ class ProtocolHandler:
         # loaded conversation and interleave frames with the load
         self._cancel_stream()
         self.images.pending_prompt = None
+        # The loaded game's first reply re-decides its room picture -
+        # which lands from cache if the room already has one.
+        self._room_loc = None
 
         masked_id = struct.unpack('<I', self.payload[:4])[0]
         self.logger.info(f"Load conversation: {masked_id}")
@@ -2762,17 +3227,19 @@ class ProtocolHandler:
             if omitted > 0:
                 frames.append((2, colorize_for_wire(
                     f'(... {omitted} earlier messages '
-                    f'not shown - /history has them ...)')))
+                    f'not shown - /history has them ...)',
+                    self.profile)))
             for m in window:
                 role = 0 if m['role'] == 'user' else 1
-                data = colorize_for_wire(clip(m['content']))
+                data = colorize_for_wire(clip(m['content']), self.profile)
                 for i in range(0, len(data), FRAME_TEXT):
                     frames.append((role if i == 0 else role | 0x80,
                                    data[i:i + FRAME_TEXT]))
             # Zero frames would leave the client waiting forever: the
             # 'load done' signal is the final more=0 frame
             if not frames:
-                frames.append((2, colorize_for_wire('(empty conversation)')))
+                frames.append((2, colorize_for_wire('(empty conversation)',
+                                                    self.profile)))
 
             # One message per frame: the C64 client's payload buffer is
             # small (512 bytes), so keep each frame well under that.
@@ -2830,16 +3297,25 @@ class ProtocolHandler:
             # else another tune of the same mood). The transfer starts only
             # after the last CONVERSATION_DATA frame so nothing interleaves.
             music_meta = self.conv_manager.get_meta('music')
-            if music_meta and self.music.available:
-                tune = (self.music.find(music_meta.get('tune'))
-                        or self.music.pick(music_meta.get('mood', '')))
+            _mlib = self._music_lib()
+            if music_meta and _mlib is not None and _mlib.available:
+                tune = (_mlib.find(music_meta.get('tune'))
+                        or _mlib.pick(music_meta.get('mood', '')))
                 if tune:
-                    self._spawn_media(self._resume_tune(tune, len(frames)))
+                    self._spawn_media(self._resume_tune(
+                        tune, len(frames), music_meta.get('mood', '')))
 
             # The tally belongs to the conversation, so a load has to
             # restate it - otherwise the corner keeps showing the count
             # from whatever was open before.
             await self._send_hint(0)
+            # ...and so does the character sheet: the loaded game's
+            # state populates the windows, or an empty object clears
+            # whatever the previous conversation left in them.
+            await self._send_state_json(
+                self.conv_manager.get_meta('adv_state') or '{}')
+            # ...and the picture browser, newest scene on display.
+            await self._send_pic_list()
         else:
             error = b"Conversation not found\x00"
             await self.send_message(MessageType.CHAT_ERROR, error)
@@ -2849,8 +3325,13 @@ class ProtocolHandler:
         self.logger.info("New conversation request")
         self._cancel_stream()
         self.images.pending_prompt = None
+        self._room_loc = None
         self._music_manual = False
         self._manual_notice_sent = False
         self.conv_manager.new_conversation()
         await self.send_ack()
+        # A fresh conversation has no adventurer yet; clear the sheet
+        # and the picture browser both.
+        await self._send_state_json('{}')
+        await self._send_pic_list()
         await self._send_hint(0)      # fresh conversation, empty tally

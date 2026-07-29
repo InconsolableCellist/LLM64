@@ -16,17 +16,53 @@
 
 int sb_is_marker(unsigned char c)
 {
-    return c == MARK_CLOSE || c == MARK_BOLD_ON || c == MARK_BOLD_OFF
-        || (c >= MARK_COLOR_BASE + 1 && c <= MARK_COLOR_BASE + 14);
+    return c == MARK_CLOSE
+        || c == MARK_BOLD_ON   || c == MARK_BOLD_OFF
+        || c == MARK_ITALIC_ON || c == MARK_ITALIC_OFF
+        || c == MARK_ULINE_ON  || c == MARK_ULINE_OFF
+        || c == MARK_HEAD_ON   || c == MARK_HEAD_OFF
+        || c == MARK_ESC
+        || (c >= MARK_COLOR_BASE + 1 && c <= MARK_COLOR_BASE + 15);
 }
 
-/* Apply a marker to the running render state. */
-static void mark_apply(unsigned char c, unsigned char base,
-                       unsigned char *color, unsigned char *bold)
+unsigned sb_marker_len(const char *p, unsigned remaining)
 {
+    unsigned char c;
+
+    if (!remaining)
+        return 0;
+    c = (unsigned char)p[0];
+    if (c != MARK_ESC)
+        return sb_is_marker(c) ? 1 : 0;
+
+    /* An escape whose operands did not fit is not a marker. Treating it
+       as one would consume bytes that belong to the next row, and the
+       row is a slice of an arena block - there is nothing safe past it
+       to consume. */
+    if (remaining < MARK_ESC_LEN || (unsigned char)p[1] != MARK_ESC_COLOR)
+        return 0;
+    return MARK_ESC_LEN;
+}
+
+void sb_mark_apply(const char *p, unsigned len, unsigned char base,
+                   unsigned char *color, unsigned char *attr)
+{
+    unsigned char c = (unsigned char)p[0];
+
+    if (c == MARK_ESC) {
+        if (len == MARK_ESC_LEN)
+            *color = (unsigned char)((unsigned char)p[2] & ~MARK_ESC_BIAS);
+        return;
+    }
     if (c == MARK_CLOSE)              *color = base;
-    else if (c == MARK_BOLD_ON)       *bold = 1;
-    else if (c == MARK_BOLD_OFF)      *bold = 0;
+    else if (c == MARK_BOLD_ON)       *attr |= SB_ATTR_BOLD;
+    else if (c == MARK_BOLD_OFF)      *attr &= (unsigned char)~SB_ATTR_BOLD;
+    else if (c == MARK_ITALIC_ON)     *attr |= SB_ATTR_ITALIC;
+    else if (c == MARK_ITALIC_OFF)    *attr &= (unsigned char)~SB_ATTR_ITALIC;
+    else if (c == MARK_ULINE_ON)      *attr |= SB_ATTR_ULINE;
+    else if (c == MARK_ULINE_OFF)     *attr &= (unsigned char)~SB_ATTR_ULINE;
+    else if (c == MARK_HEAD_ON)       *attr |= SB_ATTR_HEAD;
+    else if (c == MARK_HEAD_OFF)      *attr &= (unsigned char)~SB_ATTR_HEAD;
     else                              *color = (unsigned char)(c & 0x0F);
 }
 
@@ -39,15 +75,15 @@ void sb_wrap_begin(SbWrap *w, const char *text, unsigned len,
     w->pos   = 0;
     w->color = base;
     w->base  = base;
-    w->bold  = 0;
+    w->attr  = 0;
     w->done  = 0;
 }
 
 int sb_wrap_next(SbWrap *w, SbRow *out)
 {
-    unsigned start, i, cells, brk, next;
+    unsigned start, i, cells, brk, next, mlen;
     int      soft;
-    unsigned char color, bold;
+    unsigned char color, attr;
 
     if (w->done)
         return 0;
@@ -56,20 +92,22 @@ int sb_wrap_next(SbWrap *w, SbRow *out)
     out->text  = w->text + start;
     out->color = w->color;
     out->base  = w->base;
-    out->bold  = w->bold;
+    out->attr  = w->attr;
 
     /* Walk forward a row's worth of *cells*. Markers are free: they are
        state changes, not glyphs, which is the whole reason the spike's
        len-counting wrap broke a coloured line early. */
     color = w->color;
-    bold  = w->bold;
+    attr  = w->attr;
     brk   = 0;
     soft  = 0;
     cells = 0;
-    for (i = start; i < w->len && cells < w->cols; i++) {
+    for (i = start; i < w->len && cells < w->cols; ) {
         unsigned char c = (unsigned char)w->text[i];
-        if (sb_is_marker(c)) {
-            mark_apply(c, w->base, &color, &bold);
+        mlen = sb_marker_len(w->text + i, w->len - i);
+        if (mlen) {
+            sb_mark_apply(w->text + i, mlen, w->base, &color, &attr);
+            i += mlen;
             continue;
         }
         if (c == ' ') {
@@ -77,14 +115,16 @@ int sb_wrap_next(SbWrap *w, SbRow *out)
             soft = 1;
         }
         cells++;
+        i++;
     }
 
     /* Markers sitting right on the break belong to the row that ends
        there, not to a row of their own - otherwise a colour span that
        closes exactly at the margin produces a blank line. */
-    while (i < w->len && sb_is_marker((unsigned char)w->text[i])) {
-        mark_apply((unsigned char)w->text[i], w->base, &color, &bold);
-        i++;
+    while (i < w->len
+           && (mlen = sb_marker_len(w->text + i, w->len - i)) != 0) {
+        sb_mark_apply(w->text + i, mlen, w->base, &color, &attr);
+        i += mlen;
     }
 
     if (i >= w->len) {
@@ -112,15 +152,19 @@ int sb_wrap_next(SbWrap *w, SbRow *out)
        between the break and the scan point belong to the next row. Walk
        the row we are actually emitting to get it right. */
     color = w->color;
-    bold  = w->bold;
-    for (i = start; i < next; i++) {
-        unsigned char c = (unsigned char)w->text[i];
-        if (sb_is_marker(c))
-            mark_apply(c, w->base, &color, &bold);
+    attr  = w->attr;
+    for (i = start; i < next; ) {
+        mlen = sb_marker_len(w->text + i, next - i);
+        if (mlen) {
+            sb_mark_apply(w->text + i, mlen, w->base, &color, &attr);
+            i += mlen;
+        } else {
+            i++;
+        }
     }
     w->pos   = next;
     w->color = color;
-    w->bold  = bold;
+    w->attr  = attr;
     if (next >= w->len)
         w->done = 1;
     return 1;

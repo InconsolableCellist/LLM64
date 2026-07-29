@@ -39,8 +39,11 @@
  */
 
 #include <windows.h>
+#include <commdlg.h>
+#include <mmsystem.h>   /* MCI: the sequencer plays our .MIDs */
 #include <string.h>
 #include <stdlib.h>
+#include <i86.h>        /* FP_OFF, for segment-boundary math */
 #include "wire.h"
 #include "net.h"
 #include "scroll.h"
@@ -49,6 +52,10 @@
 #define APP_CLASS   "LLM64Main"
 #define CONV_CLASS  "LLM64Conv"
 #define PAPER_CLASS "LLM64Paper"
+#define PIC_CLASS   "LLM64Pic"
+#define MUS_CLASS   "LLM64Mus"
+#define CHR_CLASS   "LLM64Chr"
+#define INV_CLASS   "LLM64Inv"
 #define PANE_CLASS  "LLM64Pane"
 #define APP_TITLE   "LLM64"
 #define INI_FILE    "LLM64.INI"
@@ -85,7 +92,14 @@ static HWND     g_frame;    /* the one top-level window */
 static HWND     g_mdi;      /* MDICLIENT, between the frame and its docs */
 static HWND     g_conv;     /* the conversation document */
 static HWND     g_input;    /* the conversation's input box */
-static HFONT    g_font, g_font_bold;
+/* One font per combination of bold, italic and underline. SB_ATTR_BOLD,
+   _ITALIC and _ULINE are 1, 2 and 4, so the attribute bits index this
+   table directly. g_fonts[0] is the plain face and is never NULL; the
+   rest may be, and attr_font degrades rather than substituting the
+   wrong metrics (see fonts_init). */
+#define FONT_VARIANTS 8
+static HFONT    g_fonts[FONT_VARIANTS];
+static HFONT    g_font;                 /* == g_fonts[0], read constantly */
 static int      g_cw = 8, g_ch = 16;    /* character cell */
 static FARPROC  g_old_edit_proc;
 static char     g_status[128] = "Not connected.";
@@ -97,6 +111,10 @@ static char     g_chrome[64];
 static char     g_host[64];
 static unsigned g_port;
 static char     g_ini[160];     /* full path to LLM64.INI */
+/* Settings > Pictures: ask the proxy to illustrate every location
+   change in an adventure. Off by default and persisted in the INI -
+   each picture may be a paid API call, so it is the player's switch. */
+static int      g_room_pics;
 
 static unsigned char g_rxbuf[WIRE_MAX_PAYLOAD];
 static WireRx        g_rx;
@@ -115,16 +133,32 @@ static int      g_prt_formfeed;
 /* Colour                                                            */
 /* ---------------------------------------------------------------- */
 
+/* Slots the two tables below define: the C64's sixteen, then the
+   extended marker's. A proxy whose colour table has outgrown this
+   client's will send a slot past the end - a cosmetic miss, and not a
+   reason to index off the end of an array (see pal_color). */
+#define PAL_SLOTS  32
+
 /* Pepto's C64 palette, the same table the proxy converts images with
    (llm64_proxy/src/imaging.py). Index 0 is black and never used as a
    text colour. */
-static const COLORREF g_pal_screen[16] = {
+static const COLORREF g_pal_screen[PAL_SLOTS] = {
     RGB(0x00,0x00,0x00), RGB(0xFF,0xFF,0xFF), RGB(0x68,0x37,0x2B),
     RGB(0x70,0xA4,0xB2), RGB(0x6F,0x3D,0x86), RGB(0x58,0x8D,0x43),
     RGB(0x35,0x28,0x79), RGB(0xB8,0xC7,0x6F), RGB(0x6F,0x4F,0x25),
     RGB(0x43,0x39,0x00), RGB(0x9A,0x67,0x59), RGB(0x44,0x44,0x44),
     RGB(0x6C,0x6C,0x6C), RGB(0x9A,0xD2,0x84), RGB(0x6C,0x5E,0xB5),
-    RGB(0x95,0x95,0x95)
+    RGB(0x95,0x95,0x95),
+    /* Slots 16-31: the extended marker's, and the reason CLIENT_HELLO
+       announces rich text. Not on a C64 at any brightness - these are
+       what a VGA can say and a VIC-II cannot. Tuned for the dark
+       background, so they are lit rather than inked. */
+    RGB(0x2E,0xB8,0xB8), RGB(0x50,0x60,0xC8), RGB(0xB8,0x40,0x40),
+    RGB(0xA8,0xB0,0x40), RGB(0xE0,0xB8,0x40), RGB(0xE0,0x50,0x60),
+    RGB(0xC0,0xA8,0xE8), RGB(0x88,0xC8,0xF0), RGB(0xF0,0x90,0xA8),
+    RGB(0x88,0xE0,0xB8), RGB(0xF0,0xA8,0x40), RGB(0x90,0xA0,0xB0),
+    RGB(0xC8,0x80,0xC0), RGB(0xE0,0xD0,0xA0), RGB(0x88,0xA8,0x70),
+    RGB(0xB0,0xB0,0xB8)
 };
 
 /* The same fourteen marker slots as inks on white paper. Not the C64
@@ -134,14 +168,25 @@ static const COLORREF g_pal_screen[16] = {
    *hue* and takes a value that reads as ink. Index 1, the default text
    colour, becomes black; index 13 becomes a dark green, which is what
    makes a reply legible rather than merely present. */
-static const COLORREF g_pal_paper[16] = {
+static const COLORREF g_pal_paper[PAL_SLOTS] = {
     RGB(0x00,0x00,0x00), RGB(0x00,0x00,0x00), RGB(0xB0,0x14,0x14),
     RGB(0x00,0x70,0x80), RGB(0x80,0x20,0x90), RGB(0x1C,0x70,0x20),
     RGB(0x18,0x28,0xA8), RGB(0x80,0x70,0x00), RGB(0xB0,0x5A,0x00),
     RGB(0x70,0x44,0x10), RGB(0xC0,0x40,0x38), RGB(0x50,0x50,0x50),
     RGB(0x68,0x68,0x68), RGB(0x00,0x64,0x1E), RGB(0x40,0x40,0xB0),
-    RGB(0x78,0x78,0x78)
+    RGB(0x78,0x78,0x78),
+    /* The same extended slots as INKS. Same hues as the screen table
+       above, taken down to a value that reads on white - which is the
+       whole reason the wire carries a slot number and not an RGB
+       triple: the proxy cannot know which background this is. */
+    RGB(0x00,0x68,0x70), RGB(0x20,0x30,0x90), RGB(0x80,0x18,0x18),
+    RGB(0x60,0x66,0x10), RGB(0x90,0x6C,0x00), RGB(0xA8,0x18,0x30),
+    RGB(0x60,0x48,0x98), RGB(0x18,0x60,0x90), RGB(0xA8,0x40,0x60),
+    RGB(0x18,0x78,0x58), RGB(0x98,0x60,0x00), RGB(0x48,0x58,0x68),
+    RGB(0x78,0x28,0x70), RGB(0x80,0x68,0x30), RGB(0x40,0x58,0x20),
+    RGB(0x58,0x58,0x60)
 };
+
 
 #define THEME_PAPER   0
 #define THEME_SCREEN  1
@@ -149,6 +194,85 @@ static const COLORREF g_pal_paper[16] = {
 static int       g_theme = THEME_PAPER;
 static const COLORREF *g_pal = g_pal_paper;
 static COLORREF  g_bg = RGB(0xFF,0xFF,0xFF);
+
+/* Clamped, because the slot arrives off the wire. */
+static COLORREF pal_color(unsigned char slot)
+{
+    slot &= SB_COLOR_MASK;
+    return g_pal[slot < PAL_SLOTS ? slot : 1];
+}
+
+/* Build the face for every attribute combination, from the plain one.
+ *
+ * Each variant is MEASURED and kept only if it came back at the same cell
+ * width. That check is not paranoia: the pane is a grid the painter
+ * positions runs on, and a bold or italic face one pixel wider makes a
+ * mixed row drift out of alignment with the rows above it. This is the
+ * same test the bold-only version did, applied to seven faces instead
+ * of one.
+ */
+static void fonts_init(HDC hdc)
+{
+    LOGFONT lf;
+    TEXTMETRIC tm;
+    unsigned i;
+
+    g_fonts[0] = g_font;
+    if (!GetObject(g_font, sizeof(lf), (LPSTR)&lf))
+        return;                 /* no template: everything degrades to plain */
+
+    for (i = 1; i < FONT_VARIANTS; i++) {
+        LOGFONT v = lf;
+        HFONT f;
+
+        v.lfWeight    = (i & SB_ATTR_BOLD) ? FW_BOLD : lf.lfWeight;
+        v.lfItalic    = (i & SB_ATTR_ITALIC) ? 1 : 0;
+        v.lfUnderline = (i & SB_ATTR_ULINE) ? 1 : 0;
+        v.lfWidth     = g_cw;
+
+        f = CreateFontIndirect(&v);
+        if (!f)
+            continue;
+        SelectObject(hdc, f);
+        GetTextMetrics(hdc, &tm);
+        if (tm.tmAveCharWidth == g_cw && tm.tmHeight == g_ch)
+            g_fonts[i] = f;
+        else
+            DeleteObject(f);
+    }
+    SelectObject(hdc, g_font);
+}
+
+/* The face for a run of text.
+ *
+ * A heading is NOT a fourth face. A larger one would be the obvious
+ * reading of it and it cannot be had: the painter positions every run at
+ * a multiple of g_cw and fills to a multiple of g_ch, so a font with
+ * different metrics would slide out of the grid and leave the row it
+ * shares torn. A heading is therefore bold and underlined, which is what
+ * a fixed-pitch 1993 application would have done anyway.
+ *
+ * Degrading rather than substituting: if the italic face could not be
+ * had at the cell width, italic text is drawn upright rather than in
+ * something a column wider. Losing the slant is a cosmetic miss; losing
+ * the grid is a corrupted pane.
+ */
+static HFONT attr_font(unsigned char attr)
+{
+    unsigned idx;
+
+    if (attr & SB_ATTR_HEAD)
+        attr |= SB_ATTR_BOLD | SB_ATTR_ULINE;
+    idx = attr & (SB_ATTR_BOLD | SB_ATTR_ITALIC | SB_ATTR_ULINE);
+
+    if (g_fonts[idx])
+        return g_fonts[idx];
+    if (g_fonts[idx & ~SB_ATTR_ITALIC])
+        return g_fonts[idx & ~SB_ATTR_ITALIC];
+    if (g_fonts[idx & SB_ATTR_BOLD])
+        return g_fonts[idx & SB_ATTR_BOLD];
+    return g_font;
+}
 /* Kept alive because WM_CTLCOLOR returns it rather than copying it: the
    brush has to outlive the message. */
 static HBRUSH    g_bg_brush;
@@ -304,10 +428,10 @@ static void set_status(const char *s)
    which never hold text - are filled separately. */
 static void paint_row(HDC hdc, int x0, int y, int right, const SbRow *r)
 {
-    unsigned i, run_start = 0;
+    unsigned i, run_start = 0, mlen;
     int x = x0, n;
     unsigned char color = r->color;
-    unsigned char bold = r->bold;
+    unsigned char attr = r->attr;
     RECT rr;
 
     if (x0 > 0) {
@@ -320,28 +444,27 @@ static void paint_row(HDC hdc, int x0, int y, int right, const SbRow *r)
        block, and in protected mode reading one past it is a fault, not
        a stray byte. The Phase 0 version got away with this because its
        lines were NUL-terminated arrays. */
-    for (i = 0; i <= r->len; i++) {
-        unsigned char c = (i < r->len) ? (unsigned char)r->text[i] : 0;
-        int is_marker = (i < r->len) && sb_is_marker(c);
+    for (i = 0; i <= r->len; ) {
+        mlen = (i < r->len) ? sb_marker_len(r->text + i, r->len - i) : 0;
 
-        if (i == r->len || is_marker) {
+        if (i == r->len || mlen) {
             n = (int)(i - run_start);
             if (n > 0) {
-                SetTextColor(hdc, g_pal[color & 0x0F]);
-                SelectObject(hdc, bold ? g_font_bold : g_font);
+                SetTextColor(hdc, pal_color(color));
+                SelectObject(hdc, attr_font(attr));
                 rr.left = x; rr.top = y;
                 rr.right = x + n * g_cw; rr.bottom = y + g_ch;
                 ExtTextOut(hdc, x, y, ETO_OPAQUE, &rr,
                            (LPSTR)(r->text + run_start), n, NULL);
                 x += n * g_cw;
             }
-            if (is_marker) {
-                if (c == MARK_CLOSE)         color = r->base;
-                else if (c == MARK_BOLD_ON)  bold = 1;
-                else if (c == MARK_BOLD_OFF) bold = 0;
-                else                         color = (unsigned char)(c & 0x0F);
-            }
-            run_start = i + 1;
+            if (i == r->len)
+                break;
+            sb_mark_apply(r->text + i, mlen, r->base, &color, &attr);
+            i += mlen;
+            run_start = i;
+        } else {
+            i++;
         }
     }
 
@@ -461,6 +584,60 @@ static void send_text_frame(unsigned char type, const char *text)
     send_frame(type, (const unsigned char *)text, len);
 }
 
+/* What this build can render. Kept as a named constant next to the
+   sender so the two can never drift: the day the painter learns the
+   rich markers, this is the line that changes with it - as it did the
+   day the picture window learned to eat a DIB. */
+#define OUR_CAPS  (CAP_ZERO_WIDTH_MARKERS | CAP_RICH_TEXT \
+                   | CAP_DIB_IMAGES | CAP_MIDI | CAP_STATE_JSON)
+
+/* Introduce ourselves, before anything that could produce text.
+ *
+ * This is what stops the proxy treating us as a C64, and the first thing
+ * it buys is correct SPACING. A C64's marker occupies a screen column,
+ * so the proxy swallows the space beside every colour tag to keep the
+ * line the same length; our painter draws a marker as nothing at all, so
+ * that swallowed space is simply missing - "You see asteel doorahead."
+ * CAP_ZERO_WIDTH_MARKERS is the whole fix.
+ *
+ * Fire-and-forget: there is no reply, matching SET_BAUD. Sent on every
+ * connect, so a reconnect through Settings > Server re-announces.
+ */
+static void send_hello(void)
+{
+    unsigned char p[16];
+    int cols = g_conv ? view_cols(&g_conv_view) : 0;
+
+    /* The pane is resizable, so the width is a runtime fact rather than
+       a property of the machine. Zero means "use your default" and is
+       the honest answer before the first WM_SIZE. */
+    if (cols < 0 || cols > 255)
+        cols = 0;
+
+    p[0] = HELLO_VERSION;
+    p[1] = (unsigned char)cols;
+    p[2] = (unsigned char)(WIRE_MAX_PAYLOAD & 0xFF);
+    p[3] = (unsigned char)((WIRE_MAX_PAYLOAD >> 8) & 0xFF);
+    p[4] = (unsigned char)(OUR_CAPS & 0xFF);
+    p[5] = (unsigned char)((OUR_CAPS >> 8) & 0xFF);
+    p[6] = 5;
+    p[7] = 'w'; p[8] = 'i'; p[9] = 'n'; p[10] = '1'; p[11] = '6';
+    send_frame(MSG_CLIENT_HELLO, p, 12);
+}
+
+/* Session toggles, sent after the hello and again whenever one changes.
+   Sent unconditionally rather than only-when-on: the proxy's default is
+   off, but a reconnect after toggling mid-session must say so
+   explicitly or the proxy keeps the stale answer. */
+static void send_options(void)
+{
+    unsigned char p[2];
+
+    p[0] = OPT_ROOM_PICS;
+    p[1] = (unsigned char)(g_room_pics ? 1 : 0);
+    send_frame(MSG_SET_OPTION, p, 2);
+}
+
 /* ---------------------------------------------------------------- */
 /* The server-fed menu                                               */
 /* ---------------------------------------------------------------- */
@@ -478,88 +655,54 @@ static struct {
 static int g_menu_count;
 static int g_menu_choice;
 
-/* The menu panel: the same entries as a column of buttons down the
-   right-hand side of the frame, so the server-fed menu is something you
-   can see rather than something you have to know a key for. The buttons
-   belong to the frame, which is where the socket and the menu live -
-   they are the application's, not any one document's. */
-#define BAR_W       164
-#define BAR_PAD     6
+/* The server-fed menu lives in ONE place now: the Menu dialog (F1 and
+   the launcher's first button). It briefly also existed as a
+   permanent right-hand panel and then as an "Actions" document - two
+   renderings of the same entries read as two features, and the panel
+   taxed a 640-wide screen 164 pixels for entries a dialog serves on
+   demand. */
 
-static HWND g_bar_btn[MAX_MENU];
-static int  g_bar_count;
-static int  g_bar_show = 1;
-static char g_bar_sig[MAX_MENU + 2];    /* what the buttons were built from */
+/* The launcher: a row of rectangular buttons across the top of the
+   frame, one per big window, click to open or close - the way a 1993
+   program let you see its rooms without memorizing its menus. Owned by
+   the frame like the status strip, because it reports on the desk as a
+   whole. */
+#define LAUNCH_N 6
 
-static int bar_width(void)
+static HWND g_launch[LAUNCH_N];
+
+static int launch_h(void)
 {
-    return (g_bar_show && g_menu_count) ? BAR_W : 0;
+    return g_ch + 14;
 }
 
-static void bar_layout(HWND frame)
+static void launch_create(HWND frame)
 {
-    RECT rc;
-    int i, x, y, bh, avail, statush = g_ch + 6;
-
-    if (!g_bar_count)
-        return;
-    GetClientRect(frame, &rc);
-    x = (int)rc.right - BAR_W + BAR_PAD;
-    avail = (int)rc.bottom - statush - BAR_PAD * 2;
-    /* Squeeze rather than overflow: a thirteen-entry menu on a 480-line
-       screen has less room per button than a four-entry one. */
-    bh = (g_ch + 12);
-    if (g_bar_count > 0 && bh * g_bar_count > avail)
-        bh = avail / g_bar_count;
-    if (bh < 14) bh = 14;
-    y = BAR_PAD;
-    for (i = 0; i < g_bar_count; i++) {
-        MoveWindow(g_bar_btn[i], x, y, BAR_W - BAR_PAD * 2, bh - 2, TRUE);
-        y += bh;
-    }
-}
-
-static void bar_destroy(void)
-{
-    int i;
-    for (i = 0; i < g_bar_count; i++)
-        if (g_bar_btn[i]) {
-            DestroyWindow(g_bar_btn[i]);
-            g_bar_btn[i] = NULL;
-        }
-    g_bar_count = 0;
-}
-
-/* Rebuild only when the menu actually changed - it is re-fetched every
-   time the F1 box opens, and tearing down a column of buttons to build
-   the identical one back flickers for nothing. */
-static void bar_rebuild(HWND frame)
-{
-    char sig[MAX_MENU + 2];
-    HINSTANCE inst;
+    static const char *label[LAUNCH_N] =
+        { "Menu", "Conversation", "Picture", "Music",
+          "Character", "Items" };
+    HINSTANCE inst = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
     int i;
 
-    sig[0] = (char)(g_bar_show ? g_menu_count : 0);
-    for (i = 0; i < g_menu_count && i < MAX_MENU; i++)
-        sig[i + 1] = g_menu[i].key;
-    sig[i + 1] = '\0';
-    if (g_bar_count && memcmp(sig, g_bar_sig, (size_t)i + 2) == 0)
-        return;
-    memcpy(g_bar_sig, sig, (size_t)i + 2);
+    for (i = 0; i < LAUNCH_N; i++)
+        g_launch[i] = CreateWindow("BUTTON", label[i],
+                                   WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                   0, 0, 10, 10, frame,
+                                   (HMENU)(IDC_LAUNCHBASE + i), inst,
+                                   NULL);
+}
 
-    bar_destroy();
-    if (!g_bar_show || !g_menu_count)
-        return;
-    inst = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
-    for (i = 0; i < g_menu_count && i < MAX_MENU; i++) {
-        g_bar_btn[i] = CreateWindow("BUTTON", g_menu[i].label,
-                                    WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                    0, 0, 10, 10, frame,
-                                    (HMENU)(IDC_BARBASE + i), inst, NULL);
-        if (!g_bar_btn[i])
-            break;
+static void launch_layout(HWND frame)
+{
+    static const int w[LAUNCH_N] = { 52, 104, 76, 64, 80, 56 };
+    int i, x = 4;
+
+    (void)frame;
+    for (i = 0; i < LAUNCH_N; i++) {
+        if (g_launch[i])
+            MoveWindow(g_launch[i], x, 3, w[i], launch_h() - 6, TRUE);
+        x += w[i] + 4;
     }
-    g_bar_count = i;
 }
 
 /* Defined with the other window layout, but needed as soon as a menu
@@ -700,6 +843,1097 @@ static void print_end(void)
     send_frame(MSG_ACK, NULL, 0);
 }
 
+/* ---------------------------------------------------------------- */
+/* Pictures                                                          */
+/* ---------------------------------------------------------------- */
+
+/* The proxy generates a scene, keeps the original PNG, and - because
+   CLIENT_HELLO claimed CAP_DIB_IMAGES - sends this machine a packed
+   8-bit DIB rendered from it (IMG_BEGIN fmt=2, wire.h) instead of the
+   C64's 10 KB multicolor blob. A DIB is the one image format a 16-bit
+   Windows program decodes natively: one StretchDIBits call to show it,
+   one BITMAPFILEHEADER in front of it to save it.
+
+   The transfer is the same offset-tagged bulk stream every C64 media
+   transfer uses, except the offset is four bytes (a quarter-megabyte
+   DIB laps the 16-bit tag) and the frames are sized to our own buffer
+   rather than a 6551's. The blob outgrows a 64 KB segment, so every
+   pointer into it is huge. */
+
+static HWND          g_pic_wnd;         /* the persistent picture child */
+static HGLOBAL       g_pic_mem;         /* finished DIB, whole */
+static unsigned long g_pic_size;
+static unsigned      g_pic_w, g_pic_h;
+static char          g_pic_title[64];
+static HPALETTE      g_pic_hpal;        /* its 256 colours, realizable */
+
+/* The transfer in flight. Separate from the finished picture so a
+   failed transfer never takes the picture on screen down with it. */
+static HGLOBAL       g_img_mem;
+static unsigned long g_img_size, g_img_got;
+static unsigned      g_img_w, g_img_h;
+static unsigned      g_img_win, g_img_frames;
+static int           g_img_active;
+static char          g_img_title[64];
+
+/* Default-layout bookkeeping (see layout_default). */
+static int g_user_arranged;     /* the user moved a document themselves */
+static int g_in_layout;         /* our own MoveWindows are not "the user" */
+static int g_layout_ready;      /* creation-time WM_SIZEs are not either */
+
+/* The shelf: every picture received this session, so the browser list
+   can bring any of them back. Each one is a temp FILE, not a global
+   block - thirty 256 KB DIBs is 8 MB, which is more memory than the
+   machine this program is for. The one on display is the only one in
+   RAM. */
+#define MAX_SHELF 32
+static struct {
+    char          title[64];
+    char          path[144];
+    unsigned      w, h;
+    unsigned long size;         /* 0 = a ghost: title known, bytes not */
+    unsigned char srvidx;       /* the /pic <n> that fetches a ghost */
+} g_shelf[MAX_SHELF];
+static int  g_shelf_count;
+static int  g_shelf_cur = -1;   /* index on display */
+static HWND g_pic_lb;           /* the browser listbox, in the pic window */
+
+/* Ghosts ask the server for their picture; defined with the Music
+   window's controls, used here first. */
+static void send_command(const char *cmd);
+
+/* Write a global block to an open file in segment-safe bites. The bite
+   is 16 KB because 16 K divides 64 K: starting from GlobalLock's offset
+   0, every bite ends exactly at or before a segment boundary, and the
+   huge increment carries into the next segment between bites. (Watcom
+   huge arithmetic does NOT normalize offsets - a bite size that let a
+   far pointer run off the segment end would wrap to offset 0, the
+   img_data bug.) Returns 0 on a short write. */
+static int hfile_write(HFILE f, HGLOBAL mem, unsigned long size)
+{
+    unsigned char __huge *src;
+    unsigned long left = size;
+    unsigned chunk;
+    int ok = 1;
+
+    src = (unsigned char __huge *)GlobalLock(mem);
+    if (!src)
+        return 0;
+    while (left && ok) {
+        chunk = left > 16384UL ? 16384 : (unsigned)left;
+        if (_lwrite(f, (LPSTR)src, chunk) != chunk)
+            ok = 0;
+        src  += chunk;
+        left -= chunk;
+    }
+    GlobalUnlock(mem);
+    return ok;
+}
+
+/* Store a frame's bytes into a global block at an arbitrary offset,
+   splitting at the segment boundary FP_OFF reveals - the shared engine
+   of every bulk receive. (The lesson it encodes: Watcom huge
+   arithmetic does not normalize offsets, and a far copy running off a
+   segment's end wraps to offset 0, which is wherever the header is.) */
+static void huge_store(HGLOBAL mem, unsigned long off,
+                       const unsigned char far *src, unsigned n)
+{
+    unsigned char __huge *dst;
+    unsigned span;
+    unsigned long room;
+
+    dst = (unsigned char __huge *)GlobalLock(mem);
+    if (!dst)
+        return;
+    dst += off;
+    while (n) {
+        room = 0x10000UL - FP_OFF(dst);
+        span = (unsigned long)n < room ? n : (unsigned)room;
+        _fmemcpy((void far *)dst, (const void far *)src, span);
+        dst += span;    /* huge: carries into the next segment */
+        src += span;
+        n   -= span;
+    }
+    GlobalUnlock(mem);
+}
+
+/* Rebuild the realizable palette from the DIB's colour table, for the
+   256-colour drivers this program is nominally for. On a modern deep
+   display RealizePalette is a no-op and none of this matters. */
+static void pic_palette(void)
+{
+    static struct {
+        WORD         ver;
+        WORD         n;
+        PALETTEENTRY pe[256];
+    } lp;
+    unsigned char far *dib;
+    int i;
+
+    if (g_pic_hpal) {
+        DeleteObject(g_pic_hpal);
+        g_pic_hpal = NULL;
+    }
+    if (!g_pic_mem)
+        return;
+    dib = (unsigned char far *)GlobalLock(g_pic_mem);
+    if (!dib)
+        return;
+    lp.ver = 0x300;
+    lp.n   = 256;
+    for (i = 0; i < 256; i++) {
+        /* RGBQUAD stores B,G,R; PALETTEENTRY wants R,G,B. */
+        lp.pe[i].peBlue  = dib[40 + i * 4];
+        lp.pe[i].peGreen = dib[40 + i * 4 + 1];
+        lp.pe[i].peRed   = dib[40 + i * 4 + 2];
+        lp.pe[i].peFlags = 0;
+    }
+    GlobalUnlock(g_pic_mem);
+    g_pic_hpal = CreatePalette((LPLOGPALETTE)&lp);
+}
+
+static void pic_layout(HWND hwnd);
+
+/* Open (or refresh) the picture window. Created through the MDI client
+   like every document; PicProc records the handle in WM_CREATE because
+   this call has not returned yet when the first messages arrive. */
+static void pic_open(void)
+{
+    MDICREATESTRUCT mcs;
+
+    if (g_pic_wnd) {
+        /* The browser list appears with the first shelf entry, and
+           only a layout pass reveals it. */
+        pic_layout(g_pic_wnd);
+        InvalidateRect(g_pic_wnd, NULL, TRUE);
+        return;
+    }
+    mcs.szClass = PIC_CLASS;
+    mcs.szTitle = "Picture";
+    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.x       = 24;
+    mcs.y       = 16;
+    mcs.cx      = 336;
+    mcs.cy      = 240;
+    mcs.style   = 0;
+    mcs.lParam  = 0;
+    /* Creation sends the new window its first WM_SIZE, and that must
+       not read as the user arranging the desk - it would veto the very
+       relayout that is about to place this window. */
+    g_in_layout = 1;
+    SendMessage(g_mdi, WM_MDICREATE, 0, (LONG)(LPMDICREATESTRUCT)&mcs);
+    g_in_layout = 0;
+    /* A picture arriving mid-game must not steal the keyboard: MDI
+       activates what it creates, so hand the conversation straight
+       back. The picture has nothing to type into anyway. */
+    if (g_conv)
+        SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_conv, 0L);
+}
+
+static void img_abort(void)
+{
+    if (g_img_mem) {
+        GlobalFree(g_img_mem);
+        g_img_mem = NULL;
+    }
+    g_img_active = 0;
+}
+
+/* Park the picture on display onto the shelf as a temp file and put its
+   title in the browser list. Failure to park is not failure to show -
+   the picture stays on screen either way, it just cannot be brought
+   back later. */
+/* Do two titles name the same picture? The roster caps titles at 39
+   bytes while the BEGIN frame carries up to 63, so compare only what
+   both could have said. */
+static int shelf_same_title(const char *a, const char *b)
+{
+    int i;
+
+    for (i = 0; i < 39; i++) {
+        if (a[i] != b[i])
+            return 0;
+        if (!a[i])
+            return 1;
+    }
+    return 1;
+}
+
+static void shelf_add(void)
+{
+    HFILE f;
+    OFSTRUCT of;
+    int i, slot;
+
+    if (!g_pic_mem)
+        return;
+    /* A ghost with this title becomes real instead of a duplicate: the
+       roster listed the picture, and now its bytes have arrived. */
+    slot = -1;
+    for (i = 0; i < g_shelf_count; i++)
+        if (g_shelf[i].size == 0
+                && shelf_same_title(g_shelf[i].title, g_pic_title)) {
+            slot = i;
+            break;
+        }
+    if (slot >= 0) {
+        if (GetTempFileName(0, "L64", 0, g_shelf[slot].path) == 0)
+            return;
+        f = _lcreat(g_shelf[slot].path, 0);
+        if (f == HFILE_ERROR)
+            return;
+        if (!hfile_write(f, g_pic_mem, g_pic_size)) {
+            _lclose(f);
+            OpenFile(g_shelf[slot].path, &of, OF_DELETE);
+            g_shelf[slot].path[0] = '\0';
+            return;
+        }
+        _lclose(f);
+        g_shelf[slot].w    = g_pic_w;
+        g_shelf[slot].h    = g_pic_h;
+        g_shelf[slot].size = g_pic_size;
+        g_shelf_cur = slot;
+        if (g_pic_lb)
+            SendMessage(g_pic_lb, LB_SETCURSEL, slot, 0L);
+        return;
+    }
+    if (g_shelf_count == MAX_SHELF) {
+        /* Full shelf: the oldest goes, temp file and list entry both. */
+        OpenFile(g_shelf[0].path, &of, OF_DELETE);
+        for (i = 1; i < MAX_SHELF; i++)
+            g_shelf[i - 1] = g_shelf[i];
+        g_shelf_count--;
+        if (g_pic_lb)
+            SendMessage(g_pic_lb, LB_DELETESTRING, 0, 0L);
+    }
+    /* GetTempFileName with unique=0 creates the file as a side effect,
+       which is what reserves the name. */
+    if (GetTempFileName(0, "L64", 0,
+                        g_shelf[g_shelf_count].path) == 0)
+        return;
+    f = _lcreat(g_shelf[g_shelf_count].path, 0);
+    if (f == HFILE_ERROR)
+        return;
+    if (!hfile_write(f, g_pic_mem, g_pic_size)) {
+        _lclose(f);
+        OpenFile(g_shelf[g_shelf_count].path, &of, OF_DELETE);
+        set_status("Couldn't keep the picture - temp disk full?");
+        return;
+    }
+    _lclose(f);
+    lstrcpy(g_shelf[g_shelf_count].title, g_pic_title);
+    g_shelf[g_shelf_count].w      = g_pic_w;
+    g_shelf[g_shelf_count].h      = g_pic_h;
+    g_shelf[g_shelf_count].size   = g_pic_size;
+    g_shelf[g_shelf_count].srvidx = 0;
+    g_shelf_cur = g_shelf_count++;
+    if (g_pic_lb) {
+        SendMessage(g_pic_lb, LB_ADDSTRING, 0,
+                    (LONG)(LPSTR)(g_pic_title[0] ? g_pic_title
+                                                 : (char *)"(untitled)"));
+        SendMessage(g_pic_lb, LB_SETCURSEL, g_shelf_cur, 0L);
+    }
+}
+
+/* Bring shelf entry idx back on display, from its temp file. */
+static void shelf_show(int idx)
+{
+    HFILE f;
+    HGLOBAL mem;
+    unsigned char __huge *dst;
+    unsigned long left;
+    unsigned chunk;
+    int ok = 1;
+
+    if (idx < 0 || idx >= g_shelf_count || idx == g_shelf_cur)
+        return;
+    if (g_shelf[idx].size == 0) {
+        /* A ghost: the roster knows the title, the server has the
+           bytes. Ask for exactly that picture; when it arrives,
+           shelf_add turns this entry real. */
+        if (g_shelf[idx].srvidx) {
+            char cmd[16];
+            wsprintf(cmd, "/pic %d", (int)g_shelf[idx].srvidx);
+            send_command(cmd);
+        }
+        return;
+    }
+    f = _lopen(g_shelf[idx].path, OF_READ);
+    if (f == HFILE_ERROR) {
+        set_status("That picture's temp file is gone.");
+        return;
+    }
+    mem = GlobalAlloc(GMEM_MOVEABLE, g_shelf[idx].size);
+    if (!mem) {
+        _lclose(f);
+        set_status("Not enough memory for the picture.");
+        return;
+    }
+    dst = (unsigned char __huge *)GlobalLock(mem);
+    left = g_shelf[idx].size;
+    while (left && ok) {
+        chunk = left > 16384UL ? 16384 : (unsigned)left;
+        if ((unsigned)_lread(f, (LPSTR)dst, chunk) != chunk)
+            ok = 0;
+        dst  += chunk;
+        left -= chunk;
+    }
+    GlobalUnlock(mem);
+    _lclose(f);
+    if (!ok) {
+        GlobalFree(mem);
+        set_status("That picture's temp file is damaged.");
+        return;
+    }
+    if (g_pic_mem)
+        GlobalFree(g_pic_mem);
+    g_pic_mem  = mem;
+    g_pic_size = g_shelf[idx].size;
+    g_pic_w    = g_shelf[idx].w;
+    g_pic_h    = g_shelf[idx].h;
+    lstrcpy(g_pic_title, g_shelf[idx].title);
+    g_shelf_cur = idx;
+    pic_palette();
+    if (g_pic_wnd)
+        InvalidateRect(g_pic_wnd, NULL, TRUE);
+}
+
+/* Exit: the temp files must not outlive the session. */
+static void shelf_clear(void)
+{
+    OFSTRUCT of;
+    int i;
+
+    for (i = 0; i < g_shelf_count; i++)
+        if (g_shelf[i].path[0])
+            OpenFile(g_shelf[i].path, &of, OF_DELETE);
+    g_shelf_count = 0;
+    g_shelf_cur = -1;
+}
+
+/* The conversation's picture roster (PIC_LIST): the shelf follows the
+   conversation. Every entry arrives as a ghost - a title and the /pic
+   index that fetches it - and the newest one's bytes are already on
+   their way behind this frame. An empty roster is a new conversation
+   sweeping the desk. */
+static void pic_list_frame(const unsigned char *p, unsigned len)
+{
+    unsigned count, i = 1, j;
+
+    if (len < 1)
+        return;
+    shelf_clear();
+    /* Whatever was on display belonged to the previous conversation. */
+    if (g_pic_mem) {
+        GlobalFree(g_pic_mem);
+        g_pic_mem = NULL;
+    }
+    if (g_pic_hpal) {
+        DeleteObject(g_pic_hpal);
+        g_pic_hpal = NULL;
+    }
+    g_pic_title[0] = '\0';
+    g_pic_w = g_pic_h = 0;
+    g_pic_size = 0;
+    count = p[0];
+    while (count-- && i < len && g_shelf_count < MAX_SHELF) {
+        g_shelf[g_shelf_count].srvidx = p[i++];
+        j = 0;
+        while (i < len && p[i]) {
+            if (j + 1 < sizeof(g_shelf[0].title))
+                g_shelf[g_shelf_count].title[j++] = (char)p[i];
+            i++;
+        }
+        g_shelf[g_shelf_count].title[j] = '\0';
+        if (i < len)
+            i++;                    /* the NUL */
+        g_shelf[g_shelf_count].path[0] = '\0';
+        g_shelf[g_shelf_count].size = 0;
+        g_shelf[g_shelf_count].w = 0;
+        g_shelf[g_shelf_count].h = 0;
+        g_shelf_count++;
+    }
+    if (g_pic_lb) {
+        SendMessage(g_pic_lb, LB_RESETCONTENT, 0, 0L);
+        for (j = 0; (int)j < g_shelf_count; j++)
+            SendMessage(g_pic_lb, LB_ADDSTRING, 0,
+                        (LONG)(LPSTR)g_shelf[j].title);
+    }
+    pic_open();                     /* re-layout: the list came or went */
+}
+
+static void img_begin(const unsigned char *p, unsigned len)
+{
+    unsigned long size;
+
+    /* A re-sent BEGIN means the proxy never heard the first ACK; the
+       C64 re-ACKs for the same reason. */
+    if (g_img_active) {
+        send_frame(MSG_ACK, NULL, 0);
+        return;
+    }
+    if (len < IMG_DIB_HDR || p[0] != IMG_FMT_DIB8) {
+        /* fmt 0/1 is a C64 blob: only a proxy that predates
+           CLIENT_HELLO would send us one. Refuse rather than render it
+           wrong - the NAK makes the proxy report the failure. */
+        send_frame(MSG_NAK, NULL, 0);
+        set_status("Server sent a C64-format image - proxy too old?");
+        return;
+    }
+    size = (unsigned long)p[7] | ((unsigned long)p[8] << 8)
+         | ((unsigned long)p[9] << 16) | ((unsigned long)p[10] << 24);
+    /* 40 is an empty header; the cap is a 640x400 DIB with slack, and
+       what it really guards is GlobalAlloc against a corrupt length. */
+    if (size < 40UL || size > 600000UL) {
+        send_frame(MSG_NAK, NULL, 0);
+        return;
+    }
+    g_img_mem = GlobalAlloc(GMEM_MOVEABLE, size);
+    if (!g_img_mem) {
+        send_frame(MSG_NAK, NULL, 0);
+        set_status("Not enough memory for the picture.");
+        return;
+    }
+    g_img_size   = size;
+    g_img_got    = 0;
+    g_img_w      = p[3] | ((unsigned)p[4] << 8);
+    g_img_h      = p[5] | ((unsigned)p[6] << 8);
+    g_img_win    = p[1];
+    g_img_frames = 0;
+    g_img_title[0] = '\0';
+    if (len > IMG_DIB_HDR)
+        lstrcpyn(g_img_title, (const char far *)(p + IMG_DIB_HDR),
+                 sizeof(g_img_title) - 1);
+    g_img_active = 1;
+    set_status("Receiving picture...");
+    send_frame(MSG_ACK, NULL, 0);
+}
+
+static void img_data(const unsigned char *p, unsigned len)
+{
+    unsigned long off;
+    unsigned n;
+
+    if (!g_img_active || len < 4)
+        return;
+    off = (unsigned long)p[0] | ((unsigned long)p[1] << 8)
+        | ((unsigned long)p[2] << 16) | ((unsigned long)p[3] << 24);
+    n = len - 4;
+    if (off >= g_img_size)
+        n = 0;
+    else if (off + n > g_img_size)
+        n = (unsigned)(g_img_size - off);
+    if (n) {
+        huge_store(g_img_mem, off, p + 4, n);
+        g_img_got += n;
+    }
+    /* The proxy stops and waits for this every g_img_win frames - the
+       same flow control the C64 does with its 256-byte bites. */
+    if (g_img_win && ++g_img_frames % g_img_win == 0) {
+        char msg[48];
+        wsprintf(msg, "Receiving picture... %u%%",
+                 (unsigned)(g_img_got * 100UL / g_img_size));
+        set_status(msg);
+        send_frame(MSG_ACK, NULL, 0);
+    }
+}
+
+static void img_end(void)
+{
+    char msg[96];
+
+    if (!g_img_active)
+        return;
+    g_img_active = 0;
+    if (g_pic_mem)
+        GlobalFree(g_pic_mem);
+    g_pic_mem  = g_img_mem;
+    g_img_mem  = NULL;
+    g_pic_size = g_img_size;
+    g_pic_w    = g_img_w;
+    g_pic_h    = g_img_h;
+    lstrcpy(g_pic_title, g_img_title);
+    pic_palette();
+    shelf_add();
+    pic_open();
+    if (g_pic_title[0]) {
+        wsprintf(msg, "Picture: %s", (LPSTR)g_pic_title);
+        set_status(msg);
+    } else {
+        set_status("Picture received.");
+    }
+}
+
+/* ---------------------------------------------------------------- */
+/* Music                                                             */
+/* ---------------------------------------------------------------- */
+
+/* Not SID. The proxy's CAP_MIDI answer to [[MUSIC:]] is a .MID file
+   shipped whole (wire.h); this machine's whole job is to write it to a
+   temp file and hand it to MCI's sequencer - synthesis belongs to the
+   MIDI Mapper, exactly as a 1993 program would have had it. The Music
+   window shows what is playing and offers the three controls that
+   matter: Pause, Stop, Next. */
+
+static HWND g_mus_wnd;              /* the controls window, if open */
+static HWND g_mus_btn[3];           /* Pause/Resume, Stop, Next */
+static HWND g_mus_combo;            /* the mood picker */
+static HWND g_mus_play;             /* ...and its Play button */
+
+/* The listener's mood vocabulary (MOOD_LIST), server-fed like the F1
+   menu: the library is the proxy's, so its moods are too. */
+#define MAX_MOODS 24
+static char g_moods[MAX_MOODS][16];
+static int  g_mood_count;
+static char g_mus_title[44];
+static char g_mus_author[36];
+static char g_mus_mood[20];
+static int  g_mus_state;            /* 0 silent, 1 playing, 2 paused */
+static int  g_mus_opened;           /* an MCI alias is open */
+static char g_mus_file[144];        /* the tune's temp file */
+
+/* The transfer in flight, separate from what is playing. */
+static HGLOBAL       g_mid_mem;
+static unsigned long g_mid_size, g_mid_got;
+static unsigned      g_mid_win, g_mid_frames;
+static int           g_mid_active;
+static char          g_mid_title[44];
+static char          g_mid_author[36];
+static char          g_mid_mood[20];
+
+static void mus_update(void)
+{
+    if (g_mus_wnd) {
+        if (g_mus_btn[0])
+            SetWindowText(g_mus_btn[0],
+                          g_mus_state == 2 ? "Resume" : "Pause");
+        InvalidateRect(g_mus_wnd, NULL, TRUE);
+    }
+}
+
+static void mus_mci_close(void)
+{
+    if (g_mus_opened) {
+        mciSendString("close llm64mid", NULL, 0, NULL);
+        g_mus_opened = 0;
+    }
+    g_mus_state = 0;
+}
+
+/* Local silence - what MUSIC_STOP and app exit want. The proxy's idea
+   of what is playing is its own business. */
+static void mus_stop(void)
+{
+    mus_mci_close();
+    mus_update();
+}
+
+static void mus_play_file(void)
+{
+    char cmd[200];
+
+    mus_mci_close();
+    wsprintf(cmd, "open %s type sequencer alias llm64mid",
+             (LPSTR)g_mus_file);
+    if (mciSendString(cmd, NULL, 0, NULL) != 0) {
+        /* No sequencer device is a machine without a sound setup, not
+           an error worth a dialog - the C64 plays on without a SID
+           filter too. */
+        set_status("MIDI open failed - is a sequencer device installed?");
+        return;
+    }
+    g_mus_opened = 1;
+    if (mciSendString("play llm64mid notify", NULL, 0,
+                      g_frame) != 0) {
+        set_status("MIDI play failed.");
+        mus_mci_close();
+        return;
+    }
+    g_mus_state = 1;
+    mus_update();
+}
+
+static void mid_abort(void)
+{
+    if (g_mid_mem) {
+        GlobalFree(g_mid_mem);
+        g_mid_mem = NULL;
+    }
+    g_mid_active = 0;
+}
+
+/* Copy a NUL-terminated field out of the BEGIN payload, advancing the
+   cursor past it either way. */
+static void mid_field(char *dst, unsigned cap,
+                      const unsigned char **q, const unsigned char *end)
+{
+    unsigned i = 0;
+
+    while (*q < end && **q) {
+        if (i + 1 < cap)
+            dst[i++] = (char)**q;
+        (*q)++;
+    }
+    dst[i] = '\0';
+    if (*q < end)
+        (*q)++;                     /* the NUL itself */
+}
+
+static void mus_fill_moods(void);
+
+/* MOOD_LIST: the server's mood vocabulary for the picker. */
+static void mood_list_frame(const unsigned char *p, unsigned len)
+{
+    unsigned count, i = 1, j;
+
+    if (len < 1)
+        return;
+    g_mood_count = 0;
+    count = p[0];
+    while (count-- && i < len && g_mood_count < MAX_MOODS) {
+        j = 0;
+        while (i < len && p[i]) {
+            if (j + 1 < sizeof(g_moods[0]))
+                g_moods[g_mood_count][j++] = (char)p[i];
+            i++;
+        }
+        g_moods[g_mood_count][j] = '\0';
+        if (i < len)
+            i++;                    /* the NUL */
+        if (j)
+            g_mood_count++;
+    }
+    mus_fill_moods();
+}
+
+static void mid_begin(const unsigned char *p, unsigned len)
+{
+    const unsigned char *q, *end;
+    unsigned long size;
+
+    if (g_mid_active) {             /* BEGIN resent - first ACK lost */
+        send_frame(MSG_ACK, NULL, 0);
+        return;
+    }
+    if (len < 5) {
+        send_frame(MSG_NAK, NULL, 0);
+        return;
+    }
+    size = (unsigned long)p[1] | ((unsigned long)p[2] << 8)
+         | ((unsigned long)p[3] << 16) | ((unsigned long)p[4] << 24);
+    /* 14 bytes is an empty SMF; past 256 KB is not a .MID anyone made. */
+    if (size < 14UL || size > 0x40000UL) {
+        send_frame(MSG_NAK, NULL, 0);
+        return;
+    }
+    g_mid_mem = GlobalAlloc(GMEM_MOVEABLE, size);
+    if (!g_mid_mem) {
+        send_frame(MSG_NAK, NULL, 0);
+        set_status("Not enough memory for the tune.");
+        return;
+    }
+    g_mid_size   = size;
+    g_mid_got    = 0;
+    g_mid_win    = p[0];
+    g_mid_frames = 0;
+    q = p + 5;
+    end = p + len;
+    mid_field(g_mid_title,  sizeof(g_mid_title),  &q, end);
+    mid_field(g_mid_author, sizeof(g_mid_author), &q, end);
+    mid_field(g_mid_mood,   sizeof(g_mid_mood),   &q, end);
+    g_mid_active = 1;
+    send_frame(MSG_ACK, NULL, 0);
+}
+
+static void mid_data(const unsigned char *p, unsigned len)
+{
+    unsigned long off;
+    unsigned n;
+
+    if (!g_mid_active || len < 4)
+        return;
+    off = (unsigned long)p[0] | ((unsigned long)p[1] << 8)
+        | ((unsigned long)p[2] << 16) | ((unsigned long)p[3] << 24);
+    n = len - 4;
+    if (off >= g_mid_size)
+        n = 0;
+    else if (off + n > g_mid_size)
+        n = (unsigned)(g_mid_size - off);
+    if (n) {
+        huge_store(g_mid_mem, off, p + 4, n);
+        g_mid_got += n;
+    }
+    if (g_mid_win && ++g_mid_frames % g_mid_win == 0)
+        send_frame(MSG_ACK, NULL, 0);
+}
+
+static void mid_end(void)
+{
+    OFSTRUCT of;
+    HFILE f;
+    char msg[112];
+
+    if (!g_mid_active)
+        return;
+    g_mid_active = 0;
+    /* Close before delete: MCI holds the old file open. */
+    mus_mci_close();
+    if (g_mus_file[0])
+        OpenFile(g_mus_file, &of, OF_DELETE);
+    if (GetTempFileName(0, "MID", 0, g_mus_file) == 0)
+        g_mus_file[0] = '\0';
+    f = g_mus_file[0] ? _lcreat(g_mus_file, 0) : HFILE_ERROR;
+    if (f == HFILE_ERROR || !hfile_write(f, g_mid_mem, g_mid_size)) {
+        if (f != HFILE_ERROR)
+            _lclose(f);
+        mid_abort();
+        set_status("Couldn't keep the tune - temp disk full?");
+        return;
+    }
+    _lclose(f);
+    GlobalFree(g_mid_mem);
+    g_mid_mem = NULL;
+    lstrcpy(g_mus_title,  g_mid_title);
+    lstrcpy(g_mus_author, g_mid_author);
+    lstrcpy(g_mus_mood,   g_mid_mood);
+    mus_play_file();
+    wsprintf(msg, "Music: %s (%s)", (LPSTR)g_mus_title,
+             (LPSTR)g_mus_author);
+    set_status(msg);
+}
+
+/* ---------------------------------------------------------------- */
+/* The character sheet                                               */
+/* ---------------------------------------------------------------- */
+
+/* The adventure's [[STATE:]] block, forwarded verbatim because this
+   client claimed CAP_STATE_JSON. The proxy only ever sends the
+   NORMALIZED form - json.dumps, compact, ASCII - so the scanner below
+   is written against that contract and not against JSON at large:
+   double-quoted keys, no whitespace, standard escapes. Values we do
+   not know stay unread; keys we know may be absent. The same block is
+   re-injected into the system prompt as authoritative game state,
+   which is what makes rendering it directly the honest choice: the
+   sheet can never disagree with the narrator. */
+
+static struct {
+    long hp, maxhp, mana, maxmana, gold, score, xp, level;
+    int  has_hp, has_mana, has_gold, has_score, has_xp, has_level;
+    char location[64];
+    char appearance[200];
+    char companions[160];
+    char inv[16][40];
+    int  inv_n;
+    int  valid;
+} g_sheet;
+
+static HWND g_chr_wnd;          /* the Character window, if open */
+static HWND g_inv_wnd;          /* the Inventory window, if open */
+static HWND g_inv_lb;
+
+/* Walk to the value of "key" at depth 1, or NULL. Tracks strings and
+   escapes so an appearance like "a scarred {brace} collector" cannot
+   derail the depth count. */
+static const char *js_find(const char *j, const char *key)
+{
+    int depth = 0, instr = 0, esc = 0, matching = 0, ki = 0;
+    const char *p;
+
+    for (p = j; *p; p++) {
+        if (instr) {
+            if (esc) {
+                esc = 0;
+                matching = 0;
+            } else if (*p == '\\') {
+                esc = 1;
+                matching = 0;
+            } else if (*p == '"') {
+                instr = 0;
+                if (matching && key[ki] == '\0' && p[1] == ':')
+                    return p + 2;
+                matching = 0;
+            } else if (matching) {
+                if (key[ki] && (char)key[ki] == *p)
+                    ki++;
+                else
+                    matching = 0;
+            }
+            continue;
+        }
+        switch (*p) {
+        case '"':
+            instr = 1;
+            matching = (depth == 1);
+            ki = 0;
+            break;
+        case '{': case '[':
+            depth++;
+            break;
+        case '}': case ']':
+            depth--;
+            break;
+        }
+    }
+    return NULL;
+}
+
+static long js_num(const char *j, const char *key, int *has)
+{
+    const char *v = js_find(j, key);
+    long n = 0;
+    int neg = 0;
+
+    *has = 0;
+    if (!v)
+        return 0;
+    if (*v == '-') {
+        neg = 1;
+        v++;
+    }
+    if (*v < '0' || *v > '9')
+        return 0;
+    while (*v >= '0' && *v <= '9')
+        n = n * 10 + (*v++ - '0');
+    *has = 1;
+    return neg ? -n : n;
+}
+
+/* Copy a string value out, unescaping what json.dumps emits. Returns
+   a pointer just past the closing quote (for the array walker), or
+   NULL if v is not a string. */
+static const char *js_copy(const char *v, char *dst, unsigned cap)
+{
+    unsigned i = 0;
+
+    if (!v || *v != '"')
+        return NULL;
+    v++;
+    while (*v && *v != '"') {
+        char c = *v++;
+        if (c == '\\') {
+            if (*v == 'u') {        /* \uXXXX - not worth rendering */
+                v += (lstrlen(v) >= 5) ? 5 : lstrlen(v);
+                c = '?';
+            } else {
+                c = (*v == 'n' || *v == 't') ? ' ' : *v;
+                if (*v)
+                    v++;
+            }
+        }
+        if (i + 1 < cap)
+            dst[i++] = c;
+    }
+    dst[i] = '\0';
+    return *v ? v + 1 : v;
+}
+
+static void js_str(const char *j, const char *key, char *dst, unsigned cap)
+{
+    dst[0] = '\0';
+    js_copy(js_find(j, key), dst, cap);
+}
+
+/* An array of strings: into rows for the inventory, or joined with
+   commas for the companions line. */
+static int js_strarr(const char *j, const char *key,
+                     char rows[][40], int maxrows,
+                     char *joined, unsigned joincap)
+{
+    const char *v = js_find(j, key);
+    char item[80];
+    int n = 0;
+    unsigned ji = 0;
+
+    if (joined)
+        joined[0] = '\0';
+    if (!v || *v != '[')
+        return 0;
+    v++;
+    while (*v && *v != ']') {
+        if (*v == '"') {
+            v = js_copy(v, item, sizeof(item));
+            if (!v)
+                break;
+            if (rows && n < maxrows) {
+                lstrcpyn(rows[n], item, 40 - 1);
+                rows[n][39] = '\0';
+            }
+            if (joined) {
+                unsigned k = 0;
+                if (ji && ji + 2 < joincap) {
+                    joined[ji++] = ',';
+                    joined[ji++] = ' ';
+                }
+                while (item[k] && ji + 1 < joincap)
+                    joined[ji++] = item[k++];
+                joined[ji] = '\0';
+            }
+            n++;
+        } else {
+            v++;
+        }
+    }
+    return n > maxrows && rows ? maxrows : n;
+}
+
+static void sheet_parse(const char *j)
+{
+    memset(&g_sheet, 0, sizeof(g_sheet));
+    if (!j || *j != '{')
+        return;
+    {
+        /* The max is read into its own flag: "maxhp" absent must not
+           erase the fact that "hp" arrived. */
+        int hmax;
+        g_sheet.hp      = js_num(j, "hp",      &g_sheet.has_hp);
+        g_sheet.maxhp   = js_num(j, "maxhp",   &hmax);
+        if (!hmax)
+            g_sheet.maxhp = g_sheet.hp;
+        g_sheet.mana    = js_num(j, "mana",    &g_sheet.has_mana);
+        g_sheet.maxmana = js_num(j, "maxmana", &hmax);
+        if (!hmax)
+            g_sheet.maxmana = g_sheet.mana;
+    }
+    g_sheet.gold    = js_num(j, "gold",    &g_sheet.has_gold);
+    g_sheet.score   = js_num(j, "score",   &g_sheet.has_score);
+    g_sheet.xp      = js_num(j, "xp",      &g_sheet.has_xp);
+    g_sheet.level   = js_num(j, "level",   &g_sheet.has_level);
+    js_str(j, "location",   g_sheet.location,   sizeof(g_sheet.location));
+    js_str(j, "appearance", g_sheet.appearance, sizeof(g_sheet.appearance));
+    g_sheet.inv_n = js_strarr(j, "inventory", g_sheet.inv, 16, NULL, 0);
+    js_strarr(j, "companions", NULL, 0,
+              g_sheet.companions, sizeof(g_sheet.companions));
+    g_sheet.valid = g_sheet.has_hp || g_sheet.location[0]
+        || g_sheet.appearance[0] || g_sheet.inv_n;
+}
+
+/* Refresh whatever sheet windows are open. Defined with the windows
+   themselves, called from the wire. */
+static void sheet_update(void);
+
+/* ---------------------------------------------------------------- */
+/* Conversations: the browser's wire side                            */
+/* ---------------------------------------------------------------- */
+
+/* The C64 pages through its conversations in a full-screen module
+   (mod_convmgr); here the same four messages feed a dialog. This half
+   is the wire: list frames accumulate into g_convs, a load streams
+   CONVERSATION_DATA into a cleared transcript, and the dialog half
+   (ConvDlgProc, further down with the other dialogs) only ever reads
+   what landed here. */
+
+#define MAX_CONVS 16            /* one server page (LIST_PAGE) */
+#define WM_CONVS_READY (WM_USER + 40)
+
+static struct {
+    unsigned long id;
+    unsigned long stamp;
+    char          title[40];
+} g_convs[MAX_CONVS];
+static int  g_conv_count;
+static int  g_conv_more_pages;  /* another page exists past this one */
+static int  g_conv_page;
+static int  g_conv_waiting;     /* 2 = request sent, 1 = frames landing */
+static HWND g_convdlg;          /* the open dialog, told when list lands */
+
+/* A conversation restore in progress: the transcript was cleared and
+   CONVERSATION_DATA frames are being replayed into it. */
+static int           g_load_active;
+static unsigned char g_load_role = 0xFF;
+
+/* ACKs the ping did not ask for: delete and star answer with a bare
+   ACK, and the default ACK case would announce "link is good" for
+   them. A small courtesy counter keeps the status honest. */
+static int g_ack_quiet;
+
+static void conv_request_page(int page)
+{
+    unsigned char p[1];
+
+    g_conv_waiting = 2;
+    p[0] = (unsigned char)page;
+    send_frame(MSG_LIST_CONVERSATIONS, p, 1);
+}
+
+static void conv_list_frame(const unsigned char *p, unsigned len)
+{
+    unsigned count, more, i = 2, j;
+
+    if (len < 2)
+        return;
+    count = p[0];
+    more  = p[1];
+    if (g_conv_waiting == 2) {      /* first frame of a fresh response */
+        g_conv_count = 0;
+        g_conv_waiting = 1;
+    }
+    while (count-- && i + 9 <= len && g_conv_count < MAX_CONVS) {
+        g_convs[g_conv_count].id =
+            (unsigned long)p[i] | ((unsigned long)p[i + 1] << 8)
+            | ((unsigned long)p[i + 2] << 16)
+            | ((unsigned long)p[i + 3] << 24);
+        g_convs[g_conv_count].stamp =
+            (unsigned long)p[i + 4] | ((unsigned long)p[i + 5] << 8)
+            | ((unsigned long)p[i + 6] << 16)
+            | ((unsigned long)p[i + 7] << 24);
+        i += 8;
+        j = 0;
+        while (i < len && p[i]) {
+            if (j + 1 < sizeof(g_convs[0].title))
+                g_convs[g_conv_count].title[j++] = (char)p[i];
+            i++;
+        }
+        g_convs[g_conv_count].title[j] = '\0';
+        if (i < len)
+            i++;                    /* the NUL */
+        g_conv_count++;
+    }
+    if (!(more & 1)) {              /* response complete */
+        g_conv_more_pages = (more >> 1) & 1;
+        g_conv_waiting = 0;
+        if (g_convdlg)
+            PostMessage(g_convdlg, WM_CONVS_READY, 0, 0L);
+    }
+}
+
+static void conv_data_frame(const unsigned char *p, unsigned len)
+{
+    unsigned more, role, base;
+
+    if (len < 4)
+        return;
+    more = p[1];
+    role = p[2];
+    if (!g_load_active) {
+        /* First frame of the restore: the old transcript makes way. */
+        g_load_active = 1;
+        g_load_role = 0xFF;
+        sb_clear(&g_conv_view.sb);
+    }
+    base = role & 0x7F;
+    if (!(role & 0x80)) {           /* a new block, not a continuation */
+        if (g_load_role != 0xFF) {
+            sb_newline(&g_conv_view.sb);
+            sb_newline(&g_conv_view.sb);
+        }
+        sb_color(&g_conv_view.sb,
+                 base == 0 ? 1 : base == 1 ? 13 : 12);
+        g_load_role = (unsigned char)base;
+    }
+    /* The text is already colorized marker bytes with the proxy's own
+       NUL terminator, exactly like a chat chunk. */
+    sb_puts(&g_conv_view.sb, (const char *)(p + 3));
+    view_touch(&g_conv_view);
+    if (!(more & 1)) {              /* restore complete */
+        g_load_active = 0;
+        sb_newline(&g_conv_view.sb);
+        sb_newline(&g_conv_view.sb);
+        view_touch(&g_conv_view);
+        set_status("Conversation loaded.");
+        input_enable(1);
+    }
+}
+
 static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
 {
     char note[160];
@@ -741,7 +1975,18 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
         break;
 
     case MSG_ACK:
-        set_status("Proxy answered the ping - link is good.");
+        if (g_ack_quiet > 0)
+            g_ack_quiet--;          /* a delete or a star, not the ping */
+        else
+            set_status("Proxy answered the ping - link is good.");
+        break;
+
+    case MSG_CONVERSATION_LIST:
+        conv_list_frame(p, len);
+        break;
+
+    case MSG_CONVERSATION_DATA:
+        conv_data_frame(p, len);
         break;
 
     case MSG_MENU_LIST:
@@ -749,8 +1994,6 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
            an adventure and Map and Picture of this scene appear on the
            side without a rebuild of anything. */
         menu_parse(p, len);
-        bar_rebuild(g_frame);
-        frame_layout(g_frame);
         break;
 
     case MSG_HINT:
@@ -780,6 +2023,55 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
 
     case MSG_PRINT_END:
         print_end();
+        break;
+
+    /* A scene illustration, as a DIB because CLIENT_HELLO asked for
+       one. It lands in the persistent picture window - the Wasteland
+       arrangement, art beside the prose. */
+    case MSG_IMG_BEGIN:
+        img_begin(p, len);
+        break;
+
+    case MSG_IMG_DATA:
+        img_data(p, len);
+        break;
+
+    case MSG_IMG_END:
+        img_end();
+        break;
+
+    /* Music, as a .MID because CLIENT_HELLO claimed CAP_MIDI. */
+    case MSG_MIDI_BEGIN:
+        mid_begin(p, len);
+        break;
+
+    case MSG_MIDI_DATA:
+        mid_data(p, len);
+        break;
+
+    case MSG_MIDI_END:
+        mid_end();
+        break;
+
+    case MSG_MUSIC_STOP:
+        mus_stop();
+        set_status("Music off.");
+        break;
+
+    case MSG_MOOD_LIST:
+        mood_list_frame(p, len);
+        break;
+
+    case MSG_PIC_LIST:
+        pic_list_frame(p, len);
+        break;
+
+    /* The narrator's bookkeeping, for the sheet windows. */
+    case MSG_STATE_JSON:
+        if (len >= 1 && p[len - 1] == 0) {
+            sheet_parse((const char *)p);
+            sheet_update();
+        }
         break;
 
     default:
@@ -827,6 +2119,10 @@ static void do_connect(void)
     }
 }
 
+/* Input history lives with the editor keys (EditProc, further down);
+   sending is what records a line into it. */
+static void hist_push(const char *text);
+
 static void send_input(void)
 {
     char text[512];
@@ -838,6 +2134,7 @@ static void send_input(void)
     if (n <= 0)
         return;
     text[n] = '\0';
+    hist_push(text);                /* C-p brings it back (EditProc) */
     SetWindowText(g_input, "");
 
     if (net_state() != NET_UP) {
@@ -922,19 +2219,193 @@ static HWND pane_create(HWND parent, View *v)
     return p;
 }
 
-/* The input box is a stock EDIT control; subclassing is how it learns
-   that Return means send. */
+/* --- the input line's emacs fingers --------------------------------
+
+   Parity with the C64's editor: C-b/f/a/e move, M-b/f move by word,
+   C-d/k and M-d delete (C-h arrives as 0x08 and the stock EDIT already
+   backspaces on it), and C-p/C-n walk the input history - the one
+   meaning those keys can have on a single-line box. Control letters
+   arrive as WM_CHAR 1..26; the meta keys arrive as WM_SYSCHAR, and
+   swallowing those costs Alt+F's menu while the input has focus - F10
+   still reaches the menu bar, and emacs fingers were the point. */
+
+#define HIST_N   16
+#define HIST_LEN 256
+
+static char g_hist[HIST_N][HIST_LEN];
+static int  g_hist_count;
+static int  g_hist_browse = -1;     /* -1 = editing a fresh line */
+static char g_hist_stash[HIST_LEN]; /* the fresh line, while browsing */
+
+static void hist_push(const char *text)
+{
+    int i;
+
+    g_hist_browse = -1;
+    if (!text[0])
+        return;
+    /* Repeating the last line must not fill the ring with copies. */
+    if (g_hist_count && lstrcmp(g_hist[0], text) == 0)
+        return;
+    for (i = (g_hist_count < HIST_N ? g_hist_count : HIST_N - 1);
+         i > 0; i--)
+        lstrcpy(g_hist[i], g_hist[i - 1]);
+    lstrcpyn(g_hist[0], text, HIST_LEN - 1);
+    g_hist[0][HIST_LEN - 1] = '\0';
+    if (g_hist_count < HIST_N)
+        g_hist_count++;
+}
+
+static int edit_pos(HWND e)
+{
+    return (int)HIWORD(SendMessage(e, EM_GETSEL, 0, 0L));
+}
+
+static void edit_setpos(HWND e, int pos)
+{
+    SendMessage(e, EM_SETSEL, 0, MAKELONG(pos, pos));
+}
+
+static void edit_cut(HWND e, int from, int to)
+{
+    SendMessage(e, EM_SETSEL, 0, MAKELONG(from, to));
+    SendMessage(e, EM_REPLACESEL, 0, (LONG)(LPSTR)"");
+}
+
+static int is_wordch(char c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z')
+        || (c >= 'a' && c <= 'z');
+}
+
+static int word_left(const char *t, int pos)
+{
+    while (pos > 0 && !is_wordch(t[pos - 1]))
+        pos--;
+    while (pos > 0 && is_wordch(t[pos - 1]))
+        pos--;
+    return pos;
+}
+
+static int word_right(const char *t, int n, int pos)
+{
+    while (pos < n && !is_wordch(t[pos]))
+        pos++;
+    while (pos < n && is_wordch(t[pos]))
+        pos++;
+    return pos;
+}
+
+static void hist_recall(HWND e, int older)
+{
+    if (!g_hist_count)
+        return;
+    if (older) {
+        if (g_hist_browse + 1 >= g_hist_count)
+            return;                 /* already at the oldest */
+        if (g_hist_browse < 0)
+            GetWindowText(e, g_hist_stash, sizeof(g_hist_stash) - 1);
+        g_hist_browse++;
+    } else {
+        if (g_hist_browse < 0)
+            return;                 /* already on the fresh line */
+        g_hist_browse--;
+    }
+    SetWindowText(e, g_hist_browse < 0 ? g_hist_stash
+                                       : g_hist[g_hist_browse]);
+    edit_setpos(e, GetWindowTextLength(e));
+}
+
 long FAR PASCAL _export EditProc(HWND hwnd, UINT msg, UINT wParam,
                                  LONG lParam)
 {
-    if (msg == WM_CHAR && wParam == VK_RETURN) {
-        send_input();
-        return 0;
-    }
-    if (msg == WM_KEYDOWN && (wParam == VK_PRIOR || wParam == VK_NEXT)) {
-        SendMessage(g_conv_view.pane, WM_VSCROLL,
-                    wParam == VK_PRIOR ? SB_PAGEUP : SB_PAGEDOWN, 0L);
-        return 0;
+    char t[512];
+    int pos, n;
+
+    switch (msg) {
+    case WM_CHAR:
+        switch (wParam) {
+        case VK_RETURN:
+            send_input();
+            return 0;
+        case 1:                     /* C-a: line start */
+            edit_setpos(hwnd, 0);
+            return 0;
+        case 5:                     /* C-e: line end */
+            edit_setpos(hwnd, GetWindowTextLength(hwnd));
+            return 0;
+        case 2:                     /* C-b: back a char */
+            pos = edit_pos(hwnd);
+            if (pos > 0)
+                edit_setpos(hwnd, pos - 1);
+            return 0;
+        case 6:                     /* C-f: forward a char */
+            pos = edit_pos(hwnd);
+            if (pos < GetWindowTextLength(hwnd))
+                edit_setpos(hwnd, pos + 1);
+            return 0;
+        case 4:                     /* C-d: delete right */
+            pos = edit_pos(hwnd);
+            if (pos < GetWindowTextLength(hwnd))
+                edit_cut(hwnd, pos, pos + 1);
+            return 0;
+        case 11:                    /* C-k: kill to end of line */
+            pos = edit_pos(hwnd);
+            n = GetWindowTextLength(hwnd);
+            if (pos < n)
+                edit_cut(hwnd, pos, n);
+            return 0;
+        case 16:                    /* C-p: an older line */
+            hist_recall(hwnd, 1);
+            return 0;
+        case 14:                    /* C-n: back toward the fresh one */
+            hist_recall(hwnd, 0);
+            return 0;
+        case 8:                     /* Backspace - but with Ctrl held,
+                                       the modern habit: eat the word.
+                                       Some layers deliver Ctrl+BS as 8
+                                       with the modifier, others as 127
+                                       below; both mean the same. */
+            if (!(GetKeyState(VK_CONTROL) & 0x8000))
+                break;              /* plain: the EDIT's own backspace */
+            /* fall through */
+        case 127:                   /* Ctrl+Backspace, the other spelling
+                                       - the stock EDIT inserts it as a
+                                       box character, helping no one. */
+            GetWindowText(hwnd, t, sizeof(t) - 1);
+            pos = edit_pos(hwnd);
+            if (pos > 0)
+                edit_cut(hwnd, word_left(t, pos), pos);
+            return 0;
+        }
+        break;
+
+    case WM_SYSCHAR:
+        switch (wParam) {
+        case 'b': case 'B':         /* M-b: back a word */
+            GetWindowText(hwnd, t, sizeof(t) - 1);
+            edit_setpos(hwnd, word_left(t, edit_pos(hwnd)));
+            return 0;
+        case 'f': case 'F':         /* M-f: forward a word */
+            n = GetWindowText(hwnd, t, sizeof(t) - 1);
+            edit_setpos(hwnd, word_right(t, n, edit_pos(hwnd)));
+            return 0;
+        case 'd': case 'D':         /* M-d: delete the word ahead */
+            n = GetWindowText(hwnd, t, sizeof(t) - 1);
+            pos = edit_pos(hwnd);
+            if (pos < n)
+                edit_cut(hwnd, pos, word_right(t, n, pos));
+            return 0;
+        }
+        break;
+
+    case WM_KEYDOWN:
+        if (wParam == VK_PRIOR || wParam == VK_NEXT) {
+            SendMessage(g_conv_view.pane, WM_VSCROLL,
+                        wParam == VK_PRIOR ? SB_PAGEUP : SB_PAGEDOWN, 0L);
+            return 0;
+        }
+        break;
     }
     return CallWindowProc(g_old_edit_proc, hwnd, msg, wParam, lParam);
 }
@@ -957,6 +2428,61 @@ static void conv_layout(HWND hwnd)
         MoveWindow(g_input, 0, paneh, rc.right, inputh, TRUE);
 }
 
+/* The default desk: conversation on the left, picture beside it - the
+   old text-adventure arrangement, prose with the art in view. Applied
+   at startup and re-applied as the frame resizes, but only until the
+   user drags a document themselves: after that the desk is theirs, and
+   Window > Default Layout is the way to ask for this one back.
+
+   The g_in_layout guard is what tells our own MoveWindows apart from
+   the user's - a child's WM_SIZE cannot otherwise know who caused it. */
+static void layout_default(void)
+{
+    RECT rc;
+    int pw, mw, mh;
+
+    if (!g_mdi)
+        return;
+    g_in_layout = 1;
+    /* A maximized document owns the whole workspace, and MoveWindow on
+       it is quietly ignored - restore first. */
+    if (g_conv && IsZoomed(g_conv))
+        SendMessage(g_mdi, WM_MDIRESTORE, (WPARAM)g_conv, 0L);
+    if (g_pic_wnd && IsZoomed(g_pic_wnd))
+        SendMessage(g_mdi, WM_MDIRESTORE, (WPARAM)g_pic_wnd, 0L);
+    if (g_mus_wnd && IsZoomed(g_mus_wnd))
+        SendMessage(g_mdi, WM_MDIRESTORE, (WPARAM)g_mus_wnd, 0L);
+    GetClientRect(g_mdi, &rc);
+    /* The multiply is long on purpose: 892 pixels x 38 is already past
+       what a 16-bit int holds, and the overflow made pw negative - a
+       picture window with negative width is an invisible one. The old
+       side panel kept the workspace narrow enough to hide this. */
+    pw = g_pic_wnd
+        ? (int)(((long)(int)rc.right * 38) / 100)
+        : 0;
+    /* Music tucks into the bottom-right corner: under the picture,
+       stealing its column's bottom edge - or over the conversation's
+       corner when there is no picture. Three text lines plus the
+       button row plus its caption. */
+    mh = g_mus_wnd ? g_ch * 6 + 64 : 0;
+    if (mh > (int)rc.bottom / 2)
+        mh = (int)rc.bottom / 2;
+    mw = pw ? pw : 260;
+    if (mw > (int)rc.right)
+        mw = (int)rc.right;
+    if (g_conv)
+        MoveWindow(g_conv, 0, 0, (int)rc.right - pw,
+                   (int)rc.bottom, TRUE);
+    if (g_pic_wnd)
+        MoveWindow(g_pic_wnd, (int)rc.right - pw, 0, pw,
+                   (int)rc.bottom - mh, TRUE);
+    if (g_mus_wnd)
+        MoveWindow(g_mus_wnd, (int)rc.right - mw,
+                   (int)rc.bottom - mh, mw, mh, TRUE);
+    g_in_layout = 0;
+    g_layout_ready = 1;
+}
+
 /* The frame gives everything except the status strip to the MDI client,
    which is what actually owns the document windows. */
 static void frame_layout(HWND hwnd)
@@ -968,14 +2494,13 @@ static void frame_layout(HWND hwnd)
     if (!g_mdi)
         return;
     GetClientRect(hwnd, &rc);
-    h = rc.bottom - statush;
+    h = rc.bottom - statush - launch_h();
     if (h < g_ch) h = g_ch;
-    /* The documents get everything except the status strip and the menu
-       panel: text area big, actions down the side. */
-    w = (int)rc.right - bar_width();
-    if (w < g_cw * 20) w = (int)rc.right;
-    MoveWindow(g_mdi, 0, 0, w, h, TRUE);
-    bar_layout(hwnd);
+    /* The documents get everything between the launcher strip and the
+       status strip. */
+    w = (int)rc.right;
+    MoveWindow(g_mdi, 0, launch_h(), w, h, TRUE);
+    launch_layout(hwnd);
 }
 
 long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
@@ -996,7 +2521,14 @@ long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
         break;
 
     case WM_SIZE:
+        if (g_layout_ready && !g_in_layout)
+            g_user_arranged = 1;
         conv_layout(hwnd);
+        break;
+
+    case WM_MOVE:
+        if (g_layout_ready && !g_in_layout)
+            g_user_arranged = 1;
         break;
 
     case WM_MDIACTIVATE:
@@ -1113,6 +2645,641 @@ long FAR PASCAL _export PaperProc(HWND hwnd, UINT msg, UINT wParam,
     return DefMDIChildProc(hwnd, msg, wParam, lParam);
 }
 
+/* ---------------------------------------------------------------- */
+/* The picture window                                                */
+/* ---------------------------------------------------------------- */
+
+/* Rows the browser list takes from the bottom of the picture window.
+   Zero until there is something to browse - a picture on its own
+   deserves the whole window. */
+static int pic_list_h(HWND hwnd)
+{
+    RECT rc;
+    int h;
+
+    if (!g_shelf_count)
+        return 0;
+    GetClientRect(hwnd, &rc);
+    h = g_ch * 5 + 4;
+    if (h > (int)rc.bottom / 2)
+        h = (int)rc.bottom / 2;
+    return h;
+}
+
+static void pic_layout(HWND hwnd)
+{
+    RECT rc;
+    int lh = pic_list_h(hwnd);
+
+    if (!g_pic_lb)
+        return;
+    GetClientRect(hwnd, &rc);
+    if (lh) {
+        MoveWindow(g_pic_lb, 0, rc.bottom - lh, rc.right, lh, TRUE);
+        ShowWindow(g_pic_lb, SW_SHOW);
+    } else {
+        ShowWindow(g_pic_lb, SW_HIDE);
+    }
+}
+
+static void pic_paint(HWND hwnd)
+{
+    PAINTSTRUCT ps;
+    HDC hdc;
+    RECT rc;
+    HPALETTE oldpal = NULL;
+    unsigned char far *dib;
+
+    hdc = BeginPaint(hwnd, &ps);
+    GetClientRect(hwnd, &rc);
+    /* The browser list owns the bottom band; paint only above it. */
+    rc.bottom -= pic_list_h(hwnd);
+    if (rc.bottom < 1)
+        rc.bottom = 1;
+
+    if (!g_pic_mem || !g_pic_w || !g_pic_h) {
+        FillRect(hdc, &rc, GetStockObject(DKGRAY_BRUSH));
+        SetBkMode(hdc, TRANSPARENT);
+        SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+        SetTextColor(hdc, RGB(0xC0, 0xC0, 0xC0));
+        DrawText(hdc, "No picture yet.", -1, &rc,
+                 DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        EndPaint(hwnd, &ps);
+        return;
+    }
+
+    if (g_pic_hpal) {
+        oldpal = SelectPalette(hdc, g_pic_hpal, FALSE);
+        RealizePalette(hdc);
+    }
+    dib = (unsigned char far *)GlobalLock(g_pic_mem);
+    if (dib) {
+        int dw, dh, dx;
+
+        /* Aspect-fit to the window's width, top-aligned: the window is
+           a column, and the space under the art belongs to the caption
+           now and the browser list later. */
+        dw = (int)rc.right;
+        dh = (int)((long)dw * g_pic_h / g_pic_w);
+        if (dh > (int)rc.bottom) {
+            dh = (int)rc.bottom;
+            dw = (int)((long)dh * g_pic_w / g_pic_h);
+        }
+        dx = ((int)rc.right - dw) / 2;
+        FillRect(hdc, &rc, GetStockObject(BLACK_BRUSH));
+        SetStretchBltMode(hdc, STRETCH_DELETESCANS);
+        /* Bits start after the header and the always-256-entry colour
+           table (the proxy writes biClrUsed=256, so 40+1024 is a
+           constant, not a guess). */
+        StretchDIBits(hdc, dx, 0, dw, dh, 0, 0, g_pic_w, g_pic_h,
+                      (LPSTR)(dib + 40 + 1024), (LPBITMAPINFO)dib,
+                      DIB_RGB_COLORS, SRCCOPY);
+        GlobalUnlock(g_pic_mem);
+        if (g_pic_title[0] && dh + g_ch < (int)rc.bottom) {
+            RECT tr = rc;
+            tr.top = dh + 4;
+            SetBkMode(hdc, TRANSPARENT);
+            SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+            SetTextColor(hdc, RGB(0xC0, 0xC0, 0xC0));
+            DrawText(hdc, g_pic_title, -1, &tr,
+                     DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
+        }
+    }
+    if (oldpal)
+        SelectPalette(hdc, oldpal, FALSE);
+    EndPaint(hwnd, &ps);
+}
+
+long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
+                                LONG lParam)
+{
+    int i;
+
+    switch (msg) {
+    case WM_CREATE:
+        /* Recorded here rather than from WM_MDICREATE's return: the
+           first messages arrive before that call comes back. */
+        g_pic_wnd = hwnd;
+        /* The browser list. Repopulated from the shelf because this
+           window can be closed and reopened mid-session - the shelf
+           outlives it, like the transcript outlives its window. */
+        g_pic_lb = CreateWindow("LISTBOX", NULL,
+                                WS_CHILD | WS_BORDER | WS_VSCROLL
+                                | LBS_NOTIFY,
+                                0, 0, 10, 10, hwnd, (HMENU)ID_PICLIST,
+                                (HINSTANCE)GetWindowWord(hwnd,
+                                                         GWW_HINSTANCE),
+                                NULL);
+        for (i = 0; i < g_shelf_count; i++)
+            SendMessage(g_pic_lb, LB_ADDSTRING, 0,
+                        (LONG)(LPSTR)(g_shelf[i].title[0]
+                                      ? g_shelf[i].title
+                                      : (char *)"(untitled)"));
+        if (g_shelf_cur >= 0)
+            SendMessage(g_pic_lb, LB_SETCURSEL, g_shelf_cur, 0L);
+        break;
+
+    case WM_PAINT:
+        pic_paint(hwnd);
+        return 0;
+
+    case WM_ERASEBKGND:
+        /* pic_paint covers every pixel; erasing first only flickers. */
+        return 1;
+
+    case WM_COMMAND:
+        if (wParam == ID_PICLIST && HIWORD(lParam) == LBN_SELCHANGE) {
+            shelf_show((int)SendMessage(g_pic_lb, LB_GETCURSEL, 0, 0L));
+            return 0;
+        }
+        break;
+
+    case WM_SIZE:
+    case WM_MOVE:
+        if (g_layout_ready && !g_in_layout)
+            g_user_arranged = 1;
+        pic_layout(hwnd);
+        InvalidateRect(hwnd, NULL, TRUE);
+        break;
+
+    case WM_DESTROY:
+        g_pic_wnd = NULL;
+        g_pic_lb  = NULL;
+        break;
+    }
+    return DefMDIChildProc(hwnd, msg, wParam, lParam);
+}
+
+/* menu_run lives with the menu dialog below; the music controls send
+   commands through it. */
+static void menu_run(HWND owner, int idx);
+
+/* ---------------------------------------------------------------- */
+/* The Music window                                                  */
+/* ---------------------------------------------------------------- */
+
+/* A command sent as if typed - what the Stop and Next buttons do, so
+   the proxy stays the authority on what is playing (its MUSIC_STOP
+   comes back and silences us; its next tune arrives as MIDI frames). */
+static void send_command(const char *cmd)
+{
+    if (net_state() != NET_UP) {
+        say(2, "Not connected. Use File > Connect.");
+        return;
+    }
+    say(1, cmd);
+    send_text_frame(MSG_CHAT_REQUEST, cmd);
+    set_status("Waiting for the model...");
+}
+
+static void mus_layout(HWND hwnd)
+{
+    RECT rc;
+    int i, bw, bh = g_ch + 10, x, py;
+
+    GetClientRect(hwnd, &rc);
+    bw = ((int)rc.right - 4 * 4) / 3;
+    if (bw < 30) bw = 30;
+    x = 4;
+    for (i = 0; i < 3; i++) {
+        if (g_mus_btn[i])
+            MoveWindow(g_mus_btn[i], x, (int)rc.bottom - bh - 4,
+                       bw, bh, TRUE);
+        x += bw + 4;
+    }
+    /* The picker row sits above the transport row. The combo's height
+       covers its dropped list, not the closed box - Win16 quirk. */
+    py = (int)rc.bottom - bh * 2 - 8;
+    if (g_mus_combo)
+        MoveWindow(g_mus_combo, 4, py,
+                   (int)rc.right - bw - 12, g_ch * 8, TRUE);
+    if (g_mus_play)
+        MoveWindow(g_mus_play, (int)rc.right - bw - 4, py, bw, bh, TRUE);
+}
+
+static void mus_fill_moods(void)
+{
+    int i;
+
+    if (!g_mus_combo)
+        return;
+    SendMessage(g_mus_combo, CB_RESETCONTENT, 0, 0L);
+    for (i = 0; i < g_mood_count; i++)
+        SendMessage(g_mus_combo, CB_ADDSTRING, 0,
+                    (LONG)(LPSTR)g_moods[i]);
+    if (g_mood_count)
+        SendMessage(g_mus_combo, CB_SETCURSEL, 0, 0L);
+    if (g_mus_play)
+        EnableWindow(g_mus_play, g_mood_count ? TRUE : FALSE);
+}
+
+static void mus_paint(HWND hwnd)
+{
+    static const char *state_name[] = { "Silent", "Playing", "Paused" };
+    PAINTSTRUCT ps;
+    HDC hdc;
+    RECT rc;
+    char line[96];
+    int y = 6;
+
+    hdc = BeginPaint(hwnd, &ps);
+    GetClientRect(hwnd, &rc);
+    SetBkMode(hdc, TRANSPARENT);
+    SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+    SetTextColor(hdc, RGB(0, 0, 0));
+    if (g_mus_title[0]) {
+        TextOut(hdc, 8, y, g_mus_title, lstrlen(g_mus_title));
+        y += g_ch + 2;
+        if (g_mus_author[0]) {
+            wsprintf(line, "by %s", (LPSTR)g_mus_author);
+            TextOut(hdc, 8, y, line, lstrlen(line));
+            y += g_ch + 2;
+        }
+        if (g_mus_mood[0])
+            wsprintf(line, "%s - mood: %s",
+                     (LPSTR)state_name[g_mus_state], (LPSTR)g_mus_mood);
+        else
+            lstrcpy(line, state_name[g_mus_state]);
+        TextOut(hdc, 8, y, line, lstrlen(line));
+    } else {
+        TextOut(hdc, 8, y, "Nothing has played yet.", 23);
+        y += g_ch + 2;
+        TextOut(hdc, 8, y, "The narrator starts the music,", 30);
+        y += g_ch + 2;
+        TextOut(hdc, 8, y, "or type /music <mood>.", 22);
+    }
+    EndPaint(hwnd, &ps);
+}
+
+long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
+                                LONG lParam)
+{
+    static const char *label[3] = { "Pause", "Stop", "Next" };
+    HINSTANCE inst;
+    int i;
+
+    switch (msg) {
+    case WM_CREATE:
+        g_mus_wnd = hwnd;
+        inst = (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE);
+        for (i = 0; i < 3; i++)
+            g_mus_btn[i] = CreateWindow("BUTTON", label[i],
+                                        WS_CHILD | WS_VISIBLE
+                                        | BS_PUSHBUTTON,
+                                        0, 0, 10, 10, hwnd,
+                                        (HMENU)(IDC_MUSBASE + i), inst,
+                                        NULL);
+        g_mus_combo = CreateWindow("COMBOBOX", NULL,
+                                   WS_CHILD | WS_VISIBLE | WS_VSCROLL
+                                   | CBS_DROPDOWNLIST,
+                                   0, 0, 10, 10, hwnd,
+                                   (HMENU)(IDC_MUSBASE + 3), inst, NULL);
+        g_mus_play = CreateWindow("BUTTON", "Play",
+                                  WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                  0, 0, 10, 10, hwnd,
+                                  (HMENU)(IDC_MUSBASE + 4), inst, NULL);
+        mus_fill_moods();
+        mus_update();
+        break;
+
+    case WM_PAINT:
+        mus_paint(hwnd);
+        return 0;
+
+    case WM_SIZE:
+    case WM_MOVE:
+        if (g_layout_ready && !g_in_layout)
+            g_user_arranged = 1;
+        mus_layout(hwnd);
+        InvalidateRect(hwnd, NULL, TRUE);
+        break;
+
+    case WM_COMMAND:
+        switch (wParam) {
+        case IDC_MUSBASE + 0:       /* Pause / Resume: purely local */
+            if (g_mus_state == 1) {
+                mciSendString("pause llm64mid", NULL, 0, NULL);
+                g_mus_state = 2;
+            } else if (g_mus_state == 2) {
+                mciSendString("resume llm64mid", NULL, 0, NULL);
+                g_mus_state = 1;
+            }
+            mus_update();
+            return 0;
+        case IDC_MUSBASE + 1:       /* Stop: the proxy's call */
+            if (net_state() == NET_UP)
+                send_command("/music stop");
+            else
+                mus_stop();
+            return 0;
+        case IDC_MUSBASE + 2:       /* Next: another of the same mood */
+            send_command("/music next");
+            return 0;
+        case IDC_MUSBASE + 4: {     /* Play: the picked mood */
+            char cmd[28];
+            i = (int)SendMessage(g_mus_combo, CB_GETCURSEL, 0, 0L);
+            if (i >= 0 && i < g_mood_count) {
+                wsprintf(cmd, "/music %s", (LPSTR)g_moods[i]);
+                send_command(cmd);
+            }
+            return 0;
+        }
+        }
+        break;
+
+    case WM_DESTROY:
+        g_mus_wnd = NULL;
+        for (i = 0; i < 3; i++)
+            g_mus_btn[i] = NULL;
+        g_mus_combo = NULL;
+        g_mus_play = NULL;
+        break;
+    }
+    return DefMDIChildProc(hwnd, msg, wParam, lParam);
+}
+
+/* ---------------------------------------------------------------- */
+/* The Character and Inventory windows                               */
+/* ---------------------------------------------------------------- */
+
+/* Two views of the same STATE block: what a 1993 RPG put in its
+   sidebars. Both float over the desk like the Music controls - they
+   are gauges, not documents. */
+
+static void chr_paint(HWND hwnd)
+{
+    PAINTSTRUCT ps;
+    HDC hdc;
+    RECT rc, br;
+    char line[120];
+    int y = 6, bh;
+
+    hdc = BeginPaint(hwnd, &ps);
+    GetClientRect(hwnd, &rc);
+    SetBkMode(hdc, TRANSPARENT);
+    SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+    SetTextColor(hdc, RGB(0, 0, 0));
+    if (!g_sheet.valid) {
+        DrawText(hdc, "No adventure state yet.\n\nStart an adventure "
+                 "and the narrator's own bookkeeping appears here.",
+                 -1, &rc, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
+        EndPaint(hwnd, &ps);
+        return;
+    }
+    if (g_sheet.location[0]) {
+        wsprintf(line, "At: %s", (LPSTR)g_sheet.location);
+        TextOut(hdc, 8, y, line, lstrlen(line));
+        y += g_ch + 4;
+    }
+    if (g_sheet.has_hp) {
+        /* The HP bar every sidebar had: sunken frame, red when the
+           narrator says you should be worried. */
+        bh = g_ch;
+        wsprintf(line, "HP %ld / %ld", g_sheet.hp, g_sheet.maxhp);
+        TextOut(hdc, 8, y, line, lstrlen(line));
+        br.left = 90; br.top = y + 1;
+        br.right = (int)rc.right - 10; br.bottom = y + bh - 1;
+        if (br.right > br.left + 10) {
+            HBRUSH fill = CreateSolidBrush(
+                (g_sheet.maxhp > 0 && g_sheet.hp * 4 <= g_sheet.maxhp)
+                ? RGB(0xC0, 0x20, 0x20) : RGB(0x20, 0x80, 0x30));
+            RECT in = br;
+            FrameRect(hdc, &br, GetStockObject(BLACK_BRUSH));
+            in.left++; in.top++; in.right--; in.bottom--;
+            if (g_sheet.maxhp > 0) {
+                long w = (long)(in.right - in.left) * g_sheet.hp
+                    / g_sheet.maxhp;
+                if (w < 0) w = 0;
+                if (w > in.right - in.left) w = in.right - in.left;
+                in.right = in.left + (int)w;
+            }
+            FillRect(hdc, &in, fill);
+            DeleteObject(fill);
+        }
+        y += bh + 4;
+    }
+    if (g_sheet.has_mana && g_sheet.maxmana > 0) {
+        wsprintf(line, "Mana %ld / %ld", g_sheet.mana, g_sheet.maxmana);
+        TextOut(hdc, 8, y, line, lstrlen(line));
+        y += g_ch + 2;
+    }
+    line[0] = '\0';
+    if (g_sheet.has_gold)
+        wsprintf(line, "Gold %ld   ", g_sheet.gold);
+    if (g_sheet.has_level)
+        wsprintf(line + lstrlen(line), "Level %ld   ", g_sheet.level);
+    if (g_sheet.has_xp)
+        wsprintf(line + lstrlen(line), "XP %ld   ", g_sheet.xp);
+    if (g_sheet.has_score)
+        wsprintf(line + lstrlen(line), "Score %ld", g_sheet.score);
+    if (line[0]) {
+        TextOut(hdc, 8, y, line, lstrlen(line));
+        y += g_ch + 4;
+    }
+    if (g_sheet.appearance[0]) {
+        RECT tr = rc;
+        tr.left = 8; tr.top = y; tr.right -= 8;
+        DrawText(hdc, g_sheet.appearance, -1, &tr,
+                 DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
+        DrawText(hdc, g_sheet.appearance, -1, &tr,
+                 DT_WORDBREAK | DT_NOPREFIX);
+        y = (int)tr.bottom + 4;
+    }
+    if (g_sheet.companions[0]) {
+        RECT tr = rc;
+        tr.left = 8; tr.top = y; tr.right -= 8;
+        wsprintf(line, "With you: %s", (LPSTR)g_sheet.companions);
+        DrawText(hdc, line, -1, &tr, DT_WORDBREAK | DT_NOPREFIX);
+    }
+    EndPaint(hwnd, &ps);
+}
+
+long FAR PASCAL _export ChrProc(HWND hwnd, UINT msg, UINT wParam,
+                                LONG lParam)
+{
+    switch (msg) {
+    case WM_CREATE:
+        g_chr_wnd = hwnd;
+        break;
+    case WM_PAINT:
+        chr_paint(hwnd);
+        return 0;
+    case WM_SIZE:
+    case WM_MOVE:
+        if (g_layout_ready && !g_in_layout)
+            g_user_arranged = 1;
+        InvalidateRect(hwnd, NULL, TRUE);
+        break;
+    case WM_DESTROY:
+        g_chr_wnd = NULL;
+        break;
+    }
+    return DefMDIChildProc(hwnd, msg, wParam, lParam);
+}
+
+static void inv_fill(void)
+{
+    int i;
+
+    if (!g_inv_lb)
+        return;
+    SendMessage(g_inv_lb, LB_RESETCONTENT, 0, 0L);
+    for (i = 0; i < g_sheet.inv_n && i < 16; i++)
+        SendMessage(g_inv_lb, LB_ADDSTRING, 0,
+                    (LONG)(LPSTR)g_sheet.inv[i]);
+    if (!g_sheet.inv_n)
+        SendMessage(g_inv_lb, LB_ADDSTRING, 0,
+                    (LONG)(LPSTR)"(empty-handed)");
+    if (g_inv_wnd) {
+        char title[40];
+        if (g_sheet.inv_n)
+            wsprintf(title, "Inventory (%d)", g_sheet.inv_n);
+        else
+            lstrcpy(title, "Inventory");
+        SetWindowText(g_inv_wnd, title);
+    }
+}
+
+long FAR PASCAL _export InvProc(HWND hwnd, UINT msg, UINT wParam,
+                                LONG lParam)
+{
+    RECT rc;
+
+    switch (msg) {
+    case WM_CREATE:
+        g_inv_wnd = hwnd;
+        g_inv_lb = CreateWindow("LISTBOX", NULL,
+                                WS_CHILD | WS_VISIBLE | WS_BORDER
+                                | WS_VSCROLL,
+                                0, 0, 10, 10, hwnd, (HMENU)ID_INVLIST,
+                                (HINSTANCE)GetWindowWord(hwnd,
+                                                         GWW_HINSTANCE),
+                                NULL);
+        inv_fill();
+        break;
+    case WM_SIZE:
+    case WM_MOVE:
+        if (g_layout_ready && !g_in_layout)
+            g_user_arranged = 1;
+        if (g_inv_lb) {
+            GetClientRect(hwnd, &rc);
+            MoveWindow(g_inv_lb, 0, 0, rc.right, rc.bottom, TRUE);
+        }
+        break;
+    case WM_DESTROY:
+        g_inv_wnd = NULL;
+        g_inv_lb = NULL;
+        break;
+    }
+    return DefMDIChildProc(hwnd, msg, wParam, lParam);
+}
+
+static void sheet_update(void)
+{
+    if (g_chr_wnd)
+        InvalidateRect(g_chr_wnd, NULL, TRUE);
+    inv_fill();
+}
+
+static void sheet_open(const char *cls, HWND *slot, int x, int y,
+                       int cx, int cy)
+{
+    MDICREATESTRUCT mcs;
+
+    if (*slot) {
+        SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)*slot, 0L);
+        return;
+    }
+    mcs.szClass = cls;
+    mcs.szTitle = cls[5] == 'C' ? "Character" : "Inventory";
+    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.x = x; mcs.y = y; mcs.cx = cx; mcs.cy = cy;
+    mcs.style = 0;
+    mcs.lParam = 0;
+    g_in_layout = 1;
+    SendMessage(g_mdi, WM_MDICREATE, 0, (LONG)(LPMDICREATESTRUCT)&mcs);
+    g_in_layout = 0;
+}
+
+static void mus_open_wnd(void)
+{
+    MDICREATESTRUCT mcs;
+
+    if (g_mus_wnd) {
+        SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_mus_wnd, 0L);
+        return;
+    }
+    mcs.szClass = MUS_CLASS;
+    mcs.szTitle = "Music";
+    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.x       = 60;
+    mcs.y       = 40;
+    mcs.cx      = 250;
+    mcs.cy      = 140;
+    mcs.style   = 0;
+    mcs.lParam  = 0;
+    /* Same guard as every open: birth is not the user arranging. */
+    g_in_layout = 1;
+    SendMessage(g_mdi, WM_MDICREATE, 0, (LONG)(LPMDICREATESTRUCT)&mcs);
+    g_in_layout = 0;
+}
+
+/* File > Save Picture As: the DIB with a BITMAPFILEHEADER in front of
+   it IS a .BMP - the whole reason the wire format is what it is. */
+static void do_save_pic(HWND hwnd)
+{
+    OPENFILENAME ofn;
+    char file[144];
+    BITMAPFILEHEADER bf;
+    HFILE f;
+    int failed = 0;
+
+    if (!g_pic_mem) {
+        MessageBox(hwnd, "No picture to save yet.", APP_TITLE,
+                   MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    lstrcpy(file, "PICTURE.BMP");
+    memset(&ofn, 0, sizeof(ofn));
+    ofn.lStructSize = sizeof(OPENFILENAME);
+    ofn.hwndOwner   = hwnd;
+    ofn.lpstrFilter = "Bitmap (*.BMP)\0*.bmp\0All files (*.*)\0*.*\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrFile   = file;
+    ofn.nMaxFile    = sizeof(file);
+    ofn.lpstrDefExt = "bmp";
+    ofn.Flags       = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST
+                    | OFN_HIDEREADONLY;
+    if (!GetSaveFileName(&ofn))
+        return;
+
+    bf.bfType      = 0x4D42;                    /* 'BM' */
+    bf.bfSize      = sizeof(bf) + g_pic_size;
+    bf.bfReserved1 = 0;
+    bf.bfReserved2 = 0;
+    bf.bfOffBits   = sizeof(bf) + 40 + 1024;
+
+    f = _lcreat(file, 0);
+    if (f == HFILE_ERROR) {
+        MessageBox(hwnd, "Couldn't create that file.", APP_TITLE,
+                   MB_OK | MB_ICONEXCLAMATION);
+        return;
+    }
+    if (_lwrite(f, (LPSTR)&bf, sizeof(bf)) != sizeof(bf))
+        failed = 1;
+    if (!failed && !hfile_write(f, g_pic_mem, g_pic_size))
+        failed = 1;
+    _lclose(f);
+    if (failed) {
+        MessageBox(hwnd, "The save didn't finish - disk full?",
+                   APP_TITLE, MB_OK | MB_ICONEXCLAMATION);
+    } else {
+        char msg[176];
+        wsprintf(msg, "Saved picture to %s.", (LPSTR)file);
+        set_status(msg);
+    }
+}
+
 static void paint_status(HWND hwnd)
 {
     PAINTSTRUCT ps;
@@ -1128,12 +3295,10 @@ static void paint_status(HWND hwnd)
     /* The sunken top edge every 3.1 status strip had */
     MoveTo(hdc, sr.left, sr.top);
     LineTo(hdc, sr.right, sr.top);
-    /* And the same edge down the side of the menu panel, so it reads as
-       a panel rather than as buttons loose on the background. */
-    if (bar_width()) {
-        MoveTo(hdc, rc.right - bar_width(), 0);
-        LineTo(hdc, rc.right - bar_width(), sr.top);
-    }
+    /* And the same edge under the launcher strip, so it reads as a
+       toolbar rather than as buttons loose on the background. */
+    MoveTo(hdc, rc.left, launch_h() - 1);
+    LineTo(hdc, rc.right, launch_h() - 1);
     SetBkMode(hdc, TRANSPARENT);
     SelectObject(hdc, GetStockObject(SYSTEM_FONT));
     SetTextColor(hdc, RGB(0, 0, 0));
@@ -1253,6 +3418,204 @@ BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
 /* Server settings. The one dialog the client cannot do without on a real
    machine: there is no command line there, so without this the only way
    to change the address is to rebuild the disk the program came on. */
+BOOL FAR PASCAL _export PicsDlgProc(HWND dlg, UINT msg, UINT wParam,
+                                    LONG lParam)
+{
+    (void)lParam;
+    switch (msg) {
+    case WM_INITDIALOG:
+        CheckDlgButton(dlg, IDC_ROOMPICS, g_room_pics);
+        return TRUE;
+
+    case WM_COMMAND:
+        switch (wParam) {
+        case IDOK:
+            g_room_pics = IsDlgButtonChecked(dlg, IDC_ROOMPICS) ? 1 : 0;
+            save_ini();
+            EndDialog(dlg, 1);
+            return TRUE;
+
+        case IDCANCEL:
+            EndDialog(dlg, 0);
+            return TRUE;
+        }
+        break;
+    }
+    return FALSE;
+}
+
+/* Settings > Pictures. The new answer goes to the proxy immediately if
+   the link is up; a later connect re-sends it either way. */
+static void pics_dialog(HWND owner)
+{
+    HINSTANCE inst = (HINSTANCE)GetWindowWord(owner, GWW_HINSTANCE);
+    FARPROC fn = MakeProcInstance((FARPROC)PicsDlgProc, inst);
+    int r = DialogBox(inst, "LLM64PICS", owner, (DLGPROC)fn);
+
+    FreeProcInstance(fn);
+    if (r == 1 && net_state() == NET_UP) {
+        send_options();
+        set_status(g_room_pics
+                   ? "Every location will be illustrated."
+                   : "Only asked-for pictures now.");
+    }
+}
+
+/* ---------------------------------------------------------------- */
+/* Conversations: the browser's dialog side                          */
+/* ---------------------------------------------------------------- */
+
+static void conv_fill(HWND dlg)
+{
+    HWND lb = GetDlgItem(dlg, IDC_CONVLIST);
+    int i;
+
+    SendMessage(lb, LB_RESETCONTENT, 0, 0L);
+    if (g_conv_waiting) {
+        SendMessage(lb, LB_ADDSTRING, 0, (LONG)(LPSTR)"(loading...)");
+        return;
+    }
+    if (!g_conv_count) {
+        SendMessage(lb, LB_ADDSTRING, 0,
+                    (LONG)(LPSTR)"(no conversations yet)");
+        return;
+    }
+    for (i = 0; i < g_conv_count; i++)
+        SendMessage(lb, LB_ADDSTRING, 0, (LONG)(LPSTR)g_convs[i].title);
+    SendMessage(lb, LB_SETCURSEL, 0, 0L);
+    /* 'More' pages forward, wrapping home from the last page - the
+       C64's browser walks the same way. */
+    EnableWindow(GetDlgItem(dlg, IDC_CONVMORE),
+                 (g_conv_more_pages || g_conv_page > 0) ? TRUE : FALSE);
+}
+
+/* The selected row's entry, or -1. The placeholder rows above make a
+   selection index only trustworthy when real entries are listed. */
+static int conv_sel(HWND dlg)
+{
+    int i;
+
+    if (g_conv_waiting || !g_conv_count)
+        return -1;
+    i = (int)SendMessage(GetDlgItem(dlg, IDC_CONVLIST),
+                         LB_GETCURSEL, 0, 0L);
+    return (i >= 0 && i < g_conv_count) ? i : -1;
+}
+
+static void conv_send_id(unsigned char type, unsigned long id)
+{
+    unsigned char p[4];
+
+    p[0] = (unsigned char)(id & 0xFF);
+    p[1] = (unsigned char)((id >> 8) & 0xFF);
+    p[2] = (unsigned char)((id >> 16) & 0xFF);
+    p[3] = (unsigned char)((id >> 24) & 0xFF);
+    send_frame(type, p, 4);
+}
+
+BOOL FAR PASCAL _export ConvDlgProc(HWND dlg, UINT msg, UINT wParam,
+                                    LONG lParam)
+{
+    int i;
+    char q[96];
+
+    switch (msg) {
+    case WM_INITDIALOG:
+        g_convdlg = dlg;
+        conv_fill(dlg);
+        return TRUE;
+
+    case WM_CONVS_READY:
+        conv_fill(dlg);
+        return TRUE;
+
+    case WM_COMMAND:
+        /* Double-clicking a row is Load - every 1993 file box agrees. */
+        if (wParam == IDC_CONVLIST && HIWORD(lParam) == LBN_DBLCLK)
+            wParam = IDC_CONVLOAD;
+        switch (wParam) {
+        case IDC_CONVLOAD:
+            i = conv_sel(dlg);
+            if (i < 0)
+                return TRUE;
+            conv_send_id(MSG_LOAD_CONVERSATION, g_convs[i].id);
+            g_ack_quiet++;          /* the load leads with a bare ACK */
+            set_status("Loading conversation...");
+            EndDialog(dlg, 1);
+            return TRUE;
+
+        case IDC_CONVNEW:
+            EndDialog(dlg, 2);      /* the caller owns new_conversation */
+            return TRUE;
+
+        case IDC_CONVSTAR:
+            i = conv_sel(dlg);
+            if (i < 0)
+                return TRUE;
+            conv_send_id(MSG_STAR_CONVERSATION, g_convs[i].id);
+            g_ack_quiet++;
+            /* Re-list so the '*' prefix (the proxy renders it into the
+               title) appears without inventing client-side state. */
+            conv_request_page(g_conv_page);
+            conv_fill(dlg);
+            return TRUE;
+
+        case IDC_CONVDEL:
+            i = conv_sel(dlg);
+            if (i < 0)
+                return TRUE;
+            wsprintf(q, "Delete \"%s\"?\n\nThis cannot be undone.",
+                     (LPSTR)g_convs[i].title);
+            if (MessageBox(dlg, q, "Delete Conversation",
+                           MB_YESNO | MB_ICONQUESTION) != IDYES)
+                return TRUE;
+            conv_send_id(MSG_DELETE_CONVERSATION, g_convs[i].id);
+            g_ack_quiet++;
+            conv_request_page(g_conv_page);
+            conv_fill(dlg);
+            return TRUE;
+
+        case IDC_CONVMORE:
+            g_conv_page = g_conv_more_pages ? g_conv_page + 1 : 0;
+            conv_request_page(g_conv_page);
+            conv_fill(dlg);
+            return TRUE;
+
+        case IDCANCEL:
+            EndDialog(dlg, 0);
+            return TRUE;
+        }
+        break;
+
+    case WM_DESTROY:
+        g_convdlg = NULL;
+        break;
+    }
+    return FALSE;
+}
+
+/* Put the browser up. The list request goes out BEFORE the dialog so
+   the round trip overlaps the window appearing; the frames land in
+   conv_list_frame because the modal loop still dispatches the frame
+   window's socket messages. */
+static int conv_dialog(HWND owner)
+{
+    HINSTANCE inst = (HINSTANCE)GetWindowWord(owner, GWW_HINSTANCE);
+    FARPROC fn;
+    int r;
+
+    if (net_state() != NET_UP) {
+        say(2, "Not connected. Use File > Connect.");
+        return 0;
+    }
+    g_conv_page = 0;
+    conv_request_page(0);
+    fn = MakeProcInstance((FARPROC)ConvDlgProc, inst);
+    r = DialogBox(inst, "LLM64CONVS", owner, (DLGPROC)fn);
+    FreeProcInstance(fn);
+    return r;
+}
+
 BOOL FAR PASCAL _export ServerDlgProc(HWND dlg, UINT msg, UINT wParam,
                                       LONG lParam)
 {
@@ -1367,7 +3730,8 @@ static void menu_run(HWND owner, int idx)
         say(12, "Copying the client disk is a C64 problem.");
         break;
     case 'c':
-        say(12, "The conversation manager is not built yet.");
+        if (conv_dialog(owner) == 2)
+            new_conversation();
         break;
     case 'j':
         say(12, "The jukebox is not built yet - music is MIDI here, "
@@ -1403,12 +3767,15 @@ static HWND conv_create(HWND frame)
     mcs.style   = 0;
     mcs.lParam  = 0;
 
+    /* Same guard as pic_open: creation-time WM_SIZEs are not the user
+       arranging the desk. */
+    g_in_layout = 1;
     w = (HWND)(WORD)SendMessage(g_mdi, WM_MDICREATE, 0,
                                 (LONG)(LPMDICREATESTRUCT)&mcs);
-    /* With a single document the workspace border is all cost and no
-       information, so open maximized anyway. */
-    if (w)
-        SendMessage(g_mdi, WM_MDIMAXIMIZE, (WPARAM)w, 0L);
+    g_in_layout = 0;
+    /* Not maximized any more: the desk holds two documents now, and
+       layout_default puts this one beside the picture. Maximizing is
+       one double-click away for anyone who wants the old look. */
     return w;
 }
 
@@ -1417,7 +3784,6 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
 {
     char err[128];
     TEXTMETRIC tm;
-    LOGFONT lf;
     HDC hdc;
     CLIENTCREATESTRUCT ccs;
 
@@ -1427,8 +3793,6 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         /* Colours before anything can paint: the background brush lives
            with the theme, and WM_CTLCOLOR hands it out. */
         theme_apply(g_theme);
-        CheckMenuItem(GetMenu(hwnd), IDM_SHOWBAR, MF_BYCOMMAND
-            | (g_bar_show ? MF_CHECKED : MF_UNCHECKED));
         if (!sb_init(&g_conv_view.sb)) {
             MessageBox(hwnd, "Not enough memory for the transcript.",
                        APP_TITLE, MB_OK | MB_ICONSTOP);
@@ -1444,27 +3808,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         GetTextMetrics(hdc, &tm);
         g_cw = tm.tmAveCharWidth;
         g_ch = tm.tmHeight;
-
-        /* A bold face for the proxy's bold markers. It has to keep the
-           cell width or the pane stops being a grid, so ask for the
-           measured width explicitly and check we got it. */
-        g_font_bold = g_font;
-        if (GetObject(g_font, sizeof(lf), (LPSTR)&lf)) {
-            HFONT f;
-            lf.lfWeight = FW_BOLD;
-            lf.lfWidth  = g_cw;
-            f = CreateFontIndirect(&lf);
-            if (f) {
-                SelectObject(hdc, f);
-                GetTextMetrics(hdc, &tm);
-                if (tm.tmAveCharWidth == g_cw)
-                    g_font_bold = f;
-                else
-                    DeleteObject(f);
-                SelectObject(hdc, g_font);
-                GetTextMetrics(hdc, &tm);
-            }
-        }
+        fonts_init(hdc);
         ReleaseDC(hwnd, hdc);
 
         /* The MDI client owns the documents. It wants the Window menu
@@ -1479,11 +3823,26 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                              (LPSTR)&ccs);
         if (!g_mdi)
             return -1;
+        launch_create(hwnd);
         g_conv = conv_create(hwnd);
+        /* The picture window is part of the default desk, empty or not:
+           an adventure fills it, and until then it says what it is.
+           So are the Music controls, tucked in their corner - and the
+           conversation takes the keyboard back from whatever opened
+           last. */
+        pic_open();
+        mus_open_wnd();
+        if (g_conv)
+            SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_conv, 0L);
         return 0;
 
     case WM_SIZE:
         frame_layout(hwnd);
+        /* Keep the two-document desk proportioned to the frame - but
+           only while it is still ours. The first drag makes it the
+           user's, and Window > Default Layout is the way back. */
+        if (!g_user_arranged)
+            layout_default();
         /* Text written before the pane knew its size used to wrap at the
            10x10 placeholder width and stay that way; now it re-flows on
            the first WM_SIZE like everything else. The session still
@@ -1509,6 +3868,11 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         if (event == NET_EV_CONNECT) {
             if (net_state() == NET_UP) {
                 set_status("Connected. Pinging...");
+                /* First frame on the wire: everything the proxy sends
+                   after it is shaped for this machine rather than for a
+                   6510 (see send_hello). */
+                send_hello();
+                send_options();
                 send_frame(MSG_PING, NULL, 0);
                 /* Fetch the menu now so F1 has something in it. */
                 send_frame(MSG_GET_MENU, NULL, 0);
@@ -1520,11 +3884,44 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
             pump_socket();
         } else if (event == NET_EV_CLOSE) {
             print_abort();
+            img_abort();
+            mid_abort();
             set_status(err);
             say(2, "Disconnected.");
         }
         return 0;
     }
+
+    case MM_MCINOTIFY:
+        /* The tune ran out. Background music loops until told
+           otherwise - the same contract the SID player has. */
+        if (wParam == MCI_NOTIFY_SUCCESSFUL && g_mus_state == 1
+                && g_mus_opened) {
+            mciSendString("seek llm64mid to start", NULL, 0, NULL);
+            mciSendString("play llm64mid notify", NULL, 0, hwnd);
+        }
+        return 0;
+
+    /* A 256-colour driver arbitrates the hardware palette through
+       these; the picture's colours are the only ones we bargain for.
+       On a deep display neither ever matters. */
+    case WM_QUERYNEWPALETTE:
+        if (g_pic_hpal && g_pic_wnd) {
+            HDC dc = GetDC(g_pic_wnd);
+            HPALETTE old = SelectPalette(dc, g_pic_hpal, FALSE);
+            UINT n = RealizePalette(dc);
+            SelectPalette(dc, old, FALSE);
+            ReleaseDC(g_pic_wnd, dc);
+            if (n)
+                InvalidateRect(g_pic_wnd, NULL, TRUE);
+            return n;
+        }
+        break;
+
+    case WM_PALETTECHANGED:
+        if ((HWND)wParam != hwnd && g_pic_hpal && g_pic_wnd)
+            InvalidateRect(g_pic_wnd, NULL, TRUE);
+        break;
 
     case WM_COMMAND:
         switch (wParam) {
@@ -1549,6 +3946,15 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
 
         case IDM_SERVER:
             server_dialog(hwnd);
+            return 0;
+
+        case IDM_PICSET:
+            pics_dialog(hwnd);
+            return 0;
+
+        case IDM_CONVS:
+            if (conv_dialog(hwnd) == 2)
+                new_conversation();
             return 0;
 
         case IDM_MENU: {
@@ -1578,14 +3984,24 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                 g_conv = conv_create(hwnd);
             return 0;
 
-        case IDM_SHOWBAR:
-            g_bar_show = !g_bar_show;
-            CheckMenuItem(GetMenu(hwnd), IDM_SHOWBAR, MF_BYCOMMAND
-                | (g_bar_show ? MF_CHECKED : MF_UNCHECKED));
-            bar_rebuild(hwnd);
-            frame_layout(hwnd);
-            InvalidateRect(hwnd, NULL, TRUE);
-            save_ini();
+        case IDM_PICTURE:
+            /* Bring the picture back if it was closed, or to the front
+               if it is buried. */
+            if (g_pic_wnd)
+                SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_pic_wnd, 0L);
+            else
+                pic_open();
+            return 0;
+
+        case IDM_DEFLAYOUT:
+            if (!g_pic_wnd)
+                pic_open();
+            g_user_arranged = 0;
+            layout_default();
+            return 0;
+
+        case IDM_SAVEPIC:
+            do_save_pic(hwnd);
             return 0;
 
         case IDM_THEME_PAPER:
@@ -1608,10 +4024,62 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         case IDM_TILE:    SendMessage(g_mdi, WM_MDITILE, 0, 0L); return 0;
         case IDM_ARRANGE: SendMessage(g_mdi, WM_MDIICONARRANGE, 0, 0L); return 0;
         }
-        /* The menu panel's buttons are children of the frame, so their
-           clicks arrive here. */
-        if (wParam >= IDC_BARBASE && wParam < IDC_BARBASE + MAX_MENU) {
-            menu_run(hwnd, (int)(wParam - IDC_BARBASE));
+        /* The launcher's buttons are children of the frame, so their
+           clicks arrive here. Each toggles its window; the transcript,
+           the shelf and the menu all outlive their windows, so closing
+           costs nothing but the pixels. */
+        if (wParam >= IDC_LAUNCHBASE
+                && wParam < IDC_LAUNCHBASE + LAUNCH_N) {
+            switch ((int)(wParam - IDC_LAUNCHBASE)) {
+            case 0:
+                /* The Menu button is the F1 dialog, not a toggle.
+                   Posted rather than called: the modal box should open
+                   after this WM_COMMAND finishes, not inside it. */
+                PostMessage(hwnd, WM_COMMAND, IDM_MENU, 0L);
+                return 0;
+            case 1:
+                if (g_conv)
+                    SendMessage(g_mdi, WM_MDIDESTROY, (WPARAM)g_conv, 0L);
+                else
+                    g_conv = conv_create(hwnd);
+                break;
+            case 2:
+                if (g_pic_wnd)
+                    SendMessage(g_mdi, WM_MDIDESTROY,
+                                (WPARAM)g_pic_wnd, 0L);
+                else
+                    pic_open();
+                break;
+            case 3:
+                /* The Music window floats over the desk rather than
+                   claiming a column - it is controls, not a document. */
+                if (g_mus_wnd)
+                    SendMessage(g_mdi, WM_MDIDESTROY,
+                                (WPARAM)g_mus_wnd, 0L);
+                else
+                    mus_open_wnd();
+                break;
+            case 4:
+                if (g_chr_wnd)
+                    SendMessage(g_mdi, WM_MDIDESTROY,
+                                (WPARAM)g_chr_wnd, 0L);
+                else
+                    sheet_open(CHR_CLASS, &g_chr_wnd, 80, 30, 260, 230);
+                break;
+            case 5:
+                if (g_inv_wnd)
+                    SendMessage(g_mdi, WM_MDIDESTROY,
+                                (WPARAM)g_inv_wnd, 0L);
+                else
+                    sheet_open(INV_CLASS, &g_inv_wnd, 130, 70, 220, 190);
+                break;
+            }
+            if (!g_user_arranged)
+                layout_default();
+            /* The click parked the focus on a toolbar button; give it
+               back to something that can type. */
+            if (g_input)
+                SetFocus(g_input);
             return 0;
         }
         /* Anything else is either a document window being picked off the
@@ -1623,10 +4091,30 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
     case WM_DESTROY: {
         int i;
         net_shutdown();
-        if (g_font_bold && g_font_bold != g_font)
-            DeleteObject(g_font_bold);
+        /* From 1: g_fonts[0] is the stock fixed font and is not ours
+           to delete. */
+        {
+            unsigned i;
+            for (i = 1; i < FONT_VARIANTS; i++)
+                if (g_fonts[i])
+                    DeleteObject(g_fonts[i]);
+        }
         if (g_bg_brush)
             DeleteObject(g_bg_brush);
+        if (g_pic_hpal)
+            DeleteObject(g_pic_hpal);
+        if (g_pic_mem)
+            GlobalFree(g_pic_mem);
+        if (g_img_mem)
+            GlobalFree(g_img_mem);
+        shelf_clear();
+        mus_mci_close();
+        if (g_mid_mem)
+            GlobalFree(g_mid_mem);
+        if (g_mus_file[0]) {
+            OFSTRUCT of;
+            OpenFile(g_mus_file, &of, OF_DELETE);
+        }
         for (i = 0; i < MAX_PAPER; i++)
             if (g_paper[i].live)
                 sb_free(&g_paper[i].sb);
@@ -1667,7 +4155,8 @@ static void load_ini(void)
     GetPrivateProfileString("Display", "Theme", "paper",
                             buf, sizeof(buf), g_ini);
     g_theme = (buf[0] == 's' || buf[0] == 'S') ? THEME_SCREEN : THEME_PAPER;
-    g_bar_show = GetPrivateProfileInt("Display", "MenuBar", 1, g_ini) ? 1 : 0;
+    g_room_pics = GetPrivateProfileInt("Pictures", "EveryRoom", 0, g_ini)
+        ? 1 : 0;
 }
 
 static void save_ini(void)
@@ -1680,8 +4169,8 @@ static void save_ini(void)
     WritePrivateProfileString("Display", "Theme",
                               g_theme == THEME_SCREEN ? "screen" : "paper",
                               g_ini);
-    WritePrivateProfileString("Display", "MenuBar",
-                              g_bar_show ? "1" : "0", g_ini);
+    WritePrivateProfileString("Pictures", "EveryRoom",
+                              g_room_pics ? "1" : "0", g_ini);
 }
 
 int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
@@ -1739,6 +4228,42 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
         wc.hbrBackground = GetStockObject(LTGRAY_BRUSH);
         wc.lpszMenuName = NULL;
         wc.lpszClassName = PAPER_CLASS;
+        if (!RegisterClass(&wc))
+            return 1;
+
+        /* The picture. No class background: pic_paint covers every
+           pixel itself, empty state included. */
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = PicProc;
+        wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+        wc.hbrBackground = NULL;
+        wc.lpszMenuName = NULL;
+        wc.lpszClassName = PIC_CLASS;
+        if (!RegisterClass(&wc))
+            return 1;
+
+
+        /* The Music window: playback controls for the MIDI pipeline. */
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = MusProc;
+        wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+        wc.hbrBackground = GetStockObject(LTGRAY_BRUSH);
+        wc.lpszMenuName = NULL;
+        wc.lpszClassName = MUS_CLASS;
+        if (!RegisterClass(&wc))
+            return 1;
+
+        /* The sheet windows: the STATE block's two sidebars. */
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = ChrProc;
+        wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+        wc.hbrBackground = GetStockObject(LTGRAY_BRUSH);
+        wc.lpszMenuName = NULL;
+        wc.lpszClassName = CHR_CLASS;
+        if (!RegisterClass(&wc))
+            return 1;
+        wc.lpfnWndProc = InvProc;
+        wc.lpszClassName = INV_CLASS;
         if (!RegisterClass(&wc))
             return 1;
 

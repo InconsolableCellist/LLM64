@@ -4,6 +4,13 @@
 #   make run        -> build and launch it under Wine
 #   make devproxy   -> mock LLM + proxy on a scratch port (see tools/)
 #   make test       -> host-compiled unit test of the wire protocol
+#   make floppy     -> build/llm64.img, a 1.44 MB disk with the EXE + INI
+#   make vm-in      -> rebuild the floppy and insert it in a running VM
+#   make vm-out     -> eject it
+#
+# `floppy` needs mtools (mformat/mcopy) - the one dependency here that
+# is not the compiler. It is packaged everywhere: pacman -S mtools,
+# apt install mtools, dnf install mtools.
 #
 # Open Watcom is not packaged on most distributions. Fetch the snapshot
 # and point WATCOM at it:
@@ -12,7 +19,13 @@
 #   curl -LO https://github.com/open-watcom/open-watcom-v2/releases/download/Current-build/ow-snapshot.tar.xz
 #   mkdir open-watcom-v2 && tar -xf ow-snapshot.tar.xz -C open-watcom-v2
 
-WATCOM  ?= $(HOME)/Programs/open-watcom-v2
+# Take the first snapshot that actually exists, so a machine that
+# unpacked it somewhere else does not need WATCOM= on every invocation.
+# The documented path is last as the fallback, so when nothing is
+# installed the compiler-not-found error still names the place to put it.
+WATCOM  ?= $(firstword $(wildcard $(HOME)/Programs/open-watcom-v2 \
+                                  $(HOME)/opt/open-watcom-v2) \
+                       $(HOME)/Programs/open-watcom-v2)
 OWBIN   := $(WATCOM)/binl64
 export WATCOM
 # wcl shells out to wcc and wlink by name, so they have to be on PATH
@@ -40,10 +53,14 @@ PORT ?= 6400
 # A 1.44 MB floppy image is how the binary gets into a VM or onto real
 # hardware. QEMU's user-mode networking puts the host at 10.0.2.2 as
 # seen from the guest, so that is what the INI on it points at.
+#
+# A proxy on another box is reached by its LAN address instead - slirp
+# NATs out through the host, so the guest gets wherever the host can go:
+#   make floppy VMHOST=192.168.1.21 VMPORT=6400
 VMHOST ?= 10.0.2.2
 VMPORT ?= 6410
 
-.PHONY: all run devproxy test floppy clean
+.PHONY: all run devproxy test floppy vm-in vm-out clean
 
 all: $(EXE)
 
@@ -54,7 +71,7 @@ build/%.obj: src/%.c | build
 	$(OWBIN)/wcc $(CFLAGS) -fo=$@ $<
 
 $(EXE): $(OBJ) $(RC) | build
-	$(OWBIN)/wcl $(LFLAGS) -fe=$@ $(OBJ) winsock.lib
+	$(OWBIN)/wcl $(LFLAGS) -fe=$@ $(OBJ) winsock.lib commdlg.lib mmsystem.lib
 	$(OWBIN)/wrc -q -bt=windows -i=$(WATCOM)/h/win -i=include -fo=build/llm64.res $(RC) $@
 	@rm -f __wcl_*.lnk
 
@@ -86,6 +103,15 @@ floppy: $(EXE)
 	@echo
 	@echo "-> $(CURDIR)/build/llm64.img  (A: = $(VMHOST):$(VMPORT))"
 	@echo "   attach to QEMU with:  -fda $(CURDIR)/build/llm64.img"
+
+# ...or hand it to a VM that is already up, which is the actual test
+# loop: edit, `make vm-in`, and the guest sees the new build without
+# leaving Windows. tools/vmfloppy.sh explains why it ejects first.
+vm-in: floppy
+	./tools/vmfloppy.sh in
+
+vm-out:
+	./tools/vmfloppy.sh out
 
 clean:
 	rm -rf build

@@ -36,8 +36,14 @@
 #define MSG_GET_NOWPLAYING      0x3C
 #define MSG_FAV_TUNE            0x3D
 #define MSG_SET_BAUD            0x3E
+#define MSG_CLIENT_HELLO        0x3F
 #define MSG_ACK                 0x40
 #define MSG_NAK                 0x41
+/* [opt][value], fire-and-forget like SET_BAUD. Session toggles the
+   proxy has no config lever for because they are the PLAYER's call -
+   room_pics may cost real API money per picture. */
+#define MSG_SET_OPTION          0x43
+#define OPT_ROOM_PICS           1
 
 /* Proxy -> client */
 #define MSG_CHAT_CHUNK          0x50
@@ -62,6 +68,39 @@
 #define MSG_PRINT_DATA          0x63
 #define MSG_PRINT_END           0x64
 
+/* MIDI music, sent only to a client that claimed CAP_MIDI. The file
+   ships whole - the client hands it to MCI's sequencer, and synthesis
+   is the machine's business (FM, MT-32, a SoundFont under emulation).
+
+   MIDI_BEGIN:  0     flow window, data frames per ACK
+                1-4   total length in bytes, LE
+                5..   title\0 author\0 mood\0   (the controls' display)
+   MIDI_DATA:   [offset:4 LE][bytes] - 4-byte offsets like IMG fmt=2,
+                because a .MID can pass 64 KB
+   MIDI_END:    play it */
+#define MSG_MIDI_BEGIN          0x65
+#define MSG_MIDI_DATA           0x66
+#define MSG_MIDI_END            0x67
+
+/* The adventure's normalized [[STATE:]] block, verbatim + NUL, sent
+   only to a client that claimed CAP_STATE_JSON. Compact json.dumps
+   output by contract - double-quoted keys, no whitespace - which is
+   what lets a 16-bit client scan it without a real JSON parser. The
+   Character and Inventory windows render from it; an empty object
+   clears them (new conversation). */
+#define MSG_STATE_JSON          0x68
+
+/* The conversation's picture roster, newest first: [count] then
+   [n][title\0] per entry, n being the /pic <n> index that re-fetches
+   it. Sent on load and new-conversation; an empty roster clears the
+   browser. The client lists them as "ghosts" - titles without bytes -
+   and a click on one asks the server for the real thing. */
+#define MSG_PIC_LIST            0x69
+
+/* The mood vocabulary of the library this machine plays from:
+   [count] then [mood\0] per entry. Fills the Music window's picker. */
+#define MSG_MOOD_LIST           0x6A
+
 /* Not wire values: parser verdicts outside the protocol's type range */
 #define WIRE_NONE               0x00
 #define WIRE_CRC_FAIL           0xFE
@@ -72,7 +111,71 @@
 #define MARK_CLOSE       0x01
 #define MARK_BOLD_ON     0x02
 #define MARK_BOLD_OFF    0x03
-#define MARK_COLOR_BASE  0x10   /* 0x10|c, c = 1..14 */
+#define MARK_COLOR_BASE  0x10   /* 0x10|c, c = 1..15 */
+
+/* Rich text: only ever sent to a client that asked for it in
+   CLIENT_HELLO (see below). A C64 has one face, so these do not exist
+   on the wire to it - the proxy strips the tags instead. */
+#define MARK_ITALIC_ON   0x04
+#define MARK_ITALIC_OFF  0x05
+#define MARK_ULINE_ON    0x06
+#define MARK_ULINE_OFF   0x07
+#define MARK_HEAD_ON     0x0E
+#define MARK_HEAD_OFF    0x0F
+
+/* Colour past the fifteen the one-byte marker can hold:
+
+       0x1B 'C' (0x40 | slot)        slot 0..63
+
+   Three bytes, and the operand is biased into 0x40-0x7F so it can never
+   be mistaken for a NUL, a newline, or another marker - which is what
+   lets the scanner resynchronise on any byte in the stream. */
+#define MARK_ESC         0x1B
+#define MARK_ESC_COLOR   0x43   /* 'C' */
+#define MARK_ESC_BIAS    0x40
+#define MARK_ESC_LEN     3
+
+/* CLIENT_HELLO payload (llm64_proxy/src/profiles.py), all little-endian:
+
+       0     hello version (1)
+       1     text width in columns, 0 = unknown
+       2-3   the largest payload our frame buffer can hold
+       4-5   capability bits
+       6     profile name length
+       7..   profile name, ASCII
+
+   Capability bits are a WIRE CONTRACT: never renumber one, because a
+   proxy built later still has to read a client built today. Announce
+   only what this build can actually RENDER - claiming rich text before
+   the painter handles it makes the proxy send markers that would print
+   as literal characters. */
+#define HELLO_VERSION           1
+#define CAP_ZERO_WIDTH_MARKERS  0x0001  /* markers occupy no cell */
+#define CAP_RICH_TEXT           0x0002  /* italic/underline/head, 64 colours */
+#define CAP_DIB_IMAGES          0x0004  /* images as 8-bit DIBs, fmt 2 */
+#define CAP_MIDI                0x0008  /* music as .MID files */
+#define CAP_STATE_JSON          0x0020  /* STATE forwarded for sheets */
+
+/* IMG_BEGIN's first payload byte says what is coming. 0 and 1 are the
+   C64's hires and multicolor blobs; 2 is ours, sent only to a client
+   that claimed CAP_DIB_IMAGES:
+
+       0     2
+       1     flow window, in data frames per ACK
+       2     keep_music flag
+       3-4   pixel width, LE
+       5-6   pixel height, LE
+       7-10  total DIB length in bytes, LE
+       11..  title, NUL-terminated
+
+   What follows in IMG_DATA is a packed 8-bit DIB - BITMAPINFOHEADER,
+   256 RGBQUADs, bottom-up rows - the thing StretchDIBits eats whole.
+   fmt=2 data frames tag their offset with FOUR bytes, not the two the
+   C64 formats use: a quarter-megabyte DIB laps a 16-bit offset. */
+#define IMG_FMT_HIRES    0
+#define IMG_FMT_MC       1
+#define IMG_FMT_DIB8     2
+#define IMG_DIB_HDR      11     /* fixed bytes before the title */
 
 enum wire_state {
     WS_SYNC = 0,

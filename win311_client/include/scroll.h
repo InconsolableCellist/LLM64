@@ -19,9 +19,15 @@
  * an emulator or a proxy anywhere in the loop.
  *
  * Text is stored with the proxy's in-band markers still in it (docs/08:
- * 0x01 close, 0x02/0x03 bold, 0x10|c colour). They occupy no screen
- * cell, which is precisely why wrapping has to be marker-aware and the
- * spike's byte-counting wrap was subtly short.
+ * 0x01 close, 0x02/0x03 bold, 0x10|c colour, and for a rich-text client
+ * the italic/underline/heading markers and the three-byte extended
+ * colour). They occupy no screen cell, which is precisely why wrapping
+ * has to be marker-aware and the spike's byte-counting wrap was subtly
+ * short.
+ *
+ * A marker is not always ONE byte: the extended colour marker is three.
+ * Scan with sb_marker_len() rather than testing bytes, or the operand
+ * bytes get counted as glyphs and every line carrying one wraps short.
  */
 
 #ifndef SCROLL_H
@@ -83,6 +89,22 @@ typedef struct {
     unsigned long total_rows;   /* committed rows; the open line is extra */
 } Scrollback;
 
+/* Colour slots. The one-byte marker carries 1..15; the extended marker
+   reaches 63, so a painter must mask with this and not with 0x0F. */
+#define SB_COLOR_MASK   0x3F
+
+/* Character attributes, as a bitmask rather than a field each: the wrap
+   iterator carries this state across every row of a line and through
+   every re-flow, and one byte to copy stays one byte however many
+   attributes the proxy learns to send.
+
+   The values are 1/2/4 so that the bold/italic/underline bits ARE an
+   index into the font table - see attr_font in main.c. */
+#define SB_ATTR_BOLD    0x01
+#define SB_ATTR_ITALIC  0x02
+#define SB_ATTR_ULINE   0x04
+#define SB_ATTR_HEAD    0x08
+
 /* One display row: a slice of a logical line, plus the rendering state
    in force at its first cell. text points into the arena or the open
    buffer and is valid until the next append. */
@@ -91,7 +113,7 @@ typedef struct {
     unsigned      len;
     unsigned char color;    /* colour here */
     unsigned char base;     /* the logical line's colour, for MARK_CLOSE */
-    unsigned char bold;
+    unsigned char attr;     /* SB_ATTR_* in force at the first cell */
 } SbRow;
 
 /* Wrap iterator over one logical line. The single implementation of the
@@ -103,7 +125,7 @@ typedef struct {
     unsigned      pos;
     unsigned char color;
     unsigned char base;
-    unsigned char bold;
+    unsigned char attr;
     int           done;
 } SbWrap;
 
@@ -156,7 +178,24 @@ void     sb_wrap_begin(SbWrap *w, const char *text, unsigned len,
                        unsigned cols, unsigned char base);
 int      sb_wrap_next(SbWrap *w, SbRow *out);
 
-/* Nonzero if this byte is an in-band marker and so occupies no cell. */
+/* Nonzero if this byte STARTS an in-band marker and so occupies no
+   cell. Kept because most markers are one byte and a caller that only
+   asks "is this a glyph?" reads better for it - but anything WALKING the
+   text has to use sb_marker_len, or it will treat the two operand bytes
+   of an extended colour marker as text. */
 int      sb_is_marker(unsigned char c);
+
+/* Fold the marker at p into the running render state. THE painter and
+   THE wrapper both call this, and that is the point: a row painted with
+   different state than it was wrapped with is a row whose colours creep
+   as the window resizes. One state machine, two callers. */
+void     sb_mark_apply(const char *p, unsigned len, unsigned char base,
+                       unsigned char *color, unsigned char *attr);
+
+/* Length in bytes of the marker starting at p, or 0 if p is a glyph.
+   `remaining` bounds the read: a marker truncated by the end of the line
+   is not a marker, because rows are slices of an arena block and reading
+   past one is a fault in protected mode, not a stray character. */
+unsigned sb_marker_len(const char *p, unsigned remaining);
 
 #endif /* SCROLL_H */

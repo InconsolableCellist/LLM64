@@ -48,6 +48,37 @@ MAX_BYTES = 16 * 1024 * 1024
 LEGACY_DIR = Path.home() / "Pictures" / "nano-banana"
 PROMPT_TOKEN = "{PROMPT}"
 
+# Everything else a ComfyUI workflow may template, and what it defaults to.
+#
+# The defaults describe a Flux-2 klein run because that is what the shipped
+# workflow uses, but nothing here is Flux-specific: a token only does
+# anything if the workflow actually contains it, so a Stable Diffusion
+# workflow that uses {STEPS} and {CFG} and ignores {SHIFT} is fine.
+#
+# GEOMETRY IS THE ONE WORTH READING. The C64 frame is 320x200 and
+# imaging.py letterboxes into it preserving aspect, so a square
+# generation loses a third of the picture to black bars before the
+# dithering even starts. 1024x640 is the same 1.6:1 and fills it.
+COMFY_DEFAULTS = {
+    "STYLE": "",            # empty: [images].style_prefix does the styling
+    "NEGATIVE": ("text, watermark, signature, letterboxing, black bars, "
+                 "border, frame, photographic, blurry, low contrast"),
+    "WIDTH": 1024,
+    "HEIGHT": 640,
+    "STEPS": 8,
+    "CFG": 1.0,
+    "SAMPLER": "res_multistep",
+    "SCHEDULER": "simple",
+    "SHIFT": 3.0,
+    "MODEL": "flux-2-klein-9b-fp8.safetensors",
+    "CLIP": "qwen_3_8b_fp8mixed.safetensors",
+    "VAE": "flux2-vae.safetensors",
+}
+# Config keys are the lowercased token names, so [images.comfyui] steps = 12
+# fills {STEPS}. `cfg` is the CFG scale, not the config table.
+COMFY_INT_KEYS = ("WIDTH", "HEIGHT", "STEPS")
+COMFY_FLOAT_KEYS = ("CFG", "SHIFT")
+
 
 class ImageGenError(Exception):
     """Any backend failure. The message may reach the proxy log but never
@@ -283,10 +314,17 @@ class OpenAIImagesBackend(ImageBackend):
 class ComfyUIBackend(ImageBackend):
     """Local ComfyUI: submit the user's API-format workflow, poll, fetch.
 
-    The workflow is a local file the user exported; {PROMPT} inside any
-    node input string is where the scene description lands. Substitution
-    happens on the parsed structure, never on raw JSON text, so no
-    escaping bug is possible."""
+    The workflow is a local file the user exported. {PROMPT} inside any
+    node input string is where the scene description lands, and the tokens
+    in COMFY_DEFAULTS may appear anywhere alongside it - prompts, sizes,
+    step counts, model filenames. Substitution happens on the PARSED
+    structure and never on raw JSON text, so no escaping bug is possible.
+
+    A value that is EXACTLY one token keeps that token's type: "{WIDTH}"
+    becomes the integer 1024, not the string "1024", because ComfyUI
+    validates node input types and rejects the graph outright otherwise.
+    A token inside a longer string is textual, which is what makes
+    "{STYLE}{PROMPT}" work."""
 
     name = "comfyui"
     SEED_KEYS = ("seed", "noise_seed")
@@ -300,6 +338,41 @@ class ComfyUIBackend(ImageBackend):
         self.randomize_seed = bool(cfg.get("randomize_seed", True))
         self.data_dir = data_dir
         self._cache = None      # ((mtime_ns, size), workflow or None)
+
+        # Token values: the defaults, then whatever the config overrides,
+        # coerced because TOML gives a bare 8 as an int but "8" as a
+        # string and ComfyUI will not accept the second.
+        self.values = dict(COMFY_DEFAULTS)
+        for token, default in COMFY_DEFAULTS.items():
+            if token.lower() not in cfg:
+                continue
+            raw = cfg[token.lower()]
+            try:
+                if token in COMFY_INT_KEYS:
+                    self.values[token] = int(raw)
+                elif token in COMFY_FLOAT_KEYS:
+                    self.values[token] = float(raw)
+                else:
+                    self.values[token] = str(raw)
+            except (TypeError, ValueError):
+                logger.warning("ComfyUI: [images.comfyui] %s=%r is not a "
+                               "number, using %r",
+                               token.lower(), raw, default)
+        # A fixed seed reproduces one picture forever, which is useful for
+        # comparing prompts and useless for playing. None = vary.
+        self.seed = cfg.get("seed")
+        if self.seed is not None:
+            try:
+                self.seed = int(self.seed)
+            except (TypeError, ValueError):
+                logger.warning("ComfyUI: [images.comfyui] seed=%r is not an "
+                               "integer, varying instead", self.seed)
+                self.seed = None
+        # Anything else the workflow templates, for nodes this file has
+        # never heard of: [images.comfyui.vars] LORA = "foo.safetensors".
+        extra = cfg.get("vars") or {}
+        if isinstance(extra, dict):
+            self.values.update({str(k).upper(): v for k, v in extra.items()})
 
     @staticmethod
     def _node_inputs(graph):
@@ -342,18 +415,64 @@ class ComfyUIBackend(ImageBackend):
     def available(self):
         return self._load() is not None
 
+    def _tokens(self, prompt):
+        """{TOKEN} -> value, for this one run."""
+        tokens = {"{%s}" % k: v for k, v in self.values.items()}
+        tokens[PROMPT_TOKEN] = prompt
+        tokens["{SEED}"] = (self.seed if self.seed is not None
+                            else random.randrange(2 ** 31))
+        return tokens
+
+    @staticmethod
+    def _sub(value, tokens):
+        """One node input value with the tokens applied."""
+        if not isinstance(value, str):
+            return value
+        # Whole value is a single token: hand back the TYPED value, so a
+        # width stays an integer and passes ComfyUI's validation.
+        if value in tokens:
+            return tokens[value]
+        for token, replacement in tokens.items():
+            if token in value:
+                value = value.replace(token, str(replacement))
+        return value
+
+    @staticmethod
+    def _is_node(value):
+        return isinstance(value, dict) and "class_type" in value
+
     def _prepare(self, workflow, prompt):
-        graph = deepcopy(workflow)
+        # Only nodes are submitted. A workflow file is a thing a human has
+        # to read and edit, so it is allowed a "_comment" key explaining
+        # its tokens - and ComfyUI validates every top-level entry as a
+        # node, so that key has to be dropped rather than passed on.
+        graph = {k: deepcopy(v) for k, v in workflow.items()
+                 if self._is_node(v)}
+        tokens = self._tokens(prompt)
+        seen = set()
         for inputs in self._node_inputs(graph):
             for key, value in list(inputs.items()):
-                if isinstance(value, str) and PROMPT_TOKEN in value:
-                    inputs[key] = value.replace(PROMPT_TOKEN, prompt)
-                elif (self.randomize_seed and key in self.SEED_KEYS
-                      and isinstance(value, int)
-                      and not isinstance(value, bool)):
+                if isinstance(value, str):
+                    new = self._sub(value, tokens)
+                    if new != value:
+                        seen.update(t for t in tokens if t in value)
+                        inputs[key] = new
+                        continue
+                if (self.randomize_seed and key in self.SEED_KEYS
+                        and isinstance(value, int)
+                        and not isinstance(value, bool)):
+                    # A workflow with a literal seed rather than {SEED}.
                     # Without this ComfyUI dedupes identical prompts and
                     # every /pic returns the same cached picture.
                     inputs[key] = random.randrange(2 ** 31)
+        # A token that was meant to be filled and is not is silent
+        # otherwise: the run succeeds and quietly ignores the setting.
+        unused = [t for t in ("{STYLE}", "{NEGATIVE}", "{WIDTH}", "{HEIGHT}")
+                  if t not in seen]
+        if unused:
+            logger.debug("ComfyUI workflow %s has no %s - those settings "
+                         "do nothing for it",
+                         self.workflow_path.name, ", ".join(unused))
         return graph
 
     def _submit(self, graph):

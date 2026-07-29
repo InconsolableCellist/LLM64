@@ -23,6 +23,13 @@ port="${1:-6410}"
 bind="${2:-127.0.0.1}"
 art="$here/../build/dev"
 mkdir -p "$art/data"
+# The MIDI fixture library, so the Windows loop has music to test with
+# (the proxy reads <data_dir>/midi/moods.json; one tiny tune is enough
+# for the directive -> pick -> stream -> MCI dance).
+if [ ! -d "$art/data/midi" ]; then
+    cp -r "$(cd "$here/../.." && pwd)/emu/fixtures/midi" "$art/data/midi" \
+        2>/dev/null || true
+fi
 
 # The proxy's venv is gitignored, so a fresh worktree does not have one.
 # Borrow the main checkout's interpreter in that case - the code under

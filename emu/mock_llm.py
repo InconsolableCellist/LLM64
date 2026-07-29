@@ -8,6 +8,7 @@ test assertions are stable. Stdlib only.
 
 import argparse
 import json
+import re
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -79,6 +80,17 @@ class MockHandler(BaseHTTPRequestHandler):
                     "1. Brown the salted pork.\n"
                     "2. Add root vegetables and stock.\n"
                     "3. Simmer until the dragon calms.")
+        elif 'VISUAL CANON LEDGER' in upper:
+            # Canon build/update (docs/17). The marker appears only in
+            # those two questions - the "AUTHORITATIVE VISUAL CANON"
+            # block injected into compose questions is deliberately a
+            # different string, so this branch can never shadow the
+            # scene branch below. Deterministic ledger so tests can
+            # assert verbatim injection.
+            text = ('{"player": "a wiry kobold in a patched gray cloak '
+                    'with brass goggles", '
+                    '"npcs": {"Mara": "a stout innkeeper in '
+                    'grease-stained leathers"}, "places": {}}')
         elif 'CURRENT SCENE FOR AN ILLUSTRATOR' in upper:
             # Scene composition (docs/13): /pic now asks the model to WRITE
             # the image prompt from game state instead of sending a
@@ -113,10 +125,39 @@ class MockHandler(BaseHTTPRequestHandler):
             # marker transform runs. Both a colour run and **bold**.
             text = ('You approach the [color=grey]steel door[/color], '
                     'your torch guttering. Go **north** now.')
+        elif 'RICHTEST' in upper:
+            # Everything only a rich-text client can render: a colour past
+            # the C64's fifteen (so the three-byte extended marker), and
+            # each attribute. A C64 asking for this must see the words and
+            # none of the tags - which is the assertion worth making, so
+            # the same prompt is useful on both machines.
+            text = ('The [color=teal]brass astrolabe[/color] rests on '
+                    '[color=gold]gilded velvet[/color]. The plate reads '
+                    '[i]Ad Astra[/i], and the ledger beneath it is '
+                    '[u]countersigned[/u].\n'
+                    '[h]Chapter One[/h]\n'
+                    'A [color=crimson]cracked ruby[/color] holds the '
+                    'light. Go **north** now.')
         elif 'ATMOSPHERIC CAPTION' in upper:
             # Deterministic caption: the e2e converter probe bakes the
             # same text into its expected caption band
             text = 'The crystal deep hums with cold light.'
+        elif 'ROOMTEST' in upper:
+            # Location change on demand: "roomtest cellar" answers with a
+            # state block whose location is "cellar". Exercises the
+            # per-room picture flow (SET_OPTION room_pics), which fires
+            # on the location in [[STATE:]] and nothing else. After the
+            # scene branch above for the usual reason: the compose
+            # question embeds a transcript full of this keyword.
+            m = re.search(r'ROOMTEST\s+([A-Z]+)', upper)
+            room = m.group(1).lower() if m else 'nowhere'
+            text = ('[HP 10/10 | ' + room.title() + ']\n'
+                    'You step into the ' + room + '.\n'
+                    '[[STATE: {"hp":10,"maxhp":10,"gold":3,"score":25,'
+                    '"location":"' + room + '","inventory":'
+                    '["a rusty lantern","the crimson key"],'
+                    '"appearance":"a wiry traveler in a patched gray '
+                    'cloak","companions":["Mara the innkeeper"]}]]')
         elif 'BEGIN THE ADVENTURE' in upper:
             # Status bar (visible) + [[STATE]] block (stripped + saved
             # to meta) - the e2e asserts both behaviors

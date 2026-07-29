@@ -127,6 +127,221 @@ for cut in range(1, len(whole)):
 if stream(list(whole)) != want:
     failures.append("char-by-char stream did not match whole-string")
 
+# --- per-client profiles (docs/16 section 7) --------------------------
+#
+# The C64 swallows the space beside a tag because its marker occupies a
+# column. A client whose markers are zero-width must keep that space, or
+# every coloured phrase loses one on each side.
+
+from src.markup import (M_ITALIC_ON, M_ITALIC_OFF, M_ULINE_ON, M_ULINE_OFF,
+                        M_HEAD_ON, M_HEAD_OFF, M_ESC, ESC_COLOR,
+                        ESC_OPERAND_BIAS, prompt_snippet)
+from src.profiles import (C64, WIN16, ClientProfile, from_hello,
+                          CAP_ZERO_WIDTH_MARKERS, CAP_RICH_TEXT,
+                          PALETTE_RICH, WIRE_COLORS)
+
+
+def visible(data: bytes, profile) -> str:
+    """What the client actually shows. C64 markers draw as a space;
+    zero-width markers draw as nothing at all, and the extended colour
+    marker takes its two operand bytes with it."""
+    out = []
+    i = 0
+    while i < len(data):
+        b = data[i]
+        if b == M_ESC and profile.rich_text and i + 2 < len(data):
+            i += 3           # ESC, verb, operand - all consumed
+            continue
+        if b < 0x20 and b not in (0x0A, 0x0D):
+            out.append(' ' if profile.marker_cells else '')
+        else:
+            out.append(chr(b))
+        i += 1
+    return ''.join(out)
+
+
+plain = "You see a steel door ahead."
+src = "You see a [color=grey]steel door[/color] ahead."
+
+# The headline defect: identical on screen for BOTH clients, by
+# different means - the C64 by swallowing a space it gets back as a
+# marker cell, the Windows client by never giving it up.
+check("c64 spacing survives", visible(colorize_for_wire(src, C64), C64), plain)
+check("win16 spacing survives",
+      visible(colorize_for_wire(src, WIN16), WIN16), plain)
+check("win16 keeps the space the c64 swallows",
+      colorize_for_wire(src, WIN16),
+      b"You see a " + bytes([GREY]) + b"steel door" + bytes([M_CLOSE])
+      + b" ahead.")
+
+# The default must not have moved: every existing caller passes no
+# profile at all, and a C64 in the field cannot be rebuilt.
+check("default profile is the c64, byte for byte",
+      colorize_for_wire(src), colorize_for_wire(src, C64))
+
+# --- attributes -------------------------------------------------------
+
+attr = "the [i]Aeon Codex[/i], [u]signed[/u], [h]Chapter One[/h]"
+check("rich text emits attribute markers",
+      colorize_for_wire(attr, WIN16),
+      b"the " + bytes([M_ITALIC_ON]) + b"Aeon Codex" + bytes([M_ITALIC_OFF])
+      + b", " + bytes([M_ULINE_ON]) + b"signed" + bytes([M_ULINE_OFF])
+      + b", " + bytes([M_HEAD_ON]) + b"Chapter One" + bytes([M_HEAD_OFF]))
+
+# One typeface means the tag strips, exactly as an unknown colour does.
+# What must never happen is a bracket reaching the screen.
+c64_attr = visible(colorize_for_wire(attr, C64), C64)
+check("a c64 sees the words and none of the tags", c64_attr,
+      "the Aeon Codex, signed, Chapter One")
+for bad in ('[', ']', 'i]', 'u]'):
+    if bad in c64_attr:
+        failures.append(f"attribute tag leaked to the c64 screen: {bad!r} "
+                        f"in {c64_attr!r}")
+
+# --- the extended colour marker ---------------------------------------
+
+check("a slot past 15 uses the three-byte marker",
+      colorize_for_wire("a [color=teal]bowl[/color] here", WIN16),
+      b"a " + bytes([M_ESC, ESC_COLOR,
+                     ESC_OPERAND_BIAS | PALETTE_RICH['teal']])
+      + b"bowl" + bytes([M_CLOSE]) + b" here")
+
+check("a slot within 15 still uses the one-byte marker",
+      colorize_for_wire("a [color=red]bowl[/color]", WIN16),
+      b"a " + bytes([RED]) + b"bowl" + bytes([M_CLOSE]))
+
+# Every operand has to stay clear of NUL, CR/LF and the marker range, or
+# a client cannot resynchronise on it.
+for name, slot in PALETTE_RICH.items():
+    if slot <= 15:
+        continue
+    operand = ESC_OPERAND_BIAS | slot
+    if operand < 0x20 or operand in (0x0A, 0x0D) or operand > 0x7F:
+        failures.append(f"colour {name} (slot {slot}) encodes to an unsafe "
+                        f"operand {operand:#04x}")
+
+# A name the C64 has no slot for must strip rather than encode to
+# something else - the C64 renders 0x1B as a space, not as a colour.
+teal_c64 = colorize_for_wire("a [color=teal]bowl[/color] here", C64)
+if M_ESC in teal_c64:
+    failures.append("extended colour marker reached the c64")
+check("an out-of-range colour strips on the c64",
+      visible(teal_c64, C64), "a bowl here")
+
+# Rich names must not have redefined a name the C64 already had, or the
+# same prompt means two things.
+from src.profiles import PALETTE_C64
+for name, slot in PALETTE_C64.items():
+    if name in ('blue', 'lightblue'):
+        continue      # deliberately un-substituted for rich text
+    check(f"palettes agree on {name!r}", PALETTE_RICH[name], slot)
+check("rich text gets a real blue", PALETTE_RICH['blue'], 6)
+check("...and the c64 keeps its substitute", PALETTE_C64['blue'], 14)
+
+# Every palette slot must name a real colour.
+for name, slot in PALETTE_RICH.items():
+    if slot >= len(WIRE_COLORS):
+        failures.append(f"{name} -> slot {slot}, past WIRE_COLORS")
+
+# --- CLIENT_HELLO parsing ---------------------------------------------
+
+
+def hello(version=1, width=80, payload_max=2048,
+          caps=CAP_ZERO_WIDTH_MARKERS | CAP_RICH_TEXT, name=b'win16'):
+    return bytes([version, width, payload_max & 0xFF, payload_max >> 8,
+                  caps & 0xFF, caps >> 8, len(name)]) + name
+
+
+got = from_hello(hello())
+check("hello yields a profile", got is not None, True)
+prof, caps = got
+check("hello names the profile", prof.name, 'win16')
+check("hello sets zero-width markers", prof.marker_cells, False)
+check("hello sets rich text", prof.rich_text, True)
+check("hello reports the pane width", prof.text_width, 80)
+check("hello lifts the payload cap", prof.max_payload, 2048)
+
+check("a client's own width wins over the table",
+      from_hello(hello(width=132))[0].text_width, 132)
+check("a width of zero falls back to the table",
+      from_hello(hello(width=0))[0].text_width, WIN16.text_width)
+
+# Malformed or unknown must degrade to the C64, never raise: a client
+# that cannot introduce itself is one that never tried.
+check("a short payload is refused", from_hello(b'\x01\x50'), None)
+check("an empty payload is refused", from_hello(b''), None)
+check("a future hello version is refused", from_hello(hello(version=2)), None)
+check("a truncated name is refused",
+      from_hello(bytes([1, 80, 0, 8, 3, 0, 40]) + b'win16'), None)
+
+# An unknown client is a machine this proxy predates, not an error. Its
+# own capability bits still have to be honoured.
+unk = from_hello(hello(name=b'dos32', caps=CAP_RICH_TEXT))
+check("an unknown client is served", unk is not None, True)
+check("...under its own name", unk[0].name, 'dos32')
+check("...with its rich text honoured", unk[0].rich_text, True)
+check("...and its markers still counted as cells", unk[0].marker_cells, True)
+
+# A client claiming nothing gets the conservative treatment.
+bare = from_hello(hello(name=b'win16', caps=0))[0]
+check("no caps means marker cells", bare.marker_cells, True)
+check("no caps means no rich text", bare.rich_text, False)
+check("no caps means the c64 palette", bare.palette, C64.palette)
+check("a plain client renders identically to a c64",
+      colorize_for_wire(src, bare), colorize_for_wire(src, C64))
+
+# --- the prompt the model is given ------------------------------------
+
+check("the c64 prompt warns about columns",
+      'costs a column' in prompt_snippet(C64), True)
+check("the rich prompt does not",
+      'costs a column' in prompt_snippet(WIN16), False)
+check("the rich prompt teaches the attribute tags",
+      '[i]' in prompt_snippet(WIN16), True)
+check("the c64 prompt does not",
+      '[i]' in prompt_snippet(C64), False)
+check("the rich prompt offers teal", 'teal' in prompt_snippet(WIN16), True)
+check("the c64 prompt does not", 'teal' in prompt_snippet(C64), False)
+# Sparing use is not negotiable on either machine.
+for p in (C64, WIN16):
+    check(f"{p.name} prompt still says SPARINGLY",
+          'SPARINGLY' in prompt_snippet(p), True)
+
+# strip_markup is what titles, logs and captions use: no tag of any kind
+# may survive it.
+check("strip_markup removes attribute tags",
+      strip_markup("the [i]Codex[/i] and [u]seal[/u]"),
+      "the Codex and seal")
+
+# --- streaming, on the rich profile -----------------------------------
+#
+# split_safe holds back a tail that could still become markup. It is
+# profile-blind, so the same guarantee has to hold for the encoding that
+# has more markup in it.
+
+def stream_p(chunks, profile):
+    out = bytearray()
+    hold = ''
+    for c in chunks:
+        emit, hold = split_safe(hold + c)
+        out.extend(colorize_for_wire(emit, profile))
+    out.extend(colorize_for_wire(hold, profile))
+    return bytes(out)
+
+
+rich_whole = "the [color=teal]astrolabe[/color], [i]hers[/i], **north** now"
+rich_want = colorize_for_wire(rich_whole, WIN16)
+for cut in range(1, len(rich_whole)):
+    if stream_p([rich_whole[:cut], rich_whole[cut:]], WIN16) != rich_want:
+        failures.append(
+            f"rich split at {cut} ({rich_whole[:cut]!r} | "
+            f"{rich_whole[cut:]!r}):\n"
+            f"  got  {stream_p([rich_whole[:cut], rich_whole[cut:]], WIN16)!r}"
+            f"\n  want {rich_want!r}")
+        break
+if stream_p(list(rich_whole), WIN16) != rich_want:
+    failures.append("rich char-by-char stream did not match whole-string")
+
 if failures:
     print(f"FAIL ({len(failures)})\n")
     print("\n\n".join(failures))

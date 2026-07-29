@@ -11,6 +11,9 @@ BEGIN
         MENUITEM "&Disconnect",           IDM_DISCONNECT
         MENUITEM SEPARATOR
         MENUITEM "&New Conversation\tF2", IDM_NEWCONV
+        MENUITEM "C&onversations...\tF5", IDM_CONVS
+        MENUITEM SEPARATOR
+        MENUITEM "&Save Picture As...",   IDM_SAVEPIC
         MENUITEM SEPARATOR
         MENUITEM "E&xit",                 IDM_EXIT
     END
@@ -33,16 +36,26 @@ BEGIN
         MENUITEM "&Paper (black on white)",   IDM_THEME_PAPER
         MENUITEM "&C64 Screen (light on black)", IDM_THEME_SCREEN
         MENUITEM SEPARATOR
-        MENUITEM "Menu &Bar",                 IDM_SHOWBAR
+        MENUITEM "P&ictures...",              IDM_PICSET
     END
     /* The MDI window menu. It has to be a real popup that the frame can
        hand to the MDI client, which appends the child list to it. Its
        position in this bar is WINDOW_MENU_POS - keep them together. */
     POPUP "&Window"
     BEGIN
+        /* The launcher's six toggles, with the keyboard spelled out.
+           Same ids as the buttons, so all three routes - click, menu,
+           Ctrl+number - land in one handler. */
+        MENUITEM "Con&versation\tCtrl+1", IDM_TOGCONV
+        MENUITEM "P&icture\tCtrl+2",      IDM_TOGPIC
+        MENUITEM "&Music\tCtrl+3",        IDM_TOGMUS
+        MENUITEM "C&haracter\tCtrl+4",    IDM_TOGCHR
+        MENUITEM "In&ventory\tCtrl+5",    IDM_TOGINV
+        MENUITEM SEPARATOR
         MENUITEM "&New Conversation Window", IDM_NEWWINDOW
         MENUITEM "Close All &Printouts",     IDM_CLOSEPAPER
         MENUITEM SEPARATOR
+        MENUITEM "&Default Layout",       IDM_DEFLAYOUT
         MENUITEM "&Cascade\tShift+F5",    IDM_CASCADE
         MENUITEM "&Tile\tShift+F4",       IDM_TILE
         MENUITEM "Arrange &Icons",        IDM_ARRANGE
@@ -61,6 +74,13 @@ BEGIN
     VK_F1, IDM_MENU,    VIRTKEY
     VK_F2, IDM_NEWCONV, VIRTKEY
     VK_F3, IDM_CANCEL,  VIRTKEY
+    VK_F5, IDM_CONVS,   VIRTKEY
+    /* Ctrl+1..5: the launcher without the mouse. 0x31 is VK '1'. */
+    0x31,  IDM_TOGCONV, VIRTKEY, CONTROL
+    0x32,  IDM_TOGPIC,  VIRTKEY, CONTROL
+    0x33,  IDM_TOGMUS,  VIRTKEY, CONTROL
+    0x34,  IDM_TOGCHR,  VIRTKEY, CONTROL
+    0x35,  IDM_TOGINV,  VIRTKEY, CONTROL
 END
 
 /* The server-fed menu, as a 1993 program would have shown it: a modal
@@ -73,6 +93,45 @@ CAPTION "Menu"
 BEGIN
     LTEXT       "", IDC_MENUTITLE, 10, 6, 240, 9
     PUSHBUTTON  "Close", IDCANCEL, 105, 150, 50, 14
+END
+
+/* The conversation browser: what the C64 does with a full-screen
+   module, done the way 1993 did it - a list box and the verbs down the
+   side. Load is the default button and a double-click; F5 is the same
+   key the C64 uses. The titles arrive server-rendered (a '*' prefix
+   means starred), so the box holds no opinions of its own. */
+LLM64CONVS DIALOG 16, 16, 248, 152
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Conversations"
+BEGIN
+    LISTBOX         IDC_CONVLIST, 8, 8, 164, 136,
+                    LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    DEFPUSHBUTTON   "&Load",          IDC_CONVLOAD, 180, 8,   60, 14
+    PUSHBUTTON      "&New",           IDC_CONVNEW,  180, 26,  60, 14
+    PUSHBUTTON      "&Star / Unstar", IDC_CONVSTAR, 180, 48,  60, 14
+    PUSHBUTTON      "&Delete...",     IDC_CONVDEL,  180, 66,  60, 14
+    PUSHBUTTON      "&More >",        IDC_CONVMORE, 180, 88,  60, 14
+    PUSHBUTTON      "Close",          IDCANCEL,     180, 130, 60, 14
+END
+
+/* Picture behaviour. One checkbox for now, but the box exists so the
+   next picture option has somewhere to live. The warning is the whole
+   reason this defaults OFF: on a hosted backend every generated scene
+   is a paid API call, and spending the player's money is the player's
+   decision. */
+LLM64PICS DIALOG 24, 24, 232, 92
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Pictures"
+BEGIN
+    CONTROL         "&Generate a picture for every location",
+                    IDC_ROOMPICS, "BUTTON",
+                    BS_AUTOCHECKBOX | WS_TABSTOP, 10, 10, 210, 10
+    LTEXT           "Each new place in an adventure gets illustrated as \
+you enter it; returning shows the same picture again for free. On a \
+hosted image backend every NEW picture is a paid API call.",
+                    -1, 10, 26, 212, 34
+    DEFPUSHBUTTON   "OK",     IDOK,     120, 72, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 174, 72, 50, 14
 END
 
 /* Where the proxy is. On a machine with no command line this is the only
