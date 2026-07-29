@@ -927,6 +927,12 @@ static char          g_img_title[64];
 
 /* Default-layout bookkeeping (see layout_default). */
 static int g_user_arranged;     /* the user moved a document themselves */
+/* What the last default layout was computed FOR: the art's dimensions and
+   whether there was a shelf to browse. A layout pass that would land in
+   the same place is a layout pass not worth taking - it moves windows,
+   and moving windows is what makes a load flicker. */
+static unsigned g_pic_laid_w, g_pic_laid_h;
+static int      g_pic_laid_shelf;
 static int g_in_layout;         /* our own MoveWindows are not "the user" */
 static int g_layout_ready;      /* creation-time WM_SIZEs are not either */
 
@@ -1113,11 +1119,19 @@ static void pic_open(void)
     MDICREATESTRUCT mcs;
 
     if (g_pic_wnd) {
-        /* The browser list appears with the first shelf entry, and
-           only a layout pass reveals it. The height the window wants
-           also changes with it - and with the aspect of the art, which
-           is not known until a picture has actually arrived. */
-        if (!g_user_arranged)
+        /* The browser list appears with the first shelf entry, and only a
+           layout pass reveals it. The height the window wants also changes
+           with it - and with the aspect of the art, which is not known
+           until a picture has actually arrived.
+
+           Only when one of those two things actually CHANGED, though. A
+           conversation load sends the whole picture roster, which lands
+           here as a stream of shelf updates: relaying out the desk on
+           every one of them moved three windows for no reason and made
+           the load visibly flicker. */
+        if (!g_user_arranged
+                && (g_pic_w != g_pic_laid_w || g_pic_h != g_pic_laid_h
+                    || (g_shelf_count > 0) != g_pic_laid_shelf))
             layout_default();
         pic_layout(g_pic_wnd);
         InvalidateRect(g_pic_wnd, NULL, TRUE);
@@ -2696,6 +2710,9 @@ static void layout_default(void)
                    (int)rc.bottom - mh, mw, mh, TRUE);
     g_in_layout = 0;
     g_layout_ready = 1;
+    g_pic_laid_w = g_pic_w;
+    g_pic_laid_h = g_pic_h;
+    g_pic_laid_shelf = g_shelf_count > 0;
 }
 
 /* The frame gives everything except the status strip to the MDI client,
@@ -5240,7 +5257,16 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
         wc.cbWndExtra = 0;
     }
 
-    hwnd = CreateWindow(APP_CLASS, APP_TITLE, WS_OVERLAPPEDWINDOW,
+    /* WS_CLIPCHILDREN is not decoration on an MDI frame: without it the
+       frame's own erase - its class brush is light grey - is not clipped
+       away from the windows sitting in its client area, so every relayout
+       that exposes a strip of frame painted grey over whatever was there,
+       and an MDI child's CAPTION only came back when that child's
+       non-client area happened to be invalidated. The symptom was grey
+       slabs where titlebars belong, most visibly during a conversation
+       load. */
+    hwnd = CreateWindow(APP_CLASS, APP_TITLE,
+                        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                         CW_USEDEFAULT, CW_USEDEFAULT, 640, 440,
                         NULL, NULL, hInst, NULL);
     if (!hwnd)
