@@ -51,6 +51,7 @@
 #define CONV_CLASS  "LLM64Conv"
 #define PAPER_CLASS "LLM64Paper"
 #define PIC_CLASS   "LLM64Pic"
+#define ACT_CLASS   "LLM64Act"
 #define PANE_CLASS  "LLM64Pane"
 #define APP_TITLE   "LLM64"
 #define INI_FILE    "LLM64.INI"
@@ -649,88 +650,122 @@ static struct {
 static int g_menu_count;
 static int g_menu_choice;
 
-/* The menu panel: the same entries as a column of buttons down the
-   right-hand side of the frame, so the server-fed menu is something you
-   can see rather than something you have to know a key for. The buttons
-   belong to the frame, which is where the socket and the menu live -
-   they are the application's, not any one document's. */
-#define BAR_W       164
-#define BAR_PAD     6
+/* The Actions window: the server-fed menu as a column of buttons in an
+   MDI document of its own. It used to be a panel glued to the frame's
+   right edge, permanently spending 164 pixels of a 640-wide screen -
+   the scarcest resource this program has. As a document it opens and
+   closes like everything else, from the launcher or the Window menu,
+   and the INI remembers the choice. */
+#define ACT_W       164
+#define ACT_PAD     6
 
-static HWND g_bar_btn[MAX_MENU];
-static int  g_bar_count;
-static int  g_bar_show = 1;
-static char g_bar_sig[MAX_MENU + 2];    /* what the buttons were built from */
+static HWND g_act_wnd;
+static HWND g_act_btn[MAX_MENU];
+static int  g_act_count;
+static int  g_act_open;                 /* open at startup (INI) */
+static char g_act_sig[MAX_MENU + 2];    /* what the buttons were built from */
+static int  g_quitting;                 /* app teardown, not a user close */
 
-static int bar_width(void)
-{
-    return (g_bar_show && g_menu_count) ? BAR_W : 0;
-}
-
-static void bar_layout(HWND frame)
+static void act_layout(HWND hwnd)
 {
     RECT rc;
-    int i, x, y, bh, avail, statush = g_ch + 6;
+    int i, y, bh, avail;
 
-    if (!g_bar_count)
+    if (!g_act_count)
         return;
-    GetClientRect(frame, &rc);
-    x = (int)rc.right - BAR_W + BAR_PAD;
-    avail = (int)rc.bottom - statush - BAR_PAD * 2;
+    GetClientRect(hwnd, &rc);
+    avail = (int)rc.bottom - ACT_PAD * 2;
     /* Squeeze rather than overflow: a thirteen-entry menu on a 480-line
        screen has less room per button than a four-entry one. */
     bh = (g_ch + 12);
-    if (g_bar_count > 0 && bh * g_bar_count > avail)
-        bh = avail / g_bar_count;
+    if (bh * g_act_count > avail)
+        bh = avail / g_act_count;
     if (bh < 14) bh = 14;
-    y = BAR_PAD;
-    for (i = 0; i < g_bar_count; i++) {
-        MoveWindow(g_bar_btn[i], x, y, BAR_W - BAR_PAD * 2, bh - 2, TRUE);
+    y = ACT_PAD;
+    for (i = 0; i < g_act_count; i++) {
+        MoveWindow(g_act_btn[i], ACT_PAD, y,
+                   (int)rc.right - ACT_PAD * 2, bh - 2, TRUE);
         y += bh;
     }
 }
 
-static void bar_destroy(void)
-{
-    int i;
-    for (i = 0; i < g_bar_count; i++)
-        if (g_bar_btn[i]) {
-            DestroyWindow(g_bar_btn[i]);
-            g_bar_btn[i] = NULL;
-        }
-    g_bar_count = 0;
-}
-
-/* Rebuild only when the menu actually changed - it is re-fetched every
-   time the F1 box opens, and tearing down a column of buttons to build
-   the identical one back flickers for nothing. */
-static void bar_rebuild(HWND frame)
+/* (Re)build the buttons inside the Actions window, but only when the
+   menu actually changed - it is re-fetched every time the F1 box opens,
+   and tearing down a column of buttons to build the identical one back
+   flickers for nothing. */
+static void act_buttons(HWND hwnd)
 {
     char sig[MAX_MENU + 2];
     HINSTANCE inst;
     int i;
 
-    sig[0] = (char)(g_bar_show ? g_menu_count : 0);
+    sig[0] = (char)g_menu_count;
     for (i = 0; i < g_menu_count && i < MAX_MENU; i++)
         sig[i + 1] = g_menu[i].key;
     sig[i + 1] = '\0';
-    if (g_bar_count && memcmp(sig, g_bar_sig, (size_t)i + 2) == 0)
+    if (g_act_count && memcmp(sig, g_act_sig, (size_t)i + 2) == 0)
         return;
-    memcpy(g_bar_sig, sig, (size_t)i + 2);
+    memcpy(g_act_sig, sig, (size_t)i + 2);
 
-    bar_destroy();
-    if (!g_bar_show || !g_menu_count)
-        return;
-    inst = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
+    for (i = 0; i < g_act_count; i++)
+        if (g_act_btn[i]) {
+            DestroyWindow(g_act_btn[i]);
+            g_act_btn[i] = NULL;
+        }
+    g_act_count = 0;
+    inst = (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE);
     for (i = 0; i < g_menu_count && i < MAX_MENU; i++) {
-        g_bar_btn[i] = CreateWindow("BUTTON", g_menu[i].label,
+        g_act_btn[i] = CreateWindow("BUTTON", g_menu[i].label,
                                     WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                    0, 0, 10, 10, frame,
+                                    0, 0, 10, 10, hwnd,
                                     (HMENU)(IDC_BARBASE + i), inst, NULL);
-        if (!g_bar_btn[i])
+        if (!g_act_btn[i])
             break;
     }
-    g_bar_count = i;
+    g_act_count = i;
+    act_layout(hwnd);
+}
+
+/* The launcher: a row of rectangular buttons across the top of the
+   frame, one per big window, click to open or close - the way a 1993
+   program let you see its rooms without memorizing its menus. Owned by
+   the frame like the status strip, because it reports on the desk as a
+   whole. */
+#define LAUNCH_N 3
+
+static HWND g_launch[LAUNCH_N];
+
+static int launch_h(void)
+{
+    return g_ch + 14;
+}
+
+static void launch_create(HWND frame)
+{
+    static const char *label[LAUNCH_N] =
+        { "Conversation", "Picture", "Actions" };
+    HINSTANCE inst = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
+    int i;
+
+    for (i = 0; i < LAUNCH_N; i++)
+        g_launch[i] = CreateWindow("BUTTON", label[i],
+                                   WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                   0, 0, 10, 10, frame,
+                                   (HMENU)(IDC_LAUNCHBASE + i), inst,
+                                   NULL);
+}
+
+static void launch_layout(HWND frame)
+{
+    static const int w[LAUNCH_N] = { 104, 76, 72 };
+    int i, x = 4;
+
+    (void)frame;
+    for (i = 0; i < LAUNCH_N; i++) {
+        if (g_launch[i])
+            MoveWindow(g_launch[i], x, 3, w[i], launch_h() - 6, TRUE);
+        x += w[i] + 4;
+    }
 }
 
 /* Defined with the other window layout, but needed as soon as a menu
@@ -1009,7 +1044,12 @@ static void pic_open(void)
     mcs.cy      = 240;
     mcs.style   = 0;
     mcs.lParam  = 0;
+    /* Creation sends the new window its first WM_SIZE, and that must
+       not read as the user arranging the desk - it would veto the very
+       relayout that is about to place this window. */
+    g_in_layout = 1;
     SendMessage(g_mdi, WM_MDICREATE, 0, (LONG)(LPMDICREATESTRUCT)&mcs);
+    g_in_layout = 0;
     /* A picture arriving mid-game must not steal the keyboard: MDI
        activates what it creates, so hand the conversation straight
        back. The picture has nothing to type into anyway. */
@@ -1189,7 +1229,7 @@ static void img_begin(const unsigned char *p, unsigned len)
 static void img_data(const unsigned char *p, unsigned len)
 {
     unsigned long off;
-    unsigned n, i;
+    unsigned n;
     unsigned char __huge *dst;
 
     if (!g_img_active || len < 4)
@@ -1204,9 +1244,13 @@ static void img_data(const unsigned char *p, unsigned len)
     if (n) {
         dst = (unsigned char __huge *)GlobalLock(g_img_mem);
         if (dst) {
+            /* One _fmemcpy, not a byte loop: huge arithmetic
+               normalizes the offset small, so a 2 KB frame never wraps
+               the segment - and per-byte huge indexing re-derives the
+               segment on every access, which on a real 486 was a
+               visible chunk of the transfer time. */
             dst += off;
-            for (i = 0; i < n; i++)
-                dst[i] = p[4 + i];
+            _fmemcpy((void far *)dst, (const void far *)(p + 4), n);
             GlobalUnlock(g_img_mem);
         }
         g_img_got += n;
@@ -1297,8 +1341,8 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
            an adventure and Map and Picture of this scene appear on the
            side without a rebuild of anything. */
         menu_parse(p, len);
-        bar_rebuild(g_frame);
-        frame_layout(g_frame);
+        if (g_act_wnd)
+            act_buttons(g_act_wnd);
         break;
 
     case MSG_HINT:
@@ -1531,7 +1575,7 @@ static void conv_layout(HWND hwnd)
 static void layout_default(void)
 {
     RECT rc;
-    int pw, ph;
+    int pw, aw;
 
     if (!g_mdi)
         return;
@@ -1542,13 +1586,26 @@ static void layout_default(void)
         SendMessage(g_mdi, WM_MDIRESTORE, (WPARAM)g_conv, 0L);
     if (g_pic_wnd && IsZoomed(g_pic_wnd))
         SendMessage(g_mdi, WM_MDIRESTORE, (WPARAM)g_pic_wnd, 0L);
+    if (g_act_wnd && IsZoomed(g_act_wnd))
+        SendMessage(g_mdi, WM_MDIRESTORE, (WPARAM)g_act_wnd, 0L);
     GetClientRect(g_mdi, &rc);
-    pw = g_pic_wnd ? (int)rc.right * 38 / 100 : 0;
-    ph = (int)rc.bottom;
+    aw = g_act_wnd ? ACT_W : 0;
+    /* The multiply is long on purpose: 892 pixels x 38 is already past
+       what a 16-bit int holds, and the overflow made pw negative - a
+       picture window with negative width is an invisible one. The old
+       side panel kept the workspace narrow enough to hide this. */
+    pw = g_pic_wnd
+        ? (int)(((long)((int)rc.right - aw) * 38) / 100)
+        : 0;
     if (g_conv)
-        MoveWindow(g_conv, 0, 0, (int)rc.right - pw, (int)rc.bottom, TRUE);
+        MoveWindow(g_conv, 0, 0, (int)rc.right - pw - aw,
+                   (int)rc.bottom, TRUE);
     if (g_pic_wnd)
-        MoveWindow(g_pic_wnd, (int)rc.right - pw, 0, pw, ph, TRUE);
+        MoveWindow(g_pic_wnd, (int)rc.right - pw - aw, 0, pw,
+                   (int)rc.bottom, TRUE);
+    if (g_act_wnd)
+        MoveWindow(g_act_wnd, (int)rc.right - aw, 0, aw,
+                   (int)rc.bottom, TRUE);
     g_in_layout = 0;
     g_layout_ready = 1;
 }
@@ -1564,14 +1621,13 @@ static void frame_layout(HWND hwnd)
     if (!g_mdi)
         return;
     GetClientRect(hwnd, &rc);
-    h = rc.bottom - statush;
+    h = rc.bottom - statush - launch_h();
     if (h < g_ch) h = g_ch;
-    /* The documents get everything except the status strip and the menu
-       panel: text area big, actions down the side. */
-    w = (int)rc.right - bar_width();
-    if (w < g_cw * 20) w = (int)rc.right;
-    MoveWindow(g_mdi, 0, 0, w, h, TRUE);
-    bar_layout(hwnd);
+    /* The documents get everything between the launcher strip and the
+       status strip. */
+    w = (int)rc.right;
+    MoveWindow(g_mdi, 0, launch_h(), w, h, TRUE);
+    launch_layout(hwnd);
 }
 
 long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
@@ -1881,6 +1937,74 @@ long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
     return DefMDIChildProc(hwnd, msg, wParam, lParam);
 }
 
+/* ---------------------------------------------------------------- */
+/* The Actions window                                                */
+/* ---------------------------------------------------------------- */
+
+static void menu_run(HWND owner, int idx);
+
+long FAR PASCAL _export ActProc(HWND hwnd, UINT msg, UINT wParam,
+                                LONG lParam)
+{
+    switch (msg) {
+    case WM_CREATE:
+        /* Recorded early, like the picture window and for the same
+           reason: messages arrive before WM_MDICREATE returns. */
+        g_act_wnd = hwnd;
+        act_buttons(hwnd);
+        break;
+
+    case WM_SIZE:
+    case WM_MOVE:
+        if (g_layout_ready && !g_in_layout)
+            g_user_arranged = 1;
+        act_layout(hwnd);
+        break;
+
+    case WM_COMMAND:
+        if (wParam >= IDC_BARBASE && wParam < IDC_BARBASE + MAX_MENU) {
+            menu_run(g_frame, (int)(wParam - IDC_BARBASE));
+            return 0;
+        }
+        break;
+
+    case WM_DESTROY:
+        g_act_wnd = NULL;
+        g_act_count = 0;
+        g_act_sig[0] = '\0';
+        /* Closing the window with its close box is choosing to not have
+           it; remember that. App teardown is not a choice. */
+        if (!g_quitting)
+            g_act_open = 0;
+        break;
+    }
+    return DefMDIChildProc(hwnd, msg, wParam, lParam);
+}
+
+static void act_open_wnd(void)
+{
+    MDICREATESTRUCT mcs;
+
+    if (g_act_wnd)
+        return;
+    mcs.szClass = ACT_CLASS;
+    mcs.szTitle = "Actions";
+    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.x       = 40;
+    mcs.y       = 24;
+    mcs.cx      = ACT_W;
+    mcs.cy      = 300;
+    mcs.style   = 0;
+    mcs.lParam  = 0;
+    /* Same guard as pic_open: a window's own birth is not the user
+       arranging the desk. */
+    g_in_layout = 1;
+    SendMessage(g_mdi, WM_MDICREATE, 0, (LONG)(LPMDICREATESTRUCT)&mcs);
+    g_in_layout = 0;
+    if (g_conv)
+        SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_conv, 0L);
+}
+
 /* File > Save Picture As: the DIB with a BITMAPFILEHEADER in front of
    it IS a .BMP - the whole reason the wire format is what it is. */
 static void do_save_pic(HWND hwnd)
@@ -1952,12 +2076,10 @@ static void paint_status(HWND hwnd)
     /* The sunken top edge every 3.1 status strip had */
     MoveTo(hdc, sr.left, sr.top);
     LineTo(hdc, sr.right, sr.top);
-    /* And the same edge down the side of the menu panel, so it reads as
-       a panel rather than as buttons loose on the background. */
-    if (bar_width()) {
-        MoveTo(hdc, rc.right - bar_width(), 0);
-        LineTo(hdc, rc.right - bar_width(), sr.top);
-    }
+    /* And the same edge under the launcher strip, so it reads as a
+       toolbar rather than as buttons loose on the background. */
+    MoveTo(hdc, rc.left, launch_h() - 1);
+    LineTo(hdc, rc.right, launch_h() - 1);
     SetBkMode(hdc, TRANSPARENT);
     SelectObject(hdc, GetStockObject(SYSTEM_FONT));
     SetTextColor(hdc, RGB(0, 0, 0));
@@ -2270,12 +2392,38 @@ static HWND conv_create(HWND frame)
     mcs.style   = 0;
     mcs.lParam  = 0;
 
+    /* Same guard as pic_open: creation-time WM_SIZEs are not the user
+       arranging the desk. */
+    g_in_layout = 1;
     w = (HWND)(WORD)SendMessage(g_mdi, WM_MDICREATE, 0,
                                 (LONG)(LPMDICREATESTRUCT)&mcs);
+    g_in_layout = 0;
     /* Not maximized any more: the desk holds two documents now, and
        layout_default puts this one beside the picture. Maximizing is
        one double-click away for anyone who wants the old look. */
     return w;
+}
+
+/* Open or close the Actions window - from the launcher, the Window
+   menu, or (as IDM_SHOWBAR) the same accelerator the old panel had. */
+static void act_toggle(HWND frame)
+{
+    if (g_act_wnd) {
+        SendMessage(g_mdi, WM_MDIDESTROY, (WPARAM)g_act_wnd, 0L);
+        g_act_open = 0;
+    } else {
+        act_open_wnd();
+        g_act_open = g_act_wnd != NULL;
+        /* Opened before the first menu arrived: ask for one now so the
+           window is not an empty frame until F1 happens to be pressed. */
+        if (g_act_open && !g_menu_count && net_state() == NET_UP)
+            send_frame(MSG_GET_MENU, NULL, 0);
+    }
+    CheckMenuItem(GetMenu(frame), IDM_SHOWBAR, MF_BYCOMMAND
+        | (g_act_open ? MF_CHECKED : MF_UNCHECKED));
+    save_ini();
+    if (!g_user_arranged)
+        layout_default();
 }
 
 long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
@@ -2293,7 +2441,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
            with the theme, and WM_CTLCOLOR hands it out. */
         theme_apply(g_theme);
         CheckMenuItem(GetMenu(hwnd), IDM_SHOWBAR, MF_BYCOMMAND
-            | (g_bar_show ? MF_CHECKED : MF_UNCHECKED));
+            | (g_act_open ? MF_CHECKED : MF_UNCHECKED));
         if (!sb_init(&g_conv_view.sb)) {
             MessageBox(hwnd, "Not enough memory for the transcript.",
                        APP_TITLE, MB_OK | MB_ICONSTOP);
@@ -2324,10 +2472,13 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                              (LPSTR)&ccs);
         if (!g_mdi)
             return -1;
+        launch_create(hwnd);
         g_conv = conv_create(hwnd);
         /* The picture window is part of the default desk, empty or not:
            an adventure fills it, and until then it says what it is. */
         pic_open();
+        if (g_act_open)
+            act_open_wnd();
         return 0;
 
     case WM_SIZE:
@@ -2483,13 +2634,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
             return 0;
 
         case IDM_SHOWBAR:
-            g_bar_show = !g_bar_show;
-            CheckMenuItem(GetMenu(hwnd), IDM_SHOWBAR, MF_BYCOMMAND
-                | (g_bar_show ? MF_CHECKED : MF_UNCHECKED));
-            bar_rebuild(hwnd);
-            frame_layout(hwnd);
-            InvalidateRect(hwnd, NULL, TRUE);
-            save_ini();
+            act_toggle(hwnd);
             return 0;
 
         case IDM_THEME_PAPER:
@@ -2512,10 +2657,36 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         case IDM_TILE:    SendMessage(g_mdi, WM_MDITILE, 0, 0L); return 0;
         case IDM_ARRANGE: SendMessage(g_mdi, WM_MDIICONARRANGE, 0, 0L); return 0;
         }
-        /* The menu panel's buttons are children of the frame, so their
-           clicks arrive here. */
-        if (wParam >= IDC_BARBASE && wParam < IDC_BARBASE + MAX_MENU) {
-            menu_run(hwnd, (int)(wParam - IDC_BARBASE));
+        /* The launcher's buttons are children of the frame, so their
+           clicks arrive here. Each toggles its window; the transcript,
+           the shelf and the menu all outlive their windows, so closing
+           costs nothing but the pixels. */
+        if (wParam >= IDC_LAUNCHBASE
+                && wParam < IDC_LAUNCHBASE + LAUNCH_N) {
+            switch ((int)(wParam - IDC_LAUNCHBASE)) {
+            case 0:
+                if (g_conv)
+                    SendMessage(g_mdi, WM_MDIDESTROY, (WPARAM)g_conv, 0L);
+                else
+                    g_conv = conv_create(hwnd);
+                break;
+            case 1:
+                if (g_pic_wnd)
+                    SendMessage(g_mdi, WM_MDIDESTROY,
+                                (WPARAM)g_pic_wnd, 0L);
+                else
+                    pic_open();
+                break;
+            case 2:
+                act_toggle(hwnd);
+                break;
+            }
+            if (!g_user_arranged)
+                layout_default();
+            /* The click parked the focus on a toolbar button; give it
+               back to something that can type. */
+            if (g_input)
+                SetFocus(g_input);
             return 0;
         }
         /* Anything else is either a document window being picked off the
@@ -2526,6 +2697,10 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
 
     case WM_DESTROY: {
         int i;
+        /* Children are destroyed after this handler; without the flag
+           the Actions window would read its own teardown as the user
+           closing it and write that choice to the INI. */
+        g_quitting = 1;
         net_shutdown();
         /* From 1: g_fonts[0] is the stock fixed font and is not ours
            to delete. */
@@ -2584,7 +2759,8 @@ static void load_ini(void)
     GetPrivateProfileString("Display", "Theme", "paper",
                             buf, sizeof(buf), g_ini);
     g_theme = (buf[0] == 's' || buf[0] == 'S') ? THEME_SCREEN : THEME_PAPER;
-    g_bar_show = GetPrivateProfileInt("Display", "MenuBar", 1, g_ini) ? 1 : 0;
+    g_act_open = GetPrivateProfileInt("Display", "Actions", 0, g_ini)
+        ? 1 : 0;
     g_room_pics = GetPrivateProfileInt("Pictures", "EveryRoom", 0, g_ini)
         ? 1 : 0;
 }
@@ -2599,8 +2775,8 @@ static void save_ini(void)
     WritePrivateProfileString("Display", "Theme",
                               g_theme == THEME_SCREEN ? "screen" : "paper",
                               g_ini);
-    WritePrivateProfileString("Display", "MenuBar",
-                              g_bar_show ? "1" : "0", g_ini);
+    WritePrivateProfileString("Display", "Actions",
+                              g_act_open ? "1" : "0", g_ini);
     WritePrivateProfileString("Pictures", "EveryRoom",
                               g_room_pics ? "1" : "0", g_ini);
 }
@@ -2671,6 +2847,16 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
         wc.hbrBackground = NULL;
         wc.lpszMenuName = NULL;
         wc.lpszClassName = PIC_CLASS;
+        if (!RegisterClass(&wc))
+            return 1;
+
+        /* The Actions window: the server-fed menu as a document. */
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = ActProc;
+        wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+        wc.hbrBackground = GetStockObject(LTGRAY_BRUSH);
+        wc.lpszMenuName = NULL;
+        wc.lpszClassName = ACT_CLASS;
         if (!RegisterClass(&wc))
             return 1;
 

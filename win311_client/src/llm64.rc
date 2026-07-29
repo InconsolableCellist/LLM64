@@ -36,7 +36,6 @@ BEGIN
         MENUITEM "&C64 Screen (light on black)", IDM_THEME_SCREEN
         MENUITEM SEPARATOR
         MENUITEM "P&ictures...",              IDM_PICSET
-        MENUITEM "Menu &Bar",                 IDM_SHOWBAR
     END
     /* The MDI window menu. It has to be a real popup that the frame can
        hand to the MDI client, which appends the child list to it. Its
@@ -45,6 +44,7 @@ BEGIN
     BEGIN
         MENUITEM "&New Conversation Window", IDM_NEWWINDOW
         MENUITEM "P&icture",                 IDM_PICTURE
+        MENUITEM "&Actions",                 IDM_SHOWBAR
         MENUITEM "Close All &Printouts",     IDM_CLOSEPAPER
         MENUITEM SEPARATOR
         MENUITEM "&Default Layout",       IDM_DEFLAYOUT

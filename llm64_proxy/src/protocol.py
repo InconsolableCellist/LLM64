@@ -709,7 +709,11 @@ class ProtocolHandler:
             await self._send_canned("\n".join(lines))
 
         elif cmd == 'music':
-            if not self.music.available:
+            if self.profile.music_fmt != 'sid':
+                await self._send_canned(
+                    "Music is SID-only so far, and this machine has no "
+                    "SID. A MIDI library is on the roadmap.")
+            elif not self.music.available:
                 await self._send_canned("No music library on this server.")
             elif not arg:
                 await self._send_canned(
@@ -1125,7 +1129,8 @@ class ProtocolHandler:
         return False
 
     async def _send_bulk_stream(self, msg_type: MessageType, data: bytes,
-                                wide: bool = False, chunk: int = None):
+                                wide: bool = False, chunk: int = None,
+                                window: int = None):
         """Chunk a large blob into paced, flow-controlled frames. Each
         frame carries its byte offset so the client can place it even
         after a gap; every FLOW_WINDOW frames the proxy waits for the
@@ -1136,9 +1141,12 @@ class ProtocolHandler:
         quarter-megabyte DIB laps it. Only a fmt=2 transfer - so only a
         client whose parser expects it - ever sees the wide form.
         `chunk` overrides the C64-sized SID_CHUNK for clients whose
-        frame buffer allows bigger bites."""
+        frame buffer allows bigger bites. `window` must be whatever the
+        BEGIN frame advertised - the client ACKs on that cadence, and a
+        proxy waiting on a different one only ever times out."""
         n = 0
         step = chunk or self.SID_CHUNK
+        win = window or self.FLOW_WINDOW
         off_fmt = '<I' if wide else '<H'
         self._flow_ack = asyncio.Event()
         try:
@@ -1146,7 +1154,7 @@ class ProtocolHandler:
                 await self._send_bulk(msg_type, struct.pack(off_fmt, i)
                                       + data[i:i + step])
                 n += 1
-                if n % self.FLOW_WINDOW == 0:
+                if n % win == 0:
                     try:
                         await asyncio.wait_for(self._flow_ack.wait(), 3.0)
                     except asyncio.TimeoutError:
@@ -1161,6 +1169,14 @@ class ProtocolHandler:
         like any other bulk transfer (the C64U modem drops burst tails).
         Data flows only after the client ACKs the BEGIN; a NAK
         afterwards (short/corrupt transfer) triggers spaced resends."""
+        if self.profile.music_fmt != 'sid':
+            # The last line of defence, covering every spawn site at
+            # once: retries, the jukebox, the narrator. A SID at a
+            # non-C64 is four BEGIN retries and an abort (field: the
+            # win16 client printing "[frame 0x57, 28 bytes]").
+            self.logger.debug(
+                f"SID withheld: {self.profile.name} has no SID")
+            return
         data = self.music.payload(tune)
         head = struct.pack('<HHHBHBBB', tune['load'], tune['init'],
                            tune['play'],
@@ -1233,7 +1249,13 @@ class ProtocolHandler:
         blob outgrows the 16-bit tag, and bites sized to the client's
         own frame buffer rather than the C64's 256."""
         self._img_sent = True
-        head = bytes([2, self.FLOW_WINDOW, 1 if keep_music else 0]) \
+        # The window is sized to the LINK, not the constant: 4 exists
+        # for a serial bridge whose queue overflows, and on a socket it
+        # just inserts a round-trip stall every 8 KB. 16 keeps the
+        # can't-runaway property (field: a real 486 measured ~36 KB/s
+        # with window 4 - every stall was pure loss).
+        window = self.FLOW_WINDOW if self.profile.pace else 16
+        head = bytes([2, window, 1 if keep_music else 0]) \
             + struct.pack('<HHI', w, h, len(dib)) \
             + title[:60].encode('ascii', errors='replace') + b'\x00'
         chunk = max(256, self.profile.max_payload - 8)
@@ -1243,7 +1265,8 @@ class ProtocolHandler:
                 await self.send_status("Image transfer couldn't start.")
                 return
             await self._send_bulk_stream(MessageType.IMG_DATA, dib,
-                                         wide=True, chunk=chunk)
+                                         wide=True, chunk=chunk,
+                                         window=window)
             await self._send_bulk(MessageType.IMG_END, b'')
         self.logger.info(f"Sent DIB image ({w}x{h}, {len(dib)} bytes)")
 
@@ -2353,7 +2376,13 @@ class ProtocolHandler:
             # Model asked for a music change: honor at most one, after the
             # text is fully delivered (the client is idle again), unless a
             # change happened too recently
-            if mfilter and mfilter.moods:
+            if mfilter and mfilter.moods and self.profile.music_fmt != 'sid':
+                # Don't pick, relocate and record a tune this client can
+                # never hear - meta would then claim music is playing.
+                self.logger.debug(
+                    f"Music directive dropped: {self.profile.name} "
+                    "has no SID")
+            elif mfilter and mfilter.moods:
                 if self._music_manual:
                     # Stay in the fiction rather than posting a mode
                     # banner, and say it once - a reminder every turn

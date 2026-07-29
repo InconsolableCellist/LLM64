@@ -131,6 +131,15 @@ class ClientProfile:
     # client that claimed CAP_DIB_IMAGES has the fmt=2 parser.
     dib_images: bool = False
 
+    # What this machine can play. 'sid' is a relocated 6502 memory image
+    # run off the raster IRQ - meaningful to a C64 and to nothing else
+    # on earth. None means no music yet; the win16 row gets 'midi' when
+    # the MIDI phase lands (docs/16 section 6.2). Field bug this guards:
+    # the proxy streamed a SID at a Windows client, which printed
+    # "[frame 0x57]" and never ACKed, and every tune cost four BEGIN
+    # retries before the abort.
+    music_fmt: str = 'sid'
+
     # The art-style prompt this machine's pictures are generated with
     # (docs/16 section 6.1, path C): a C64 scene wants flat areas and
     # strong silhouettes because that is what survives the 160x200
@@ -170,6 +179,7 @@ WIN16 = ClientProfile(
     pace=False,
     marker_cells=False,
     rich_text=True,
+    music_fmt=None,     # 'midi' once there is a MIDI pipeline to serve
     image_style=VGA_STYLE,
     palette=PALETTE_RICH,
 )
@@ -212,8 +222,10 @@ def from_hello(payload: bytes):
     if base is None:
         # An unknown client is not an error - it is a machine this proxy
         # predates. Serve it the conservative profile and let its own
-        # capability bits and limits do the talking.
-        base = ClientProfile(name=name or 'unknown')
+        # capability bits and limits do the talking. Except music: SID
+        # bytes are garbage to anything that is not a C64, and a machine
+        # introducing itself by name is not a C64.
+        base = ClientProfile(name=name or 'unknown', music_fmt=None)
 
     rich = bool(caps & CAP_RICH_TEXT)
 
@@ -229,6 +241,7 @@ def from_hello(payload: bytes):
         # Capability-gated for the same reason as the palette below: a
         # client without the fmt=2 parser must never be sent one.
         dib_images=bool(caps & CAP_DIB_IMAGES),
+        music_fmt=base.music_fmt,
         image_style=base.image_style,
         # The palette follows the CAPABILITY, never the table entry. A
         # win16 build that predates rich text still matches the win16

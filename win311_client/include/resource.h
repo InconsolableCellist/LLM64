@@ -57,8 +57,12 @@
 #define IDC_MENUBASE    1210
 #define MAX_MENU        16
 
-/* The menu panel down the right-hand side of the frame. Same entries,
-   same actions, always visible. */
+/* The Actions window's buttons - the server-fed menu entries. (The
+   name is historic: they were once a bar glued to the frame.) */
 #define IDC_BARBASE     1300
+
+/* The launcher strip across the top of the frame: one button per big
+   window, click to open or close it. */
+#define IDC_LAUNCHBASE  1500
 
 #endif /* RESOURCE_H */
