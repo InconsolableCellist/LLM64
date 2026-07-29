@@ -1820,7 +1820,7 @@ static void conv_layout(HWND hwnd)
 static void layout_default(void)
 {
     RECT rc;
-    int pw, aw;
+    int pw, aw, mw, mh;
 
     if (!g_mdi)
         return;
@@ -1833,6 +1833,8 @@ static void layout_default(void)
         SendMessage(g_mdi, WM_MDIRESTORE, (WPARAM)g_pic_wnd, 0L);
     if (g_act_wnd && IsZoomed(g_act_wnd))
         SendMessage(g_mdi, WM_MDIRESTORE, (WPARAM)g_act_wnd, 0L);
+    if (g_mus_wnd && IsZoomed(g_mus_wnd))
+        SendMessage(g_mdi, WM_MDIRESTORE, (WPARAM)g_mus_wnd, 0L);
     GetClientRect(g_mdi, &rc);
     aw = g_act_wnd ? ACT_W : 0;
     /* The multiply is long on purpose: 892 pixels x 38 is already past
@@ -1842,12 +1844,25 @@ static void layout_default(void)
     pw = g_pic_wnd
         ? (int)(((long)((int)rc.right - aw) * 38) / 100)
         : 0;
+    /* Music tucks into the bottom-right corner: under the picture,
+       stealing its column's bottom edge - or over the conversation's
+       corner when there is no picture. Three text lines plus the
+       button row plus its caption. */
+    mh = g_mus_wnd ? g_ch * 4 + 56 : 0;
+    if (mh > (int)rc.bottom / 2)
+        mh = (int)rc.bottom / 2;
+    mw = pw ? pw : 260;
+    if (mw > (int)rc.right - aw)
+        mw = (int)rc.right - aw;
     if (g_conv)
         MoveWindow(g_conv, 0, 0, (int)rc.right - pw - aw,
                    (int)rc.bottom, TRUE);
     if (g_pic_wnd)
         MoveWindow(g_pic_wnd, (int)rc.right - pw - aw, 0, pw,
-                   (int)rc.bottom, TRUE);
+                   (int)rc.bottom - mh, TRUE);
+    if (g_mus_wnd)
+        MoveWindow(g_mus_wnd, (int)rc.right - mw - aw,
+                   (int)rc.bottom - mh, mw, mh, TRUE);
     if (g_act_wnd)
         MoveWindow(g_act_wnd, (int)rc.right - aw, 0, aw,
                    (int)rc.bottom, TRUE);
