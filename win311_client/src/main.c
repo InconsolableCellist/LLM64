@@ -1775,8 +1775,12 @@ static struct {
 } g_static;
 
 static HWND g_chr_wnd;          /* the Character window, if open */
+static HWND g_chr_btn;          /* its Refresh button */
 static HWND g_inv_wnd;          /* the Inventory window, if open */
 static HWND g_inv_lb;
+
+/* The button strip along the bottom of the Character window. */
+#define CHR_BTN_H  (g_ch + 12)
 
 /* Walk to the value of "key" at depth 1, or NULL. Tracks strings and
    escapes so an appearance like "a scarred {brace} collector" cannot
@@ -3829,66 +3833,86 @@ static int chr_line(HDC hdc, const RECT *rc, int *y, const char *text)
     return *y < (int)rc->bottom;
 }
 
+/* Every row of the sheet, present whether or not it is known: a blank
+   where the AC should be is information ("the narrator is not tracking
+   armour"), and a row that vanishes is just a sheet that looks different
+   every turn. Unknowns read as a dash. */
+#define CHR_UNKNOWN  "-"
+
+static void chr_field(HDC hdc, const RECT *rc, int *y, int *out,
+                      const char *label, const char *value)
+{
+    char line[260];
+
+    if (!*out)
+        return;
+    wsprintf(line, "%s %s", (LPSTR)label,
+             (LPSTR)(value && value[0] ? value : (char *)CHR_UNKNOWN));
+    *out = chr_line(hdc, rc, y, line);
+}
+
 static void chr_paint(HWND hwnd)
 {
     PAINTSTRUCT ps;
     HDC hdc;
     RECT rc, br;
-    /* Sized for the longest thing that can land in it: "With you: " plus
-       a 159-character companions list. It used to be 120, and three
+    /* Sized for the longest thing that can land in it: a label plus a
+       159-character companions list. It used to be 120, and three
        described companions wrote through the return address. */
-    char line[220];
-    int y = 6, bh;
+    char line[260];
+    char val[220];
+    int y = 6, bh, ok = 1;
 
     hdc = BeginPaint(hwnd, &ps);
     GetClientRect(hwnd, &rc);
+    /* The button strip along the bottom belongs to the Refresh button,
+       and this window has a grey class background, so the strip needs no
+       filling - only keeping out of. */
+    rc.bottom -= CHR_BTN_H;
+    if (rc.bottom < g_ch)
+        rc.bottom = g_ch;
     SetBkMode(hdc, TRANSPARENT);
     SelectObject(hdc, GetStockObject(SYSTEM_FONT));
     SetTextColor(hdc, RGB(0, 0, 0));
-    if (!g_sheet.valid && !g_static.valid) {
-        DrawText(hdc, "No adventure state yet.\n\nStart an adventure "
-                 "and the narrator's own bookkeeping appears here.",
-                 -1, &rc, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
-        EndPaint(hwnd, &ps);
-        return;
-    }
-    /* The proxy's half first: who this is. Rolled once, never restated by
-       the narrator, so it cannot drift mid-adventure. */
-    if (g_static.name[0]) {
+
+    /* Who this is. The proxy rolled it, the narrator never restates it,
+       so it cannot drift mid-adventure. */
+    {
         HFONT bold = g_fonts[SB_ATTR_BOLD];
         HFONT prev = bold ? SelectObject(hdc, bold) : NULL;
-        TextOut(hdc, 8, y, g_static.name, lstrlen(g_static.name));
+        const char *who = g_static.name[0] ? g_static.name
+                                           : (char *)"(no character yet)";
+        TextOut(hdc, 8, y, who, lstrlen(who));
         if (prev)
             SelectObject(hdc, prev);
         y += g_ch + 2;
     }
-    line[0] = '\0';
+    val[0] = '\0';
     if (g_static.race[0])
-        wsprintf(line, "%s ", (LPSTR)g_static.race);
-    if (g_static.cls[0])
-        wsprintf(line + lstrlen(line), "%s", (LPSTR)g_static.cls);
+        lstrcpy(val, g_static.race);
+    if (g_static.cls[0]) {
+        if (val[0])
+            lstrcat(val, " ");
+        lstrcat(val, g_static.cls);
+    }
     if (g_sheet.has_level)
-        wsprintf(line + lstrlen(line), "%sLevel %ld",
-                 line[0] ? ", " : "", g_sheet.level);
-    if (line[0] && !chr_line(hdc, &rc, &y, line))
+        wsprintf(val + lstrlen(val), "%sLevel %ld",
+                 val[0] ? ", " : "", g_sheet.level);
+    chr_field(hdc, &rc, &y, &ok, "", val);
+    chr_field(hdc, &rc, &y, &ok, "", g_static.abil);
+    chr_field(hdc, &rc, &y, &ok, "At:", g_sheet.location);
+    if (!ok)
         goto done;
-    if (g_static.abil[0]) {
-        y += 2;
-        if (!chr_line(hdc, &rc, &y, g_static.abil))
-            goto done;
-    }
-    if (g_sheet.location[0]) {
-        wsprintf(line, "At: %s", (LPSTR)g_sheet.location);
-        if (!chr_line(hdc, &rc, &y, line))
-            goto done;
-        y += 2;
-    }
-    if (g_sheet.has_hp) {
-        /* The HP bar every sidebar had: sunken frame, red when the
-           narrator says you should be worried. */
-        bh = g_ch;
+
+    /* HP keeps its bar - the one gauge worth drawing rather than
+       spelling. An unknown HP still gets its row, empty. */
+    bh = g_ch;
+    if (g_sheet.has_hp)
         wsprintf(line, "HP %ld / %ld", g_sheet.hp, g_sheet.maxhp);
-        TextOut(hdc, 8, y, line, lstrlen(line));
+    else
+        lstrcpy(line, "HP " CHR_UNKNOWN);
+    TextOut(hdc, 8, y, line, lstrlen(line));
+    if (g_sheet.has_hp) {
         br.left = 90; br.top = y + 1;
         br.right = (int)rc.right - 10; br.bottom = y + bh - 1;
         if (br.right > br.left + 10) {
@@ -3908,58 +3932,47 @@ static void chr_paint(HWND hwnd)
             FillRect(hdc, &in, fill);
             DeleteObject(fill);
         }
-        y += bh + 4;
     }
-    if (g_sheet.has_mana && g_sheet.maxmana > 0) {
-        wsprintf(line, "Mana %ld / %ld", g_sheet.mana, g_sheet.maxmana);
-        if (!chr_line(hdc, &rc, &y, line))
-            goto done;
-    }
-    line[0] = '\0';
+    y += bh + 4;
+
+    if (g_sheet.has_mana)
+        wsprintf(val, "%ld / %ld", g_sheet.mana, g_sheet.maxmana);
+    else
+        val[0] = '\0';
+    chr_field(hdc, &rc, &y, &ok, "Mana", val);
+
+    val[0] = '\0';
     if (g_sheet.has_ac)
-        wsprintf(line, "AC %ld   ", g_sheet.ac);
+        wsprintf(val, "AC %ld   ", g_sheet.ac);
+    else
+        lstrcpy(val, "AC " CHR_UNKNOWN "   ");
     if (g_sheet.has_gold)
-        wsprintf(line + lstrlen(line), "Gold %ld   ", g_sheet.gold);
+        wsprintf(val + lstrlen(val), "Gold %ld   ", g_sheet.gold);
+    else
+        lstrcat(val, "Gold " CHR_UNKNOWN "   ");
     if (g_sheet.has_xp)
-        wsprintf(line + lstrlen(line), "XP %ld   ", g_sheet.xp);
+        wsprintf(val + lstrlen(val), "XP %ld   ", g_sheet.xp);
+    else
+        lstrcat(val, "XP " CHR_UNKNOWN "   ");
     if (g_sheet.has_score)
-        wsprintf(line + lstrlen(line), "Score %ld", g_sheet.score);
-    if (line[0] && !chr_line(hdc, &rc, &y, line))
+        wsprintf(val + lstrlen(val), "Score %ld", g_sheet.score);
+    else
+        lstrcat(val, "Score " CHR_UNKNOWN);
+    if (!chr_line(hdc, &rc, &y, val))
         goto done;
-    if (g_sheet.effects[0]) {
-        wsprintf(line, "Afflicted: %s", (LPSTR)g_sheet.effects);
-        if (!chr_line(hdc, &rc, &y, line))
-            goto done;
-    }
-    if (g_static.skills[0]) {
-        wsprintf(line, "Skills: %s", (LPSTR)g_static.skills);
-        if (!chr_line(hdc, &rc, &y, line))
-            goto done;
-    }
-    if (g_static.spells[0]) {
-        wsprintf(line, "Spells: %s", (LPSTR)g_static.spells);
-        if (!chr_line(hdc, &rc, &y, line))
-            goto done;
-    }
-    if (g_static.gear[0]) {
-        wsprintf(line, "Kit: %s", (LPSTR)g_static.gear);
-        if (!chr_line(hdc, &rc, &y, line))
-            goto done;
-    }
-    if (g_sheet.appearance[0]) {
-        y += 2;
-        if (!chr_line(hdc, &rc, &y, g_sheet.appearance))
-            goto done;
-    }
-    if (g_sheet.companions[0]) {
-        wsprintf(line, "With you: %s", (LPSTR)g_sheet.companions);
-        if (!chr_line(hdc, &rc, &y, line))
-            goto done;
-    }
+
+    chr_field(hdc, &rc, &y, &ok, "Afflicted:", g_sheet.effects);
+    chr_field(hdc, &rc, &y, &ok, "Skills:", g_static.skills);
+    chr_field(hdc, &rc, &y, &ok, "Spells:", g_static.spells);
+    chr_field(hdc, &rc, &y, &ok, "Kit:", g_static.gear);
+    chr_field(hdc, &rc, &y, &ok, "Looks:", g_sheet.appearance);
+    chr_field(hdc, &rc, &y, &ok, "With you:", g_sheet.companions);
+    if (!ok)
+        goto done;
+
     /* How old this is. The narrator drops the state block often enough
        that a sheet can be several turns stale while looking live, and the
-       only cure is to say so: /pic, another turn, or the Character button
-       (which asks the proxy for its stored copy) refresh it. */
+       only cure is to say so - that is what Refresh is for. */
     if (g_sheet.has_age && g_sheet.age > 0) {
         SetTextColor(hdc, RGB(0x80, 0x00, 0x00));
         wsprintf(line, g_sheet.age == 1 ? "(as of %ld turn ago)"
@@ -3975,22 +3988,51 @@ done:
 long FAR PASCAL _export ChrProc(HWND hwnd, UINT msg, UINT wParam,
                                 LONG lParam)
 {
+    RECT rc;
+
     switch (msg) {
     case WM_CREATE:
         g_chr_wnd = hwnd;
+        /* Refresh asks the narrator for a state block against the schema,
+           rather than waiting for one to be volunteered. It costs a model
+           call, so it is a button and not a timer. */
+        g_chr_btn = CreateWindow("BUTTON", "Refresh",
+                                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                 0, 0, 10, 10, hwnd, (HMENU)ID_CHRREFRESH,
+                                 (HINSTANCE)GetWindowWord(hwnd,
+                                                          GWW_HINSTANCE),
+                                 NULL);
+        SendMessage(g_chr_btn, WM_SETFONT, (WPARAM)g_font, 0L);
         break;
     case WM_PAINT:
         chr_paint(hwnd);
         return 0;
+    case WM_COMMAND:
+        if (wParam == ID_CHRREFRESH) {
+            /* '/sheet' is a real command, so the C64 can type it too. The
+               proxy answers with its stored halves immediately and asks
+               the model for a fresh state block. */
+            send_command("/sheet");
+            if (g_input)
+                SetFocus(g_input);
+            return 0;
+        }
+        break;
     case WM_SIZE:
     case WM_MOVE:
         if (g_layout_ready && !g_in_layout)
             g_user_arranged = 1;
+        if (g_chr_btn) {
+            GetClientRect(hwnd, &rc);
+            MoveWindow(g_chr_btn, 6, (int)rc.bottom - CHR_BTN_H + 2,
+                       72, CHR_BTN_H - 6, TRUE);
+        }
         InvalidateRect(hwnd, NULL, TRUE);
         break;
     case WM_DESTROY:
         desk_remember(DESK_CHR, hwnd);
         g_chr_wnd = NULL;
+        g_chr_btn = NULL;
         break;
     }
     return DefMDIChildProc(hwnd, msg, wParam, lParam);

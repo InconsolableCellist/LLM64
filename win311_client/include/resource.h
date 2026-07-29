@@ -56,6 +56,9 @@
 #define ID_PICAUTO      1004
 /* The Notebook's index of printed sheets. */
 #define ID_NOTELIST     1005
+/* The Character window's Refresh button: asks the narrator for a state
+   block against the schema rather than waiting for it to volunteer one. */
+#define ID_CHRREFRESH   1006
 
 /* Menu dialog. The entry buttons are created at run time - the proxy
    decides how many there are - and numbered from IDC_MENUBASE. */

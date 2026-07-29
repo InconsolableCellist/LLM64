@@ -138,6 +138,18 @@ class MockHandler(BaseHTTPRequestHandler):
                     '[h]Chapter One[/h]\n'
                     'A [color=crimson]cracked ruby[/color] holds the '
                     'light. Go **north** now.')
+        elif 'CURRENT STATE BLOCK' in upper:
+            # /sheet asks for the state block on its own, against the
+            # schema, and expects one line of JSON and nothing else. A
+            # leading sentence is deliberate: the real models add one, and
+            # the proxy is supposed to find the braces anyway.
+            text = ('Here it is:\n'
+                    '{"hp":7,"maxhp":10,"mana":2,"maxmana":4,"ac":13,'
+                    '"level":3,"xp":275,"gold":12,"score":40,'
+                    '"location":"vault","effects":["winded"],'
+                    '"inventory":["a rusty lantern","the crimson key"],'
+                    '"appearance":"a wiry traveler in a patched gray '
+                    'cloak","companions":["Mara the innkeeper"]}')
         elif 'ATMOSPHERIC CAPTION' in upper:
             # Deterministic caption: the e2e converter probe bakes the
             # same text into its expected caption band

@@ -593,6 +593,7 @@ class ProtocolHandler:
                 "/pic [request|n] - illustrate scene / re-show pic n\n"
                 "/pics - list this conversation's pictures\n"
                 "/map [n|name] - the map / how to get there\n"
+                "/sheet - bring the character sheet up to date\n"
                 "/print [what] - hardcopy on the printer\n"
                 "/save [name] - checkpoint this conversation\n"
                 "/saves - list, /restore <n> - roll back\n"
@@ -677,6 +678,9 @@ class ProtocolHandler:
 
         elif cmd == 'map':
             await self._show_map(arg)
+
+        elif cmd == 'sheet':
+            await self._refresh_sheet()
 
         elif cmd in ('history', 'hist'):
             await self._show_history(arg)
@@ -1618,6 +1622,86 @@ class ProtocolHandler:
                 f"MAP_DATA too large to forward ({len(data)} B)")
             return
         await self.send_message(MessageType.MAP_DATA, data)
+
+    # The schema, spelled out for a model that is being asked for a state
+    # block on its own rather than at the end of a narrated turn. Same keys
+    # as the adventure prompt's, because they are the same block.
+    SHEET_SCHEMA = (
+        '{"hp":12,"maxhp":20,"mana":0,"maxmana":0,"ac":14,"level":2,'
+        '"xp":120,"gold":3,"score":0,"location":"...",'
+        '"effects":["poisoned"],"inventory":["..."],'
+        '"appearance":"one short visual phrase describing the player '
+        'character","companions":[]}')
+
+    async def _refresh_sheet(self):
+        """/sheet - re-send the stored halves, then ask the narrator for a
+        current state block against the schema.
+
+        The narrator is supposed to end every turn with one, but it drops
+        them, and the proxy deliberately keeps the last good state rather
+        than trusting a malformed one - so a sheet can be several turns
+        old. This is the way to ask, and it asks with the schema in hand
+        instead of hoping the model remembers it. One model call, no
+        narration: the answer is JSON and nothing else."""
+        # What we already know goes out first - free, and it fills the
+        # window while the model is still thinking.
+        await self.handle_get_sheet()
+        if self.mode.name != 'adventure':
+            await self._send_canned(
+                "A character sheet only exists in an adventure.")
+            return
+
+        await self.send_status("Asking for the character sheet...")
+        state = self.conv_manager.get_meta('adv_state') or '{}'
+        recent = printdoc.transcript(
+            self.conv_manager.get_messages()[-6:], budget=1500)
+        answer = await self._ask_model(
+            "Here is the state you last recorded for this adventure:\n"
+            f"{state}\n\n"
+            "And the last few turns of play:\n"
+            f"{recent}\n\n"
+            "Output the CURRENT state block for this character, as one "
+            "line of compact JSON and nothing else - no prose, no code "
+            "fence, no [[STATE:]] wrapper. Use exactly these keys, "
+            "spelled this way:\n"
+            f"{self.SHEET_SCHEMA}\n"
+            "Always include hp, maxhp, level, xp, location and "
+            "appearance; include the rest only if the story uses them. "
+            "Carry forward what has not changed rather than inventing "
+            "new values.",
+            limit=800,
+            sampling={'max_tokens': 400, 'temperature': 0.2},
+            system_prompt='')
+        # The model may still wrap it, or lead with a sentence: take the
+        # outermost braces and try those.
+        body = ''
+        if answer:
+            lo, hi = answer.find('{'), answer.rfind('}')
+            if lo >= 0 and hi > lo:
+                body = answer[lo:hi + 1]
+        try:
+            obj = json.loads(body)
+            if not isinstance(obj, dict) or not obj:
+                raise ValueError('not an object')
+        except (ValueError, TypeError):
+            self.logger.warning("sheet refresh: unusable answer %.120s",
+                                answer)
+            await self._send_canned(
+                "The narrator did not answer with a usable sheet - "
+                "the one on screen is the last good one.")
+            return
+        # Keep only keys the block is allowed to carry, so a chatty model
+        # cannot smuggle prose into the authoritative state.
+        allowed = ('hp', 'maxhp', 'mana', 'maxmana', 'ac', 'level', 'xp',
+                   'gold', 'score', 'location', 'effects', 'inventory',
+                   'appearance', 'companions')
+        clean = {k: obj[k] for k in allowed if k in obj}
+        state = json.dumps(clean, separators=(',', ':'))
+        self.conv_manager.set_meta('adv_state', state)
+        self.conv_manager.set_meta('adv_state_turn', self._adv_turn())
+        self.conv_manager.save()
+        await self._send_state_json(state)
+        await self._send_canned("Character sheet brought up to date.")
 
     async def handle_get_sheet(self):
         """A window just opened and wants filling. Everything here comes
