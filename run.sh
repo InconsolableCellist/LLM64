@@ -3,43 +3,35 @@
 #
 # SETUP
 #   ./run.sh config      create run.conf and print the current settings.
-#                        run.conf is where you say WHERE THE PROXY IS
-#                        (and, for real hardware, your C64's address).
-#                        Nothing else here needs editing.
+#                        run.conf contains the proxy address, and 
+#                        the real hardware address, if applicable.
 #
-# EMULATOR - the quickest way to see the client run
-#   ./run.sh emu         40-column build in VICE
-#   ./run.sh emu-80      80-column build, plus the boot disk the F1 menu
-#                        and config editor load their code from
+# EMULATOR
+#   ./run.sh emu         40-column build in VICE (deprecated)
+#   ./run.sh emu-80      80-column build, plus the boot disk
 #   ./run.sh emu-80 HOST:PORT
 #                        connect somewhere else for this run only
 #
 #   The emulator build has NO MODEM (CONNECT=direct): VICE itself opens
-#   the TCP connection, so the address in the client's own config editor
-#   is not used and cannot be. The proxy in run.conf - or the argument
-#   above - is what decides where it connects.
+#   the TCP connection (the address in the client's own config editor
+#   is not used). The proxy in run.conf - or the argument
+#   above - is used to make the connection.
 #
-# PROXY - only if it runs on THIS machine
+# PROXY
 #   ./run.sh proxy       foreground (Ctrl-C stops)
 #   ./run.sh proxy-bg    background (log: llm64_proxy/proxy-live.log)
 #   ./run.sh stop        stop a background proxy
 #
 #   Needs llm64_proxy/config.toml: copy config.toml.example and set your
-#   model endpoint and API key. Without it the proxy starts, accepts the
-#   C64, and then every reply fails with an API 401.
+#   model endpoint and API key
 #
-# REAL HARDWARE - C64 Ultimate on the network
-#   ./run.sh c64         build 40-col client, upload it, run it
+# REAL HARDWARE - C64 Ultimate on the network (FTP turned on)
+#   ./run.sh c64         build 40-col client, upload it to /Temp, run it (deprecated)
 #   ./run.sh c64-80      same, 80-column build
-#   ./run.sh install     put the 80-col client in /Flash, where it
-#                        survives power-off (day-to-day deploys use the
-#                        /Temp RAM disk to spare flash wear)
+#   ./run.sh install     put the 80-col client in /Flash
+#                        (use /Temp builds to avoid rw wear)
 #
-#   Hardware DOES dial (Hayes/AT), so the proxy address is compiled into
-#   the client from run.conf, and the C64 must be able to reach it by
-#   itself - a VPN address that works for the emulator will not do.
-#
-# ./run.sh status        what is up, what is not
+# ./run.sh status
 
 set -euo pipefail
 cd "$(dirname "$0")"

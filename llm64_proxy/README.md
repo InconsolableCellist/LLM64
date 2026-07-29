@@ -78,12 +78,12 @@ python -m src.main --config my-config.toml
 
 ## Features
 
-- ✅ TCP server for C64 clients
-- ✅ Binary protocol with framing and CRC
-- ✅ OpenAI API streaming support
-- ✅ Conversation persistence (Open WebUI format)
-- ✅ Multi-client support
-- ✅ Async architecture for performance
+- TCP server for C64 clients
+- Binary protocol with framing and CRC
+- OpenAI API streaming support
+- Conversation persistence (Open WebUI format)
+- Multi-client support
+- Async architecture for performance
 
 ## Testing
 
@@ -92,8 +92,6 @@ Test with a simple TCP client:
 # Connect with netcat
 nc localhost 6400
 ```
-
-Or use the included test script (coming soon).
 
 ## Directory Structure
 
