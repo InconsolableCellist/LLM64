@@ -2,11 +2,11 @@
 machine with a MIDI Mapper instead of a SID chip.
 
 Deliberately DUCK-TYPED against MusicLibrary rather than sharing a base
-class with it. That is a spike decision, not an architectural opinion:
-music.py is live code and the wire side of MIDI is being written right
-now, so this proves the selection half without touching either. The two
-classes are ~80% identical and should become one base plus two payload
-methods once the dust settles - see the note at the bottom.
+class with it - a spike decision made while the wire side was being
+written in parallel. The wire has since landed and protocol.py now
+serves CAP_MIDI clients from THIS class (every egress decision routes
+through _music_lib()). The two classes are ~80% identical and should
+become one base plus two payload methods - see the note at the bottom.
 
 What actually differs between the two, and it is only these:
 
@@ -176,9 +176,8 @@ class MidiLibrary:
         return p.read_bytes()
 
 
-# Follow-up, once protocol.py's MIDI_* work has landed and this file is
-# no longer racing it: lift everything above except payload() and the
-# weighting hook into a shared base in music.py, and let MusicLibrary and
-# MidiLibrary be the two short subclasses they deserve to be. Doing it
-# now would mean editing music.py and protocol.py in the same hour
-# somebody else is editing them.
+# Follow-up: lift everything above except payload() and the weighting
+# hook into a shared base in music.py, and let MusicLibrary and
+# MidiLibrary be the two short subclasses they deserve to be. The race
+# that deferred this is over - protocol.py's MIDI_* work has landed and
+# imports this class - so it is now an ordinary refactor.

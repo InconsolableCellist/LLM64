@@ -9,7 +9,8 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.music import MusicLibrary, MidiLibrary
+from src.music import MusicLibrary
+from src.midi_library import MidiLibrary
 from src.profiles import from_hello, CAP_MIDI, CAP_DIB_IMAGES, C64, WIN16
 
 failures = []
@@ -45,9 +46,9 @@ with tempfile.TemporaryDirectory() as td:
     empty = MidiLibrary(d / 'absent.json')
     check("absent database means unavailable", empty.available, False)
 
-# SID payload() must NOT have been inherited sideways: MusicLibrary
-# still strips PSID headers (guard against a refactor flattening them).
-check("the SID class still has its own payload",
+# The two payloads must never collapse into one: MusicLibrary strips
+# PSID headers, and doing that to a .MID would eat the MThd magic.
+check("the two classes keep separate payloads",
       MusicLibrary.payload is MidiLibrary.payload, False)
 
 # --- capability plumbing ----------------------------------------------

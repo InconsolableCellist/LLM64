@@ -12,7 +12,8 @@ import logging
 from .modes import (Mode, AdventureMode, RoleplayMode, ClaudeMode,
                     CharacterCard, find_cards)
 from .claude_session import ClaudeSession
-from .music import MusicLibrary, MidiLibrary, MusicDirectiveFilter
+from .music import MusicLibrary, MusicDirectiveFilter
+from .midi_library import MidiLibrary
 from .dice import expand as expand_dice
 from .dice import pool as dice_pool
 from .advsetup import (AdventureSetup, STAGES, ACT_QUICK,

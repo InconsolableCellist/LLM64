@@ -207,23 +207,6 @@ class MusicLibrary:
         return payload
 
 
-class MidiLibrary(MusicLibrary):
-    """The same library for a machine with a MIDI Mapper instead of a
-    SID (docs/16 section 6.2): same moods.json shape, same picker, same
-    mood vocabulary offered to the model - so the narrator's [[MUSIC:]]
-    directive and the tagging tools (sid_mood.py reads titles, not
-    audio) work unchanged. Lives at <data_dir>/midi/moods.json beside
-    its .mid files. Only the payload differs: a MIDI file is handed to
-    the client's MCI sequencer whole, so it ships verbatim - no PSID
-    header surgery, no relocation, no $B000 window."""
-
-    def payload(self, tune) -> bytes:
-        p = Path(tune["file"])
-        if not p.is_absolute():
-            p = self.db_path.parent / p
-        return p.read_bytes()
-
-
 class MusicDirectiveFilter:
     """Strips [[MUSIC: x]] / [[IMAGE: desc]] / [[STATE: json]] from
     streamed text without leaking partials.
