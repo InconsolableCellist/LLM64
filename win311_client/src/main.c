@@ -51,11 +51,12 @@
 
 #define APP_CLASS   "LLM64Main"
 #define CONV_CLASS  "LLM64Conv"
-#define PAPER_CLASS "LLM64Paper"
 #define PIC_CLASS   "LLM64Pic"
 #define MUS_CLASS   "LLM64Mus"
 #define CHR_CLASS   "LLM64Chr"
 #define INV_CLASS   "LLM64Inv"
+#define NOTE_CLASS  "LLM64Note"
+#define MAP_CLASS   "LLM64Map"
 #define PANE_CLASS  "LLM64Pane"
 #define APP_TITLE   "LLM64"
 #define INI_FILE    "LLM64.INI"
@@ -78,14 +79,16 @@ typedef struct {
 } View;
 
 /* Paper. A print job is composed by the proxy and arrives as laid-out
-   ASCII, so several can be on the desk at once - which is the whole
-   reason for a workspace with documents in it. The cap is memory
-   honesty, not taste: each sheet holds its own far blocks. */
-#define MAX_PAPER   4
+   ASCII. Every sheet used to get an MDI window of its own, which turned
+   four /prints into four windows to close; they live in the Notebook
+   now - one window, an index down the side, the page beside it. The cap
+   is memory honesty, not taste: each View carries a 2 KB open-line
+   buffer in DGROUP and its own far blocks on the heap, so six is a
+   deliberate number and not a round one. */
+#define MAX_PAPER   6
 
 static View     g_conv_view;
 static View     g_paper[MAX_PAPER];
-static HWND     g_paper_wnd[MAX_PAPER];
 static unsigned g_paper_seq;        /* sheets printed, for the titles */
 
 static HWND     g_frame;    /* the one top-level window */
@@ -526,9 +529,17 @@ static void pane_paint(HWND hwnd)
 /* ---------------------------------------------------------------- */
 
 static unsigned g_paper_born[MAX_PAPER];
+/* The sheet's own first line, kept as its entry in the Notebook's index.
+   The proxy composes every /print with its title on line one
+   (printdoc.finish), so the index writes itself. */
+static char     g_paper_name[MAX_PAPER][40];
+static int      g_paper_named[MAX_PAPER];
 
-/* A free slot, or the oldest sheet's - four on the desk at once is
-   plenty, and the fifth print job is a better use of the memory than
+/* The Notebook holds the sheets; discarding one has to tell it so. */
+static void note_drop(int slot);
+
+/* A free slot, or the oldest sheet's - six in the Notebook at once is
+   plenty, and the seventh print job is a better use of the memory than
    the first one still is. */
 static int paper_slot(void)
 {
@@ -540,13 +551,7 @@ static int paper_slot(void)
     for (i = 1; i < MAX_PAPER; i++)
         if (g_paper_born[i] < g_paper_born[oldest])
             oldest = i;
-    if (g_paper_wnd[oldest])
-        SendMessage(g_mdi, WM_MDIDESTROY, (WPARAM)g_paper_wnd[oldest], 0L);
-    if (g_paper[oldest].live) {     /* if the window did not take it */
-        sb_free(&g_paper[oldest].sb);
-        g_paper[oldest].live = 0;
-        g_paper[oldest].pane = NULL;
-    }
+    note_drop(oldest);
     return oldest;
 }
 
@@ -558,10 +563,8 @@ static void print_abort(void)
     if (!g_prt_active)
         return;
     g_prt_active = 0;
-    if (g_paper[g_prt_slot].live && !g_paper_wnd[g_prt_slot]) {
-        sb_free(&g_paper[g_prt_slot].sb);
-        g_paper[g_prt_slot].live = 0;
-    }
+    if (g_paper[g_prt_slot].live)
+        note_drop(g_prt_slot);
 }
 
 /* ---------------------------------------------------------------- */
@@ -589,7 +592,8 @@ static void send_text_frame(unsigned char type, const char *text)
    rich markers, this is the line that changes with it - as it did the
    day the picture window learned to eat a DIB. */
 #define OUR_CAPS  (CAP_ZERO_WIDTH_MARKERS | CAP_RICH_TEXT \
-                   | CAP_DIB_IMAGES | CAP_MIDI | CAP_STATE_JSON)
+                   | CAP_DIB_IMAGES | CAP_MIDI | CAP_STATE_JSON \
+                   | CAP_CHAR_SHEET | CAP_MAP_DATA)
 
 /* Introduce ourselves, before anything that could produce text.
  *
@@ -667,20 +671,51 @@ static int g_menu_choice;
    program let you see its rooms without memorizing its menus. Owned by
    the frame like the status strip, because it reports on the desk as a
    whole. */
-#define LAUNCH_N 6
+#define LAUNCH_N 8
 
 static HWND g_launch[LAUNCH_N];
+/* Button widths, at file scope because two functions have to agree on
+   them: the one that decides how many rows they need and the one that
+   places them. */
+static const int g_launch_w[LAUNCH_N] =
+    { 52, 104, 76, 64, 80, 56, 76, 48 };
+/* Eight buttons want 588 pixels, and a 640x480 screen has 632 of them
+   inside the frame - the row wraps rather than losing its right-hand end
+   off the edge, which is what happened to Map the day it was added. */
+static int g_launch_rows = 1;
+
+static int launch_btn_h(void)
+{
+    return g_ch + 8;
+}
 
 static int launch_h(void)
 {
-    return g_ch + 14;
+    return 3 + g_launch_rows * (launch_btn_h() + 3);
+}
+
+/* How many rows the strip needs at this width. A pure function of the
+   width, called before the frame divides its height up - the placement
+   pass below repeats the same packing. */
+static void launch_rows_calc(int width)
+{
+    int i, x = 4, rows = 1;
+
+    for (i = 0; i < LAUNCH_N; i++) {
+        if (x + g_launch_w[i] + 4 > width && x > 4) {
+            rows++;
+            x = 4;
+        }
+        x += g_launch_w[i] + 4;
+    }
+    g_launch_rows = rows;
 }
 
 static void launch_create(HWND frame)
 {
     static const char *label[LAUNCH_N] =
         { "Menu", "Conversation", "Picture", "Music",
-          "Character", "Items" };
+          "Character", "Items", "Notebook", "Map" };
     HINSTANCE inst = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
     int i;
 
@@ -694,14 +729,18 @@ static void launch_create(HWND frame)
 
 static void launch_layout(HWND frame)
 {
-    static const int w[LAUNCH_N] = { 52, 104, 76, 64, 80, 56 };
-    int i, x = 4;
+    RECT rc;
+    int i, x = 4, y = 3, bh = launch_btn_h();
 
-    (void)frame;
+    GetClientRect(frame, &rc);
     for (i = 0; i < LAUNCH_N; i++) {
+        if (x + g_launch_w[i] + 4 > (int)rc.right && x > 4) {
+            x = 4;
+            y += bh + 3;
+        }
         if (g_launch[i])
-            MoveWindow(g_launch[i], x, 3, w[i], launch_h() - 6, TRUE);
-        x += w[i] + 4;
+            MoveWindow(g_launch[i], x, y, g_launch_w[i], bh, TRUE);
+        x += g_launch_w[i] + 4;
     }
 }
 
@@ -740,29 +779,9 @@ static void menu_parse(const unsigned char *p, unsigned len)
     }
 }
 
-/* Open a window on a finished sheet. The slot travels in the MDI create
-   struct's lParam because the child's WM_CREATE runs before
-   WM_MDICREATE returns, so it cannot yet be found by its handle. */
-static void paper_open(int slot)
-{
-    MDICREATESTRUCT mcs;
-    char title[40];
-
-    wsprintf(title, "Printout %u", g_paper_born[slot]);
-    mcs.szClass = PAPER_CLASS;
-    mcs.szTitle = title;
-    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
-    /* Offset each sheet so a second one does not hide the first. */
-    mcs.x       = 16 + (int)(g_paper_born[slot] % 4) * 20;
-    mcs.y       = 8 + (int)(g_paper_born[slot] % 4) * 16;
-    mcs.cx      = g_cw * 84;
-    mcs.cy      = g_ch * 24;
-    mcs.style   = 0;
-    mcs.lParam  = (LONG)slot;
-
-    g_paper_wnd[slot] = (HWND)(WORD)SendMessage(g_mdi, WM_MDICREATE, 0,
-                                               (LONG)(LPMDICREATESTRUCT)&mcs);
-}
+/* Where a finished sheet goes: the Notebook, opened if it is not on the
+   desk yet, with the new sheet selected. Defined with the window. */
+static void note_add(int slot);
 
 static void print_begin(const unsigned char *p, unsigned len)
 {
@@ -794,6 +813,8 @@ static void print_begin(const unsigned char *p, unsigned len)
     sb_width(&g_paper[slot].sb, 1000);
     sb_color(&g_paper[slot].sb, 1);     /* ink: black on paper */
     g_paper_born[slot] = ++g_paper_seq;
+    g_paper_name[slot][0] = '\0';
+    g_paper_named[slot] = 0;
 
     g_prt_slot     = slot;
     g_prt_active   = 1;
@@ -802,6 +823,30 @@ static void print_begin(const unsigned char *p, unsigned len)
     g_prt_formfeed = (p[0] & 2) ? 1 : 0;
     set_status("Printing...");
     send_frame(MSG_ACK, NULL, 0);
+}
+
+/* The sheet's index entry, taken from its first non-blank line as the
+   bytes go past. Cheaper and simpler than reading it back out of the
+   scrollback afterwards, and the proxy always puts the title there. */
+static void paper_name_feed(int slot, char c)
+{
+    int n = lstrlen(g_paper_name[slot]);
+
+    if (c == '\n' || c == '\r') {
+        if (n)                      /* a blank first line is not a title */
+            g_paper_named[slot] = 1;
+        return;
+    }
+    if (c < 0x20)
+        return;
+    if (!n && c == ' ')
+        return;                     /* skip the indent, keep the words */
+    if (n >= (int)sizeof(g_paper_name[0]) - 1) {
+        g_paper_named[slot] = 1;
+        return;
+    }
+    g_paper_name[slot][n] = c;
+    g_paper_name[slot][n + 1] = '\0';
 }
 
 static void print_data(const unsigned char *p, unsigned len)
@@ -814,8 +859,11 @@ static void print_data(const unsigned char *p, unsigned len)
     /* The document arrives as ASCII with 0x0A between lines, which is
        exactly what sb_putc wants. The C64 turns them into 0x0D for the
        IEC bus; nothing here has to. */
-    for (i = 0; i < len; i++)
+    for (i = 0; i < len; i++) {
+        if (!g_paper_named[g_prt_slot])
+            paper_name_feed(g_prt_slot, (char)p[i]);
         sb_putc(&g_paper[g_prt_slot].sb, (char)p[i]);
+    }
     g_prt_blocks++;
     wsprintf(msg, "Printing %u/%u...", g_prt_blocks, g_prt_total);
     set_status(msg);
@@ -836,9 +884,10 @@ static void print_end(void)
         sb_newline(&g_paper[slot].sb);
     /* The form feed says "eject the page". There is no page to eject, so
        it is the one flag with nothing to do here. */
-    paper_open(slot);
-    wsprintf(msg, "Printed %u lines to Printout %u.",
-             (unsigned)sb_lines(&g_paper[slot].sb) - 1, g_paper_born[slot]);
+    g_paper_named[slot] = 1;        /* whatever we got is the title now */
+    note_add(slot);
+    wsprintf(msg, "Printed %u lines to the Notebook.",
+             (unsigned)sb_lines(&g_paper[slot].sb) - 1);
     set_status(msg);
     send_frame(MSG_ACK, NULL, 0);
 }
@@ -881,6 +930,59 @@ static int g_user_arranged;     /* the user moved a document themselves */
 static int g_in_layout;         /* our own MoveWindows are not "the user" */
 static int g_layout_ready;      /* creation-time WM_SIZEs are not either */
 
+/* Where each window was when it last closed. A launcher button is a
+   toggle, and a toggle whose window comes back somewhere else has quietly
+   thrown away the desk the user arranged: every open used to hand
+   WM_MDICREATE the same built-in coordinates it used the first time.
+   So the geometry outlives the window.
+
+   Kept in MDI client coordinates, which is exactly what MDICREATESTRUCT
+   wants back. Only a *restored* rectangle is worth keeping - reopening a
+   window at an icon's 32 pixels, or at a maximized rect that the next
+   frame resize invalidates, is not remembering a position. */
+enum { DESK_CONV, DESK_PIC, DESK_MUS, DESK_CHR, DESK_INV,
+       DESK_NOTE, DESK_MAP, DESK_N };
+static struct {
+    int x, y, cx, cy;
+    int ok;
+} g_desk[DESK_N];
+
+static void desk_remember(int which, HWND h)
+{
+    RECT r;
+    POINT tl;
+
+    if (!g_mdi || !h || IsIconic(h) || IsZoomed(h))
+        return;
+    GetWindowRect(h, &r);
+    tl.x = r.left;
+    tl.y = r.top;
+    ScreenToClient(g_mdi, &tl);
+    g_desk[which].x  = tl.x;
+    g_desk[which].y  = tl.y;
+    g_desk[which].cx = r.right - r.left;
+    g_desk[which].cy = r.bottom - r.top;
+    g_desk[which].ok = 1;
+}
+
+/* Fill in an MDICREATESTRUCT's geometry: where this window was last time
+   if we know, the built-in default if it has never been open. */
+static void desk_place(int which, MDICREATESTRUCT *mcs,
+                       int x, int y, int cx, int cy)
+{
+    if (g_desk[which].ok) {
+        mcs->x  = g_desk[which].x;
+        mcs->y  = g_desk[which].y;
+        mcs->cx = g_desk[which].cx;
+        mcs->cy = g_desk[which].cy;
+    } else {
+        mcs->x  = x;
+        mcs->y  = y;
+        mcs->cx = cx;
+        mcs->cy = cy;
+    }
+}
+
 /* The shelf: every picture received this session, so the browser list
    can bring any of them back. Each one is a temp FILE, not a global
    block - thirty 256 KB DIBs is 8 MB, which is more memory than the
@@ -897,6 +999,11 @@ static struct {
 static int  g_shelf_count;
 static int  g_shelf_cur = -1;   /* index on display */
 static HWND g_pic_lb;           /* the browser listbox, in the pic window */
+static HWND g_pic_auto;         /* "Illustrate every room", same window */
+
+/* The height of that checkbox strip. A macro rather than a constant
+   because g_ch is the font's, and the font is chosen at startup. */
+#define PIC_AUTO_H  (g_ch + 8)
 
 /* Ghosts ask the server for their picture; defined with the Music
    window's controls, used here first. */
@@ -993,6 +1100,10 @@ static void pic_palette(void)
 }
 
 static void pic_layout(HWND hwnd);
+static void layout_default(void);
+/* The INI lives at the bottom of the file, next to WinMain that reads
+   it; the picture window's checkbox writes it. */
+static void save_ini(void);
 
 /* Open (or refresh) the picture window. Created through the MDI client
    like every document; PicProc records the handle in WM_CREATE because
@@ -1003,7 +1114,11 @@ static void pic_open(void)
 
     if (g_pic_wnd) {
         /* The browser list appears with the first shelf entry, and
-           only a layout pass reveals it. */
+           only a layout pass reveals it. The height the window wants
+           also changes with it - and with the aspect of the art, which
+           is not known until a picture has actually arrived. */
+        if (!g_user_arranged)
+            layout_default();
         pic_layout(g_pic_wnd);
         InvalidateRect(g_pic_wnd, NULL, TRUE);
         return;
@@ -1011,10 +1126,7 @@ static void pic_open(void)
     mcs.szClass = PIC_CLASS;
     mcs.szTitle = "Picture";
     mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
-    mcs.x       = 24;
-    mcs.y       = 16;
-    mcs.cx      = 336;
-    mcs.cy      = 240;
+    desk_place(DESK_PIC, &mcs, 24, 16, 336, 240);
     mcs.style   = 0;
     mcs.lParam  = 0;
     /* Creation sends the new window its first WM_SIZE, and that must
@@ -1617,15 +1729,36 @@ static void mid_end(void)
    sheet can never disagree with the narrator. */
 
 static struct {
-    long hp, maxhp, mana, maxmana, gold, score, xp, level;
+    long hp, maxhp, mana, maxmana, gold, score, xp, level, ac, age;
     int  has_hp, has_mana, has_gold, has_score, has_xp, has_level;
+    int  has_ac, has_age;
     char location[64];
     char appearance[200];
     char companions[160];
+    char effects[120];          /* poisoned, blessed, on fire... */
     char inv[16][40];
     int  inv_n;
+    int  inv_total;             /* what the narrator listed, before the cap */
     int  valid;
 } g_sheet;
+
+/* The other half of the sheet, and the half the proxy owns: rolled once
+   by chargen.py when the adventure starts and fixed for its whole
+   length, so it arrives in its own frame (MSG_CHAR_SHEET) rather than
+   being restated by the narrator every turn - which is how race and
+   class used to drift. */
+static struct {
+    char name[40];
+    char race[24];
+    char cls[24];
+    char abil[80];              /* "STR 9  DEX 16  CON 11 ..." - flat */
+    char skills[120];
+    char spells[120];
+    char gear[160];
+    long hd;
+    int  has_hd;
+    int  valid;
+} g_static;
 
 static HWND g_chr_wnd;          /* the Character window, if open */
 static HWND g_inv_wnd;          /* the Inventory window, if open */
@@ -1798,18 +1931,56 @@ static void sheet_parse(const char *j)
     g_sheet.score   = js_num(j, "score",   &g_sheet.has_score);
     g_sheet.xp      = js_num(j, "xp",      &g_sheet.has_xp);
     g_sheet.level   = js_num(j, "level",   &g_sheet.has_level);
+    g_sheet.ac      = js_num(j, "ac",      &g_sheet.has_ac);
+    /* "_age" is the proxy's own key, not the narrator's: turns since the
+       model last handed over a state block. Zero means this turn. */
+    g_sheet.age     = js_num(j, "_age",    &g_sheet.has_age);
     js_str(j, "location",   g_sheet.location,   sizeof(g_sheet.location));
     js_str(j, "appearance", g_sheet.appearance, sizeof(g_sheet.appearance));
-    g_sheet.inv_n = js_strarr(j, "inventory", g_sheet.inv, 16, NULL, 0);
+    g_sheet.inv_total = js_strarr(j, "inventory", g_sheet.inv, 16, NULL, 0);
+    g_sheet.inv_n = g_sheet.inv_total > 16 ? 16 : g_sheet.inv_total;
     js_strarr(j, "companions", NULL, 0,
               g_sheet.companions, sizeof(g_sheet.companions));
-    g_sheet.valid = g_sheet.has_hp || g_sheet.location[0]
-        || g_sheet.appearance[0] || g_sheet.inv_n;
+    js_strarr(j, "effects", NULL, 0,
+              g_sheet.effects, sizeof(g_sheet.effects));
+    /* Every field counts towards "there is a sheet here". The old test
+       named four, so a block carrying only gold and a level rendered the
+       "no adventure state yet" placeholder over live data. */
+    g_sheet.valid = g_sheet.has_hp || g_sheet.has_mana || g_sheet.has_gold
+        || g_sheet.has_score || g_sheet.has_xp || g_sheet.has_level
+        || g_sheet.has_ac || g_sheet.location[0] || g_sheet.appearance[0]
+        || g_sheet.companions[0] || g_sheet.effects[0] || g_sheet.inv_n;
+}
+
+/* The static half. Same contract, same flat scanner: the proxy sends
+   depth-1 JSON, with the ability scores already laid out as one string
+   because a nested object would buy nothing to draw. */
+static void chr_static_frame(const char *j);
+
+static void chr_static_parse(const char *j)
+{
+    memset(&g_static, 0, sizeof(g_static));
+    if (!j || *j != '{')
+        return;
+    js_str(j, "name",  g_static.name,  sizeof(g_static.name));
+    js_str(j, "race",  g_static.race,  sizeof(g_static.race));
+    js_str(j, "class", g_static.cls,   sizeof(g_static.cls));
+    js_str(j, "abil",  g_static.abil,  sizeof(g_static.abil));
+    g_static.hd = js_num(j, "hd", &g_static.has_hd);
+    js_strarr(j, "skills", NULL, 0, g_static.skills, sizeof(g_static.skills));
+    js_strarr(j, "spells", NULL, 0, g_static.spells, sizeof(g_static.spells));
+    js_strarr(j, "gear",   NULL, 0, g_static.gear,   sizeof(g_static.gear));
+    g_static.valid = g_static.name[0] || g_static.race[0] || g_static.cls[0]
+        || g_static.abil[0];
 }
 
 /* Refresh whatever sheet windows are open. Defined with the windows
    themselves, called from the wire. */
 static void sheet_update(void);
+/* The two frames whose windows live further down the file: parse, then
+   repaint if the window happens to be open. */
+static void chr_static_frame(const char *j);
+static void map_frame(const unsigned char *p, unsigned len);
 
 /* ---------------------------------------------------------------- */
 /* Conversations: the browser's wire side                            */
@@ -2072,6 +2243,18 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
             sheet_parse((const char *)p);
             sheet_update();
         }
+        break;
+
+    /* The proxy's own half of the sheet: rolled once, fixed for the
+       adventure. */
+    case MSG_CHAR_SHEET:
+        if (len >= 1 && p[len - 1] == 0)
+            chr_static_frame((const char *)p);
+        break;
+
+    case MSG_MAP_DATA:
+        if (len >= 1 && p[len - 1] == 0)
+            map_frame(p, len);
         break;
 
     default:
@@ -2436,10 +2619,36 @@ static void conv_layout(HWND hwnd)
 
    The g_in_layout guard is what tells our own MoveWindows apart from
    the user's - a child's WM_SIZE cannot otherwise know who caused it. */
+/* How tall the picture window wants to be at a given width: the art,
+   aspect-fitted to that width (pic_paint tops it into the window), the
+   caption band under it, the browser list when there is a shelf to
+   browse, and the window's own chrome. It used to take the whole column,
+   which was mostly black - the art is wider than it is tall. What the
+   column no longer needs goes back to the desk. */
+static int pic_wanted_h(int w)
+{
+    /* Until the first picture lands there is no aspect to fit, so assume
+       the one the proxy sends (docs/16 section 6.1). */
+    long aw = g_pic_w ? (long)g_pic_w : 640;
+    long ah = g_pic_h ? (long)g_pic_h : 400;
+    int inner = w - 2 * GetSystemMetrics(SM_CXFRAME);
+    int h;
+
+    if (inner < 32)
+        inner = 32;
+    h = (int)((inner * ah) / aw);
+    h += g_ch * 2;                          /* two lines of caption */
+    h += PIC_AUTO_H;                        /* the checkbox strip */
+    if (g_shelf_count)
+        h += g_ch * 5 + 4;                  /* the browser list */
+    return h + GetSystemMetrics(SM_CYCAPTION)
+             + 2 * GetSystemMetrics(SM_CYFRAME);
+}
+
 static void layout_default(void)
 {
     RECT rc;
-    int pw, mw, mh;
+    int pw, ph, mw, mh;
 
     if (!g_mdi)
         return;
@@ -2470,12 +2679,18 @@ static void layout_default(void)
     mw = pw ? pw : 260;
     if (mw > (int)rc.right)
         mw = (int)rc.right;
+    /* The picture takes the height its aspect asks for and no more; the
+       gap between it and the Music corner is deliberate desk space. */
+    ph = pw ? pic_wanted_h(pw) : 0;
+    if (ph > (int)rc.bottom - mh)
+        ph = (int)rc.bottom - mh;
+    if (ph < g_ch * 3)
+        ph = g_ch * 3;
     if (g_conv)
         MoveWindow(g_conv, 0, 0, (int)rc.right - pw,
                    (int)rc.bottom, TRUE);
     if (g_pic_wnd)
-        MoveWindow(g_pic_wnd, (int)rc.right - pw, 0, pw,
-                   (int)rc.bottom - mh, TRUE);
+        MoveWindow(g_pic_wnd, (int)rc.right - pw, 0, pw, ph, TRUE);
     if (g_mus_wnd)
         MoveWindow(g_mus_wnd, (int)rc.right - mw,
                    (int)rc.bottom - mh, mw, mh, TRUE);
@@ -2494,12 +2709,22 @@ static void frame_layout(HWND hwnd)
     if (!g_mdi)
         return;
     GetClientRect(hwnd, &rc);
+    /* The strip's height depends on the width, so it has to be decided
+       before the height is divided up. */
+    launch_rows_calc((int)rc.right);
     h = rc.bottom - statush - launch_h();
     if (h < g_ch) h = g_ch;
     /* The documents get everything between the launcher strip and the
        status strip. */
     w = (int)rc.right;
+    /* Resizing the workspace resizes any maximized document with it, and
+       that WM_SIZE is the frame's doing, not the user's: without this
+       guard one drag of the frame border made the desk "arranged" and
+       every window that closed afterwards came back at its built-in
+       coordinates instead of its own. */
+    g_in_layout = 1;
     MoveWindow(g_mdi, 0, launch_h(), w, h, TRUE);
+    g_in_layout = 0;
     launch_layout(hwnd);
 }
 
@@ -2560,7 +2785,10 @@ long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
            system menu. Forget its children rather than leaving handles
            that outlive the windows they name: an arriving CHAT_CHUNK
            would otherwise paint into a window that no longer exists.
-           Window > New Conversation Window brings it back. */
+           Window > New Conversation Window brings it back - in the
+           place it was closed from, which is what desk_remember is
+           for. */
+        desk_remember(DESK_CONV, hwnd);
         g_conv = NULL;
         g_conv_view.pane = NULL;
         g_input = NULL;
@@ -2570,76 +2798,554 @@ long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
 }
 
 /* ---------------------------------------------------------------- */
-/* Paper                                                             */
+/* The Notebook                                                      */
 /* ---------------------------------------------------------------- */
 
-/* A sheet of printed paper. The proxy has already composed and laid the
-   document out to a printer width (docs/14), so this window's whole job
-   is to hold still and be read: no input box, no re-flow, a margin, and
-   the text exactly where the printer would have put it. */
-long FAR PASCAL _export PaperProc(HWND hwnd, UINT msg, UINT wParam,
-                                  LONG lParam)
+/* Everything the proxy has printed this session, in one window: an index
+   of sheets down the left, the selected page beside it. The proxy has
+   already composed and laid each document out to a printer width
+   (docs/14), so the page half's whole job is to hold still and be read -
+   no input box, no re-flow, a margin, and the text exactly where the
+   printer would have put it.
+
+   One window rather than one per sheet, which is what /print used to do:
+   four printouts were four windows to close, and none of them said what
+   was on any of the others. */
+
+static HWND g_note_wnd;
+static HWND g_note_lb;          /* the index */
+static HWND g_note_pane;        /* the page, re-made as the index moves */
+static int  g_note_cur = -1;    /* the sheet on show, or -1 for none */
+
+#define NOTE_INDEX_W  132
+
+static void note_layout(HWND hwnd)
 {
     RECT rc;
+    int lw;
+
+    GetClientRect(hwnd, &rc);
+    lw = NOTE_INDEX_W;
+    if (lw > (int)rc.right / 2)
+        lw = (int)rc.right / 2;
+    if (g_note_lb)
+        MoveWindow(g_note_lb, 0, 0, lw, rc.bottom, TRUE);
+    if (g_note_pane)
+        MoveWindow(g_note_pane, lw, 0, (int)rc.right - lw, rc.bottom, TRUE);
+}
+
+/* Rebuild the index. Each row carries its slot in its item data, so the
+   row order is free to be anything and the empty state can be a row. */
+static void note_fill(void)
+{
+    int i, rows = 0, sel = -1;
+
+    if (!g_note_lb)
+        return;
+    SendMessage(g_note_lb, LB_RESETCONTENT, 0, 0L);
+    for (i = 0; i < MAX_PAPER; i++) {
+        char row[64];
+        int r;
+
+        if (!g_paper[i].live)
+            continue;
+        wsprintf(row, "%u. %s", g_paper_born[i],
+                 g_paper_name[i][0] ? (LPSTR)g_paper_name[i]
+                                    : (LPSTR)"(untitled)");
+        r = (int)SendMessage(g_note_lb, LB_ADDSTRING, 0, (LONG)(LPSTR)row);
+        if (r < 0)
+            continue;
+        SendMessage(g_note_lb, LB_SETITEMDATA, r, (LONG)i);
+        if (i == g_note_cur)
+            sel = r;
+        rows++;
+    }
+    if (!rows) {
+        SendMessage(g_note_lb, LB_ADDSTRING, 0,
+                    (LONG)(LPSTR)"(nothing printed)");
+        SendMessage(g_note_lb, LB_SETITEMDATA, 0, (LONG)-1);
+    } else if (sel >= 0) {
+        SendMessage(g_note_lb, LB_SETCURSEL, sel, 0L);
+    }
+}
+
+/* Show a sheet, or nothing. The pane is made and destroyed with the
+   selection rather than rebound in place: a View owns exactly one pane
+   pointer, and a pane left pointing at a freed scrollback is the one
+   mistake here that crashes rather than merely looking wrong. */
+static void note_show(int slot)
+{
+    if (!g_note_wnd)
+        return;
+    if (g_note_pane) {
+        if (g_note_cur >= 0 && g_note_cur < MAX_PAPER
+                && g_paper[g_note_cur].pane == g_note_pane)
+            g_paper[g_note_cur].pane = NULL;
+        DestroyWindow(g_note_pane);
+        g_note_pane = NULL;
+    }
+    g_note_cur = -1;
+    if (slot >= 0 && slot < MAX_PAPER && g_paper[slot].live) {
+        g_note_cur = slot;
+        g_paper[slot].top = 0;      /* a page opens at its top */
+        g_note_pane = pane_create(g_note_wnd, &g_paper[slot]);
+    }
+    note_layout(g_note_wnd);
+    InvalidateRect(g_note_wnd, NULL, TRUE);
+}
+
+/* Throw a sheet away. Eviction and "clear it out" both come here, and
+   both have to get the pane off it first. */
+static void note_drop(int slot)
+{
+    if (slot < 0 || slot >= MAX_PAPER)
+        return;
+    if (g_note_cur == slot)
+        note_show(-1);
+    if (g_paper[slot].live)
+        sb_free(&g_paper[slot].sb);
+    g_paper[slot].live = 0;
+    g_paper[slot].pane = NULL;
+    g_paper_name[slot][0] = '\0';
+    g_paper_named[slot] = 0;
+    if (g_prt_active && g_prt_slot == slot)
+        g_prt_active = 0;
+    note_fill();
+}
+
+static void note_clear(void)
+{
+    int i;
+
+    for (i = 0; i < MAX_PAPER; i++)
+        if (g_paper[i].live)
+            note_drop(i);
+}
+
+static void note_paint(HWND hwnd)
+{
+    PAINTSTRUCT ps;
+    HDC hdc = BeginPaint(hwnd, &ps);
+    RECT rc;
+    int lw;
+
+    /* Only the part no child covers - which with no sheet selected is the
+       whole right-hand side, and is where the empty state goes. */
+    GetClientRect(hwnd, &rc);
+    lw = NOTE_INDEX_W;
+    if (lw > (int)rc.right / 2)
+        lw = (int)rc.right / 2;
+    rc.left = lw;
+    FillRect(hdc, &rc, GetStockObject(LTGRAY_BRUSH));
+    if (!g_note_pane) {
+        rc.top += g_ch * 2;
+        SetBkMode(hdc, TRANSPARENT);
+        SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+        SetTextColor(hdc, RGB(0x40, 0x40, 0x40));
+        DrawText(hdc,
+                 "Nothing printed yet.\n\nAsk for a printout - "
+                 "\"/print the letter\" - and every sheet is filed here.",
+                 -1, &rc, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
+    }
+    EndPaint(hwnd, &ps);
+}
+
+long FAR PASCAL _export NoteProc(HWND hwnd, UINT msg, UINT wParam,
+                                 LONG lParam)
+{
     int i;
 
     switch (msg) {
-    case WM_CREATE: {
-        /* The slot arrives in the MDI create struct: this runs before
-           WM_MDICREATE returns, so the sheet cannot yet be found by
-           looking its window up. */
-        LPMDICREATESTRUCT mp =
-            (LPMDICREATESTRUCT)((LPCREATESTRUCT)lParam)->lpCreateParams;
-        int slot = (int)mp->lParam;
-
-        if (slot < 0 || slot >= MAX_PAPER)
-            return -1;
-        g_paper_wnd[slot] = hwnd;
-        pane_create(hwnd, &g_paper[slot]);
+    case WM_CREATE:
+        g_note_wnd = hwnd;
+        g_note_lb = CreateWindow("LISTBOX", NULL,
+                                 WS_CHILD | WS_VISIBLE | WS_BORDER
+                                 | WS_VSCROLL | LBS_NOTIFY,
+                                 0, 0, 10, 10, hwnd, (HMENU)ID_NOTELIST,
+                                 (HINSTANCE)GetWindowWord(hwnd,
+                                                          GWW_HINSTANCE),
+                                 NULL);
+        SendMessage(g_note_lb, WM_SETFONT, (WPARAM)g_font, 0L);
+        /* The sheets outlive this window, so reopening it finds them
+           again - the picture shelf's rule, applied to paper. */
+        note_fill();
+        if (g_note_cur < 0) {
+            for (i = MAX_PAPER - 1; i >= 0; i--)
+                if (g_paper[i].live)
+                    break;
+            note_show(i);           /* the newest, or -1 if there are none */
+        } else {
+            note_show(g_note_cur);
+        }
         break;
-    }
+
+    case WM_PAINT:
+        note_paint(hwnd);
+        return 0;
+
+    case WM_COMMAND:
+        if (wParam == ID_NOTELIST && HIWORD(lParam) == LBN_SELCHANGE) {
+            int r = (int)SendMessage(g_note_lb, LB_GETCURSEL, 0, 0L);
+            if (r >= 0)
+                note_show((int)SendMessage(g_note_lb, LB_GETITEMDATA,
+                                           r, 0L));
+            return 0;
+        }
+        break;
 
     case WM_SIZE:
-        GetClientRect(hwnd, &rc);
-        for (i = 0; i < MAX_PAPER; i++) {
-            if (g_paper_wnd[i] == hwnd && g_paper[i].pane) {
-                MoveWindow(g_paper[i].pane, 0, 0, rc.right, rc.bottom, TRUE);
-                break;
-            }
-        }
+    case WM_MOVE:
+        if (g_layout_ready && !g_in_layout)
+            g_user_arranged = 1;
+        note_layout(hwnd);
         break;
 
     case WM_MDIACTIVATE:
-        /* Paper has nothing to type into, so activating a sheet must not
-           leave the keyboard pointing at the conversation's input box -
-           give the focus to the sheet's own pane, where PgUp and PgDn
-           work. */
-        if (wParam) {
-            for (i = 0; i < MAX_PAPER; i++) {
-                if (g_paper_wnd[i] == hwnd && g_paper[i].pane) {
-                    SetFocus(g_paper[i].pane);
-                    break;
-                }
-            }
-        }
+        /* Paper has nothing to type into, so activating the Notebook must
+           not leave the keyboard on the conversation's input box - give
+           the focus to the page, where PgUp and PgDn work. */
+        if (wParam && g_note_pane)
+            SetFocus(g_note_pane);
         break;
 
     case WM_DESTROY:
-        for (i = 0; i < MAX_PAPER; i++) {
-            if (g_paper_wnd[i] == hwnd) {
-                /* The sheet is thrown away with its window: unlike the
-                   transcript, nothing later appends to it, and its far
-                   blocks are worth more back on the heap. */
-                if (g_paper[i].live)
-                    sb_free(&g_paper[i].sb);
-                g_paper[i].live = 0;
-                g_paper[i].pane = NULL;
-                g_paper_wnd[i] = NULL;
-                if (g_prt_active && g_prt_slot == i)
-                    g_prt_active = 0;
-                break;
+        desk_remember(DESK_NOTE, hwnd);
+        /* The pane dies with its parent; unbind it so nothing later paints
+           through a stale handle. The SHEETS stay - closing the index is
+           not throwing the paper away. */
+        if (g_note_cur >= 0 && g_note_cur < MAX_PAPER)
+            g_paper[g_note_cur].pane = NULL;
+        g_note_pane = NULL;
+        g_note_lb = NULL;
+        g_note_wnd = NULL;
+        break;
+    }
+    return DefMDIChildProc(hwnd, msg, wParam, lParam);
+}
+
+/* ---------------------------------------------------------------- */
+/* The Map                                                           */
+/* ---------------------------------------------------------------- */
+
+/* The adventure's geography, drawn rather than printed. The proxy keeps
+   the authoritative map (rooms, one-way edges, what has only been heard
+   of) and already renders an ASCII version for /print and for the C64;
+   this client claims CAP_MAP_DATA and gets the structure instead, in one
+   MAP_DATA frame:
+
+       M<turn>\t<cols>\t<rows>
+       R<num>\t<gx>\t<gy>\t<flags>\t<name>     flags: 1 visited, 2 you
+       E<a>\t<b>\t<dir>\t<flags>               dir n s e w u d or -
+       X<hidden>                               rooms that did not fit
+
+   Drawn the way a 1993 game drew a map: boxes ruled on paper, the room
+   number in each, ink lines between them, and no gradient anywhere. */
+
+#define MAP_ROOMS  40
+#define MAP_EDGES  72
+#define MAP_NAME   21
+
+static HWND g_map_wnd;
+static struct {
+    unsigned char num, gx, gy, flags;
+    char          name[MAP_NAME];
+} g_map_room[MAP_ROOMS];
+static struct {
+    unsigned char a, b, flags;
+    char          dir;
+} g_map_edge[MAP_EDGES];
+static int      g_map_nrooms, g_map_nedges;
+static int      g_map_cols, g_map_rows, g_map_hidden;
+static unsigned g_map_turn;
+static int      g_map_valid;        /* a frame has arrived this session */
+
+/* One tab-separated field, copied out and NUL-terminated. Returns where
+   the next field starts, or NULL at the end of the line. */
+static const char *map_field(const char *p, char *out, int max)
+{
+    int n = 0;
+
+    while (*p && *p != '\t' && *p != '\n') {
+        if (n < max - 1)
+            out[n++] = *p;
+        p++;
+    }
+    out[n] = '\0';
+    if (*p == '\t')
+        return p + 1;
+    return NULL;
+}
+
+static int map_int(const char *s)
+{
+    int v = 0;
+
+    while (*s >= '0' && *s <= '9')
+        v = v * 10 + (*s++ - '0');
+    return v;
+}
+
+static void map_parse(const unsigned char *p, unsigned len)
+{
+    const char *s = (const char *)p;
+    const char *end = s + len;
+    char f[64];
+
+    g_map_nrooms = g_map_nedges = 0;
+    g_map_cols = g_map_rows = g_map_hidden = 0;
+    g_map_turn = 0;
+    g_map_valid = 1;
+
+    while (s < end && *s) {
+        char kind = *s++;
+        const char *next = s;
+
+        switch (kind) {
+        case 'M':
+            next = map_field(s, f, sizeof(f));
+            g_map_turn = (unsigned)map_int(f);
+            if (next) {
+                next = map_field(next, f, sizeof(f));
+                g_map_cols = map_int(f);
             }
+            if (next) {
+                next = map_field(next, f, sizeof(f));
+                g_map_rows = map_int(f);
+            }
+            break;
+
+        case 'R':
+            if (g_map_nrooms < MAP_ROOMS) {
+                int i = g_map_nrooms;
+                next = map_field(s, f, sizeof(f));
+                g_map_room[i].num = (unsigned char)map_int(f);
+                if (next) next = map_field(next, f, sizeof(f));
+                g_map_room[i].gx = (unsigned char)map_int(f);
+                if (next) next = map_field(next, f, sizeof(f));
+                g_map_room[i].gy = (unsigned char)map_int(f);
+                if (next) next = map_field(next, f, sizeof(f));
+                g_map_room[i].flags = (unsigned char)map_int(f);
+                if (next) next = map_field(next, g_map_room[i].name,
+                                           MAP_NAME);
+                else g_map_room[i].name[0] = '\0';
+                g_map_nrooms++;
+            }
+            break;
+
+        case 'E':
+            if (g_map_nedges < MAP_EDGES) {
+                int i = g_map_nedges;
+                next = map_field(s, f, sizeof(f));
+                g_map_edge[i].a = (unsigned char)map_int(f);
+                if (next) next = map_field(next, f, sizeof(f));
+                g_map_edge[i].b = (unsigned char)map_int(f);
+                if (next) next = map_field(next, f, sizeof(f));
+                g_map_edge[i].dir = f[0] ? f[0] : '-';
+                if (next) next = map_field(next, f, sizeof(f));
+                g_map_edge[i].flags = (unsigned char)map_int(f);
+                g_map_nedges++;
+            }
+            break;
+
+        case 'X':
+            map_field(s, f, sizeof(f));
+            g_map_hidden = map_int(f);
+            break;
         }
+        /* Whatever the line was, skip to the start of the next one. */
+        while (s < end && *s && *s != '\n')
+            s++;
+        if (s < end && *s == '\n')
+            s++;
+    }
+}
+
+static void map_frame(const unsigned char *p, unsigned len)
+{
+    map_parse(p, len);
+    if (g_map_wnd)
+        InvalidateRect(g_map_wnd, NULL, TRUE);
+}
+
+/* Where a room's box lands, in client pixels. */
+static void map_box(const RECT *area, int gx, int gy, RECT *out)
+{
+    int cw = (area->right - area->left) / (g_map_cols > 0 ? g_map_cols : 1);
+    int chh = (area->bottom - area->top) / (g_map_rows > 0 ? g_map_rows : 1);
+    int px = 3, py = 3;
+
+    if (cw < 12) cw = 12;
+    if (chh < 10) chh = 10;
+    if (cw < 30) px = 1;
+    if (chh < 24) py = 1;
+    out->left   = area->left + gx * cw + px;
+    out->top    = area->top + gy * chh + py;
+    out->right  = area->left + (gx + 1) * cw - px;
+    out->bottom = area->top + (gy + 1) * chh - py;
+}
+
+static int map_find(int num)
+{
+    int i;
+
+    for (i = 0; i < g_map_nrooms; i++)
+        if (g_map_room[i].num == (unsigned char)num)
+            return i;
+    return -1;
+}
+
+static void map_paint(HWND hwnd)
+{
+    PAINTSTRUCT ps;
+    HDC hdc;
+    RECT rc, area, box;
+    HPEN ink, dotted, old_pen;
+    HBRUSH paper, fill;
+    HFONT old_font;
+    char line[80];
+    int i, top;
+
+    hdc = BeginPaint(hwnd, &ps);
+    GetClientRect(hwnd, &rc);
+
+    /* Paper first, and the same paper in either theme: a map is a map. */
+    paper = CreateSolidBrush(RGB(0xF4, 0xEC, 0xD8));
+    FillRect(hdc, &rc, paper);
+    DeleteObject(paper);
+
+    ink = CreatePen(PS_SOLID, 1, RGB(0x20, 0x20, 0x20));
+    dotted = CreatePen(PS_DOT, 1, RGB(0x60, 0x60, 0x60));
+    old_pen = SelectObject(hdc, ink);
+    old_font = SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, RGB(0x20, 0x20, 0x20));
+
+    /* The heading, and the rule under it. */
+    if (!g_map_valid || g_map_nrooms == 0) {
+        RECT tr = rc;
+        tr.top += g_ch * 2;
+        DrawText(hdc, g_map_valid
+                 ? "No ground covered yet.\n\nThe map fills in as you "
+                   "explore."
+                 : "No map yet.\n\nStart an adventure and the places you "
+                   "visit are drawn here.",
+                 -1, &tr, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
+        SelectObject(hdc, old_font);
+        SelectObject(hdc, old_pen);
+        DeleteObject(ink);
+        DeleteObject(dotted);
+        EndPaint(hwnd, &ps);
+        return;
+    }
+
+    if (g_map_hidden)
+        wsprintf(line, "%d places, turn %u  (%d off the edge)",
+                 g_map_nrooms, g_map_turn, g_map_hidden);
+    else
+        wsprintf(line, "%d places, turn %u", g_map_nrooms, g_map_turn);
+    TextOut(hdc, 6, 3, line, lstrlen(line));
+    top = g_ch + 6;
+    MoveTo(hdc, 4, top - 2);
+    LineTo(hdc, (int)rc.right - 4, top - 2);
+
+    area.left = 4;
+    area.top = top;
+    area.right = (int)rc.right - 4;
+    area.bottom = (int)rc.bottom - 4;
+
+    /* Corridors under the rooms, so a box always wins the overlap. */
+    for (i = 0; i < g_map_nedges; i++) {
+        int a = map_find(g_map_edge[i].a);
+        int b = map_find(g_map_edge[i].b);
+        RECT ra, rb;
+
+        if (a < 0 || b < 0)
+            continue;
+        map_box(&area, g_map_room[a].gx, g_map_room[a].gy, &ra);
+        map_box(&area, g_map_room[b].gx, g_map_room[b].gy, &rb);
+        /* One-way passages and stairs are dotted: the eye reads a dotted
+           line as "not the same as the others", which is all the
+           distinction a 1993 map ever made. */
+        SelectObject(hdc, (g_map_edge[i].flags & 1)
+                     || g_map_edge[i].dir == 'u'
+                     || g_map_edge[i].dir == 'd' ? dotted : ink);
+        MoveTo(hdc, (ra.left + ra.right) / 2, (ra.top + ra.bottom) / 2);
+        LineTo(hdc, (rb.left + rb.right) / 2, (rb.top + rb.bottom) / 2);
+    }
+    SelectObject(hdc, ink);
+
+    for (i = 0; i < g_map_nrooms; i++) {
+        int here = (g_map_room[i].flags & 2) != 0;
+        int visited = (g_map_room[i].flags & 1) != 0;
+        char num[8];
+
+        map_box(&area, g_map_room[i].gx, g_map_room[i].gy, &box);
+        if (box.right <= box.left || box.bottom <= box.top)
+            continue;
+        /* Where you are is filled; somewhere only heard about is left
+           empty with a dotted rule; everywhere else is plain paper. */
+        fill = CreateSolidBrush(here ? RGB(0x20, 0x20, 0x20)
+                                     : RGB(0xFF, 0xFB, 0xEE));
+        FillRect(hdc, &box, fill);
+        DeleteObject(fill);
+        SelectObject(hdc, visited ? ink : dotted);
+        MoveTo(hdc, box.left, box.top);
+        LineTo(hdc, box.right - 1, box.top);
+        LineTo(hdc, box.right - 1, box.bottom - 1);
+        LineTo(hdc, box.left, box.bottom - 1);
+        LineTo(hdc, box.left, box.top);
+        SelectObject(hdc, ink);
+
+        SetTextColor(hdc, here ? RGB(0xFF, 0xFB, 0xEE)
+                               : RGB(0x20, 0x20, 0x20));
+        wsprintf(num, "%d", (int)g_map_room[i].num);
+        TextOut(hdc, box.left + 3, box.top + 1, num, lstrlen(num));
+        /* The name only if there is room for it under the number - a
+           label that does not fit is worse than no label. */
+        if (box.bottom - box.top >= g_ch * 2 + 2
+                && box.right - box.left > 40) {
+            RECT nr = box;
+            nr.left += 3;
+            nr.right -= 2;
+            nr.top += g_ch;
+            DrawText(hdc, g_map_room[i].name, -1, &nr,
+                     DT_WORDBREAK | DT_NOPREFIX | DT_NOCLIP);
+        }
+    }
+    SetTextColor(hdc, RGB(0x20, 0x20, 0x20));
+
+    SelectObject(hdc, old_font);
+    SelectObject(hdc, old_pen);
+    DeleteObject(ink);
+    DeleteObject(dotted);
+    EndPaint(hwnd, &ps);
+}
+
+long FAR PASCAL _export MapProc(HWND hwnd, UINT msg, UINT wParam,
+                                LONG lParam)
+{
+    switch (msg) {
+    case WM_CREATE:
+        g_map_wnd = hwnd;
+        break;
+
+    case WM_PAINT:
+        map_paint(hwnd);
+        return 0;
+
+    case WM_ERASEBKGND:
+        return 1;               /* map_paint covers every pixel */
+
+    case WM_SIZE:
+    case WM_MOVE:
+        if (g_layout_ready && !g_in_layout)
+            g_user_arranged = 1;
+        InvalidateRect(hwnd, NULL, TRUE);
+        break;
+
+    case WM_DESTROY:
+        desk_remember(DESK_MAP, hwnd);
+        g_map_wnd = NULL;
         break;
     }
     return DefMDIChildProc(hwnd, msg, wParam, lParam);
@@ -2649,9 +3355,9 @@ long FAR PASCAL _export PaperProc(HWND hwnd, UINT msg, UINT wParam,
 /* The picture window                                                */
 /* ---------------------------------------------------------------- */
 
-/* Rows the browser list takes from the bottom of the picture window.
-   Zero until there is something to browse - a picture on its own
-   deserves the whole window. */
+/* Rows the browser list takes from the bottom of the picture window,
+   above the checkbox strip. Zero until there is something to browse - a
+   picture on its own deserves the whole window. */
 static int pic_list_h(HWND hwnd)
 {
     RECT rc;
@@ -2670,16 +3376,32 @@ static void pic_layout(HWND hwnd)
 {
     RECT rc;
     int lh = pic_list_h(hwnd);
+    int ah;
 
     if (!g_pic_lb)
         return;
     GetClientRect(hwnd, &rc);
+    ah = PIC_AUTO_H;
+    if (ah > (int)rc.bottom)
+        ah = (int)rc.bottom;
+    if (g_pic_auto)
+        MoveWindow(g_pic_auto, 4, rc.bottom - ah, rc.right - 8, ah - 2,
+                   TRUE);
     if (lh) {
-        MoveWindow(g_pic_lb, 0, rc.bottom - lh, rc.right, lh, TRUE);
+        MoveWindow(g_pic_lb, 0, rc.bottom - ah - lh, rc.right, lh, TRUE);
         ShowWindow(g_pic_lb, SW_SHOW);
     } else {
         ShowWindow(g_pic_lb, SW_HIDE);
     }
+}
+
+/* Settings > Pictures and this checkbox are one setting; whichever moved
+   it tells the other. */
+static void pic_auto_sync(void)
+{
+    if (g_pic_auto)
+        SendMessage(g_pic_auto, BM_SETCHECK, (WPARAM)(g_room_pics ? 1 : 0),
+                    0L);
 }
 
 static void pic_paint(HWND hwnd)
@@ -2692,8 +3414,9 @@ static void pic_paint(HWND hwnd)
 
     hdc = BeginPaint(hwnd, &ps);
     GetClientRect(hwnd, &rc);
-    /* The browser list owns the bottom band; paint only above it. */
-    rc.bottom -= pic_list_h(hwnd);
+    /* The checkbox strip and the browser list own the bottom bands;
+       paint only above them. */
+    rc.bottom -= pic_list_h(hwnd) + PIC_AUTO_H;
     if (rc.bottom < 1)
         rc.bottom = 1;
 
@@ -2777,6 +3500,17 @@ long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
                                       : (char *)"(untitled)"));
         if (g_shelf_cur >= 0)
             SendMessage(g_pic_lb, LB_SETCURSEL, g_shelf_cur, 0L);
+        /* "Illustrate every room" belongs where the pictures are, not
+           three levels into a Settings dialog. Same variable, same INI
+           key, same SET_OPTION - two ways to the one switch. */
+        g_pic_auto = CreateWindow("BUTTON", "Illustrate every room",
+                                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                                  0, 0, 10, 10, hwnd, (HMENU)ID_PICAUTO,
+                                  (HINSTANCE)GetWindowWord(hwnd,
+                                                           GWW_HINSTANCE),
+                                  NULL);
+        SendMessage(g_pic_auto, WM_SETFONT, (WPARAM)g_font, 0L);
+        pic_auto_sync();
         break;
 
     case WM_PAINT:
@@ -2792,6 +3526,28 @@ long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
             shelf_show((int)SendMessage(g_pic_lb, LB_GETCURSEL, 0, 0L));
             return 0;
         }
+        if (wParam == ID_PICAUTO) {
+            /* BS_AUTOCHECKBOX has already flipped its own state; read it
+               rather than assuming, and persist immediately - a setting
+               that needs OK is a setting people distrust. */
+            g_room_pics = (int)SendMessage(g_pic_auto, BM_GETCHECK, 0, 0L)
+                          ? 1 : 0;
+            save_ini();
+            if (net_state() == NET_UP) {
+                send_options();
+                set_status(g_room_pics
+                           ? "Every location will be illustrated."
+                           : "Only asked-for pictures now.");
+            } else {
+                set_status(g_room_pics
+                           ? "Every location will be illustrated once "
+                             "connected."
+                           : "Only asked-for pictures now.");
+            }
+            if (g_input)
+                SetFocus(g_input);
+            return 0;
+        }
         break;
 
     case WM_SIZE:
@@ -2803,8 +3559,10 @@ long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
         break;
 
     case WM_DESTROY:
-        g_pic_wnd = NULL;
-        g_pic_lb  = NULL;
+        desk_remember(DESK_PIC, hwnd);
+        g_pic_wnd  = NULL;
+        g_pic_lb   = NULL;
+        g_pic_auto = NULL;
         break;
     }
     return DefMDIChildProc(hwnd, msg, wParam, lParam);
@@ -2988,6 +3746,7 @@ long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
         break;
 
     case WM_DESTROY:
+        desk_remember(DESK_MUS, hwnd);
         g_mus_wnd = NULL;
         for (i = 0; i < 3; i++)
             g_mus_btn[i] = NULL;
@@ -3006,12 +3765,47 @@ long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
    sidebars. Both float over the desk like the Music controls - they
    are gauges, not documents. */
 
+static void chr_static_frame(const char *j)
+{
+    chr_static_parse(j);
+    if (g_chr_wnd)
+        InvalidateRect(g_chr_wnd, NULL, TRUE);
+}
+
+/* One word-wrapped line of the sheet, and the y it leaves behind. Returns
+   zero when the window has run out of room, so the caller can stop
+   drawing rather than scribble past the bottom edge - the sheet grew past
+   what 230 pixels hold the day it learned race and class. */
+static int chr_line(HDC hdc, const RECT *rc, int *y, const char *text)
+{
+    RECT tr;
+
+    if (!text || !text[0])
+        return 1;
+    if (*y > (int)rc->bottom - g_ch)
+        return 0;
+    tr.left = 8;
+    tr.top = *y;
+    tr.right = (int)rc->right - 6;
+    tr.bottom = (int)rc->bottom;
+    DrawText(hdc, text, -1, &tr, DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
+    if (tr.bottom > (int)rc->bottom)
+        tr.bottom = (int)rc->bottom;
+    tr.right = (int)rc->right - 6;
+    DrawText(hdc, text, -1, &tr, DT_WORDBREAK | DT_NOPREFIX);
+    *y = (int)tr.bottom + 2;
+    return *y < (int)rc->bottom;
+}
+
 static void chr_paint(HWND hwnd)
 {
     PAINTSTRUCT ps;
     HDC hdc;
     RECT rc, br;
-    char line[120];
+    /* Sized for the longest thing that can land in it: "With you: " plus
+       a 159-character companions list. It used to be 120, and three
+       described companions wrote through the return address. */
+    char line[220];
     int y = 6, bh;
 
     hdc = BeginPaint(hwnd, &ps);
@@ -3019,17 +3813,43 @@ static void chr_paint(HWND hwnd)
     SetBkMode(hdc, TRANSPARENT);
     SelectObject(hdc, GetStockObject(SYSTEM_FONT));
     SetTextColor(hdc, RGB(0, 0, 0));
-    if (!g_sheet.valid) {
+    if (!g_sheet.valid && !g_static.valid) {
         DrawText(hdc, "No adventure state yet.\n\nStart an adventure "
                  "and the narrator's own bookkeeping appears here.",
                  -1, &rc, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
         EndPaint(hwnd, &ps);
         return;
     }
+    /* The proxy's half first: who this is. Rolled once, never restated by
+       the narrator, so it cannot drift mid-adventure. */
+    if (g_static.name[0]) {
+        HFONT bold = g_fonts[SB_ATTR_BOLD];
+        HFONT prev = bold ? SelectObject(hdc, bold) : NULL;
+        TextOut(hdc, 8, y, g_static.name, lstrlen(g_static.name));
+        if (prev)
+            SelectObject(hdc, prev);
+        y += g_ch + 2;
+    }
+    line[0] = '\0';
+    if (g_static.race[0])
+        wsprintf(line, "%s ", (LPSTR)g_static.race);
+    if (g_static.cls[0])
+        wsprintf(line + lstrlen(line), "%s", (LPSTR)g_static.cls);
+    if (g_sheet.has_level)
+        wsprintf(line + lstrlen(line), "%sLevel %ld",
+                 line[0] ? ", " : "", g_sheet.level);
+    if (line[0] && !chr_line(hdc, &rc, &y, line))
+        goto done;
+    if (g_static.abil[0]) {
+        y += 2;
+        if (!chr_line(hdc, &rc, &y, g_static.abil))
+            goto done;
+    }
     if (g_sheet.location[0]) {
         wsprintf(line, "At: %s", (LPSTR)g_sheet.location);
-        TextOut(hdc, 8, y, line, lstrlen(line));
-        y += g_ch + 4;
+        if (!chr_line(hdc, &rc, &y, line))
+            goto done;
+        y += 2;
     }
     if (g_sheet.has_hp) {
         /* The HP bar every sidebar had: sunken frame, red when the
@@ -3060,37 +3880,63 @@ static void chr_paint(HWND hwnd)
     }
     if (g_sheet.has_mana && g_sheet.maxmana > 0) {
         wsprintf(line, "Mana %ld / %ld", g_sheet.mana, g_sheet.maxmana);
-        TextOut(hdc, 8, y, line, lstrlen(line));
-        y += g_ch + 2;
+        if (!chr_line(hdc, &rc, &y, line))
+            goto done;
     }
     line[0] = '\0';
+    if (g_sheet.has_ac)
+        wsprintf(line, "AC %ld   ", g_sheet.ac);
     if (g_sheet.has_gold)
-        wsprintf(line, "Gold %ld   ", g_sheet.gold);
-    if (g_sheet.has_level)
-        wsprintf(line + lstrlen(line), "Level %ld   ", g_sheet.level);
+        wsprintf(line + lstrlen(line), "Gold %ld   ", g_sheet.gold);
     if (g_sheet.has_xp)
         wsprintf(line + lstrlen(line), "XP %ld   ", g_sheet.xp);
     if (g_sheet.has_score)
         wsprintf(line + lstrlen(line), "Score %ld", g_sheet.score);
-    if (line[0]) {
-        TextOut(hdc, 8, y, line, lstrlen(line));
-        y += g_ch + 4;
+    if (line[0] && !chr_line(hdc, &rc, &y, line))
+        goto done;
+    if (g_sheet.effects[0]) {
+        wsprintf(line, "Afflicted: %s", (LPSTR)g_sheet.effects);
+        if (!chr_line(hdc, &rc, &y, line))
+            goto done;
+    }
+    if (g_static.skills[0]) {
+        wsprintf(line, "Skills: %s", (LPSTR)g_static.skills);
+        if (!chr_line(hdc, &rc, &y, line))
+            goto done;
+    }
+    if (g_static.spells[0]) {
+        wsprintf(line, "Spells: %s", (LPSTR)g_static.spells);
+        if (!chr_line(hdc, &rc, &y, line))
+            goto done;
+    }
+    if (g_static.gear[0]) {
+        wsprintf(line, "Kit: %s", (LPSTR)g_static.gear);
+        if (!chr_line(hdc, &rc, &y, line))
+            goto done;
     }
     if (g_sheet.appearance[0]) {
-        RECT tr = rc;
-        tr.left = 8; tr.top = y; tr.right -= 8;
-        DrawText(hdc, g_sheet.appearance, -1, &tr,
-                 DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
-        DrawText(hdc, g_sheet.appearance, -1, &tr,
-                 DT_WORDBREAK | DT_NOPREFIX);
-        y = (int)tr.bottom + 4;
+        y += 2;
+        if (!chr_line(hdc, &rc, &y, g_sheet.appearance))
+            goto done;
     }
     if (g_sheet.companions[0]) {
-        RECT tr = rc;
-        tr.left = 8; tr.top = y; tr.right -= 8;
         wsprintf(line, "With you: %s", (LPSTR)g_sheet.companions);
-        DrawText(hdc, line, -1, &tr, DT_WORDBREAK | DT_NOPREFIX);
+        if (!chr_line(hdc, &rc, &y, line))
+            goto done;
     }
+    /* How old this is. The narrator drops the state block often enough
+       that a sheet can be several turns stale while looking live, and the
+       only cure is to say so: /pic, another turn, or the Character button
+       (which asks the proxy for its stored copy) refresh it. */
+    if (g_sheet.has_age && g_sheet.age > 0) {
+        SetTextColor(hdc, RGB(0x80, 0x00, 0x00));
+        wsprintf(line, g_sheet.age == 1 ? "(as of %ld turn ago)"
+                                        : "(as of %ld turns ago)",
+                 g_sheet.age);
+        chr_line(hdc, &rc, &y, line);
+        SetTextColor(hdc, RGB(0, 0, 0));
+    }
+done:
     EndPaint(hwnd, &ps);
 }
 
@@ -3111,6 +3957,7 @@ long FAR PASCAL _export ChrProc(HWND hwnd, UINT msg, UINT wParam,
         InvalidateRect(hwnd, NULL, TRUE);
         break;
     case WM_DESTROY:
+        desk_remember(DESK_CHR, hwnd);
         g_chr_wnd = NULL;
         break;
     }
@@ -3131,8 +3978,14 @@ static void inv_fill(void)
         SendMessage(g_inv_lb, LB_ADDSTRING, 0,
                     (LONG)(LPSTR)"(empty-handed)");
     if (g_inv_wnd) {
-        char title[40];
-        if (g_sheet.inv_n)
+        char title[48];
+        /* Say when the list is longer than the window holds, rather than
+           titling 20 items "(16)" and looking like the narrator lost
+           four of them. */
+        if (g_sheet.inv_total > g_sheet.inv_n)
+            wsprintf(title, "Inventory (%d of %d)", g_sheet.inv_n,
+                     g_sheet.inv_total);
+        else if (g_sheet.inv_n)
             wsprintf(title, "Inventory (%d)", g_sheet.inv_n);
         else
             lstrcpy(title, "Inventory");
@@ -3167,6 +4020,7 @@ long FAR PASCAL _export InvProc(HWND hwnd, UINT msg, UINT wParam,
         }
         break;
     case WM_DESTROY:
+        desk_remember(DESK_INV, hwnd);
         g_inv_wnd = NULL;
         g_inv_lb = NULL;
         break;
@@ -3181,8 +4035,8 @@ static void sheet_update(void)
     inv_fill();
 }
 
-static void sheet_open(const char *cls, HWND *slot, int x, int y,
-                       int cx, int cy)
+static void sheet_open(const char *cls, HWND *slot, int which,
+                       int x, int y, int cx, int cy)
 {
     MDICREATESTRUCT mcs;
 
@@ -3193,12 +4047,87 @@ static void sheet_open(const char *cls, HWND *slot, int x, int y,
     mcs.szClass = cls;
     mcs.szTitle = cls[5] == 'C' ? "Character" : "Inventory";
     mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
-    mcs.x = x; mcs.y = y; mcs.cx = cx; mcs.cy = cy;
+    desk_place(which, &mcs, x, y, cx, cy);
     mcs.style = 0;
+    /* Opening a sheet is a good moment to ask for the proxy's stored copy:
+       free, no LLM call, and it fills a window that would otherwise sit
+       empty until the next turn. */
+    if (net_state() == NET_UP)
+        send_frame(MSG_GET_SHEET, NULL, 0);
     mcs.lParam = 0;
     g_in_layout = 1;
     SendMessage(g_mdi, WM_MDICREATE, 0, (LONG)(LPMDICREATESTRUCT)&mcs);
     g_in_layout = 0;
+}
+
+/* The Notebook, opened if it is not already on the desk. */
+static void note_open(void)
+{
+    MDICREATESTRUCT mcs;
+
+    if (g_note_wnd) {
+        SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_note_wnd, 0L);
+        return;
+    }
+    mcs.szClass = NOTE_CLASS;
+    mcs.szTitle = "Notebook";
+    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    /* Wide enough for the index and a whole 78-column printed page, which
+       is what the proxy laid the sheet out to: the page half does not
+       re-flow (it is already typeset), so a narrower window clips it. */
+    desk_place(DESK_NOTE, &mcs, 40, 24,
+               NOTE_INDEX_W + g_cw * 78 + GetSystemMetrics(SM_CXVSCROLL) + 8,
+               g_ch * 20);
+    mcs.style   = 0;
+    mcs.lParam  = 0;
+    g_in_layout = 1;
+    SendMessage(g_mdi, WM_MDICREATE, 0, (LONG)(LPMDICREATESTRUCT)&mcs);
+    g_in_layout = 0;
+}
+
+/* The Map window, opened if it is not already on the desk. Sized to the
+   grid it has been told about rather than to a guess: an eight-room
+   cellar and a forty-room castle want different windows. */
+static void map_open(void)
+{
+    MDICREATESTRUCT mcs;
+    int w, h;
+
+    if (g_map_wnd) {
+        SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_map_wnd, 0L);
+        return;
+    }
+    w = 8 + (g_map_cols > 0 ? g_map_cols : 4) * 74;
+    h = g_ch + 14 + (g_map_rows > 0 ? g_map_rows : 3) * 46;
+    if (w < 240) w = 240;
+    if (w > 560) w = 560;
+    if (h < 180) h = 180;
+    if (h > 420) h = 420;
+    mcs.szClass = MAP_CLASS;
+    mcs.szTitle = "Map";
+    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    /* Same free refresh the sheet windows ask for. */
+    if (net_state() == NET_UP)
+        send_frame(MSG_GET_SHEET, NULL, 0);
+    desk_place(DESK_MAP, &mcs, 56, 32, w, h);
+    mcs.style   = 0;
+    mcs.lParam  = 0;
+    g_in_layout = 1;
+    SendMessage(g_mdi, WM_MDICREATE, 0, (LONG)(LPMDICREATESTRUCT)&mcs);
+    g_in_layout = 0;
+}
+
+/* A finished sheet: file it, and put the Notebook where it can be seen.
+   The window is opened rather than merely updated - a printout the player
+   asked for is a reply, and a reply that lands in a closed drawer reads
+   as nothing having happened. */
+static void note_add(int slot)
+{
+    note_open();
+    note_fill();
+    note_show(slot);
+    if (g_note_wnd)
+        SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_note_wnd, 0L);
 }
 
 static void mus_open_wnd(void)
@@ -3212,10 +4141,7 @@ static void mus_open_wnd(void)
     mcs.szClass = MUS_CLASS;
     mcs.szTitle = "Music";
     mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
-    mcs.x       = 60;
-    mcs.y       = 40;
-    mcs.cx      = 250;
-    mcs.cy      = 140;
+    desk_place(DESK_MUS, &mcs, 60, 40, 250, 140);
     mcs.style   = 0;
     mcs.lParam  = 0;
     /* Same guard as every open: birth is not the user arranging. */
@@ -3453,7 +4379,12 @@ static void pics_dialog(HWND owner)
     int r = DialogBox(inst, "LLM64PICS", owner, (DLGPROC)fn);
 
     FreeProcInstance(fn);
-    if (r == 1 && net_state() == NET_UP) {
+    if (r != 1)
+        return;
+    /* The picture window shows the same switch; it must not go on saying
+       the opposite. */
+    pic_auto_sync();
+    if (net_state() == NET_UP) {
         send_options();
         set_status(g_room_pics
                    ? "Every location will be illustrated."
@@ -3760,10 +4691,9 @@ static HWND conv_create(HWND frame)
        un-maximize restores the window to no area at all - squashed flat
        on Windows, and gone entirely under Wine. Maximizing afterwards
        records this rect as the one to come back to. */
-    mcs.x       = 8;
-    mcs.y       = 8;
-    mcs.cx      = g_cw * 80 + 6 * GetSystemMetrics(SM_CXVSCROLL);
-    mcs.cy      = g_ch * 24;
+    desk_place(DESK_CONV, &mcs, 8, 8,
+               g_cw * 80 + 6 * GetSystemMetrics(SM_CXVSCROLL),
+               g_ch * 24);
     mcs.style   = 0;
     mcs.lParam  = 0;
 
@@ -4011,14 +4941,13 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
             save_ini();
             return 0;
 
-        case IDM_CLOSEPAPER: {
-            int i;
-            for (i = 0; i < MAX_PAPER; i++)
-                if (g_paper_wnd[i])
-                    SendMessage(g_mdi, WM_MDIDESTROY,
-                                (WPARAM)g_paper_wnd[i], 0L);
+        case IDM_CLOSEPAPER:
+            /* Was "close all printout windows", when each sheet had one.
+               There is one window now, so the useful verb is emptying it:
+               the sheets are the memory, not the window. */
+            note_clear();
+            set_status("Notebook emptied.");
             return 0;
-        }
 
         case IDM_CASCADE: SendMessage(g_mdi, WM_MDICASCADE, 0, 0L); return 0;
         case IDM_TILE:    SendMessage(g_mdi, WM_MDITILE, 0, 0L); return 0;
@@ -4064,14 +4993,32 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                     SendMessage(g_mdi, WM_MDIDESTROY,
                                 (WPARAM)g_chr_wnd, 0L);
                 else
-                    sheet_open(CHR_CLASS, &g_chr_wnd, 80, 30, 260, 230);
+                    /* Taller than it was: the sheet holds a whole
+                       character now, not four gauges. */
+                    sheet_open(CHR_CLASS, &g_chr_wnd, DESK_CHR,
+                               80, 30, 300, 340);
                 break;
             case 5:
                 if (g_inv_wnd)
                     SendMessage(g_mdi, WM_MDIDESTROY,
                                 (WPARAM)g_inv_wnd, 0L);
                 else
-                    sheet_open(INV_CLASS, &g_inv_wnd, 130, 70, 220, 190);
+                    sheet_open(INV_CLASS, &g_inv_wnd, DESK_INV,
+                               130, 70, 220, 190);
+                break;
+            case 6:
+                if (g_note_wnd)
+                    SendMessage(g_mdi, WM_MDIDESTROY,
+                                (WPARAM)g_note_wnd, 0L);
+                else
+                    note_open();
+                break;
+            case 7:
+                if (g_map_wnd)
+                    SendMessage(g_mdi, WM_MDIDESTROY,
+                                (WPARAM)g_map_wnd, 0L);
+                else
+                    map_open();
                 break;
             }
             if (!g_user_arranged)
@@ -4221,13 +5168,24 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
         if (!RegisterClass(&wc))
             return 1;
 
-        /* Paper: a printed document, with no input box under it. */
+        /* The Notebook: the printed sheets, indexed. No class background:
+           note_paint covers what its children do not. */
         wc.style = CS_HREDRAW | CS_VREDRAW;
-        wc.lpfnWndProc = PaperProc;
+        wc.lpfnWndProc = NoteProc;
         wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-        wc.hbrBackground = GetStockObject(LTGRAY_BRUSH);
+        wc.hbrBackground = NULL;
         wc.lpszMenuName = NULL;
-        wc.lpszClassName = PAPER_CLASS;
+        wc.lpszClassName = NOTE_CLASS;
+        if (!RegisterClass(&wc))
+            return 1;
+
+        /* The Map: drawn, not printed - map_paint owns every pixel. */
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = MapProc;
+        wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+        wc.hbrBackground = NULL;
+        wc.lpszMenuName = NULL;
+        wc.lpszClassName = MAP_CLASS;
         if (!RegisterClass(&wc))
             return 1;
 

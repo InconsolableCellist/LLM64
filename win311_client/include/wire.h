@@ -101,6 +101,32 @@
    [count] then [mood\0] per entry. Fills the Music window's picker. */
 #define MSG_MOOD_LIST           0x6A
 
+/* The STATIC half of the character sheet - name, race, class, ability
+   scores, skills, spells, starting gear. The proxy rolls these once at
+   the start of an adventure and owns them for its whole length; the
+   narrator owns only what changes (MSG_STATE_JSON). Compact JSON + NUL,
+   depth 1 by contract - strings, numbers, and arrays of strings, so the
+   same flat scanner reads both sheets. Empty object = no adventure.
+   Sent only to a client that claimed CAP_CHAR_SHEET. */
+#define MSG_CHAR_SHEET          0x6B
+
+/* The adventure map as structure rather than as ASCII art, for a client
+   that claimed CAP_MAP_DATA. Tab-separated lines + NUL:
+
+       M<turn>\t<cols>\t<rows>
+       R<num>\t<gx>\t<gy>\t<flags>\t<name>     flags: 1 visited, 2 you
+       E<a>\t<b>\t<dir>\t<flags>               dir n s e w u d or -
+       X<hidden>                               rooms that did not fit
+
+   Grid coordinates, not pixels: the proxy's layout pass decides the
+   geography, the client decides how big a room is on screen. */
+#define MSG_MAP_DATA            0x6C
+
+/* Send me the sheets again - character, state and map - out of what the
+   proxy already has stored. No payload, no reply guarantee, and by
+   contract never an LLM call: it is a refresh, not a question. */
+#define MSG_GET_SHEET           0x44
+
 /* Not wire values: parser verdicts outside the protocol's type range */
 #define WIRE_NONE               0x00
 #define WIRE_CRC_FAIL           0xFE
@@ -155,6 +181,10 @@
 #define CAP_DIB_IMAGES          0x0004  /* images as 8-bit DIBs, fmt 2 */
 #define CAP_MIDI                0x0008  /* music as .MID files */
 #define CAP_STATE_JSON          0x0020  /* STATE forwarded for sheets */
+/* 0x0010 is reserved on the proxy side for a printer-DC sink; it is not
+   ours to reuse. */
+#define CAP_CHAR_SHEET          0x0040  /* the static half of the sheet */
+#define CAP_MAP_DATA            0x0080  /* the map as structure, not art */
 
 /* IMG_BEGIN's first payload byte says what is coming. 0 and 1 are the
    C64's hires and multicolor blobs; 2 is ours, sent only to a client

@@ -51,9 +51,11 @@ BEGIN
         MENUITEM "&Music\tCtrl+3",        IDM_TOGMUS
         MENUITEM "C&haracter\tCtrl+4",    IDM_TOGCHR
         MENUITEM "In&ventory\tCtrl+5",    IDM_TOGINV
+        MENUITEM "Note&book\tCtrl+6",     IDM_TOGNOTE
+        MENUITEM "M&ap\tCtrl+7",          IDM_TOGMAP
         MENUITEM SEPARATOR
         MENUITEM "&New Conversation Window", IDM_NEWWINDOW
-        MENUITEM "Close All &Printouts",     IDM_CLOSEPAPER
+        MENUITEM "Em&pty the Notebook",      IDM_CLOSEPAPER
         MENUITEM SEPARATOR
         MENUITEM "&Default Layout",       IDM_DEFLAYOUT
         MENUITEM "&Cascade\tShift+F5",    IDM_CASCADE
@@ -81,6 +83,8 @@ BEGIN
     0x33,  IDM_TOGMUS,  VIRTKEY, CONTROL
     0x34,  IDM_TOGCHR,  VIRTKEY, CONTROL
     0x35,  IDM_TOGINV,  VIRTKEY, CONTROL
+    0x36,  IDM_TOGNOTE, VIRTKEY, CONTROL
+    0x37,  IDM_TOGMAP,  VIRTKEY, CONTROL
 END
 
 /* The server-fed menu, as a 1993 program would have shown it: a modal

@@ -802,6 +802,105 @@ profile table, which is the only structural change the proxy needs.
 
 ---
 
+## 13b. The desk as it stands, 2026-07-29
+
+*Added with the batch that fixed window placement and gave the desk three
+more rooms. The sections above are the original survey; this is what the
+client and the proxy actually do now.*
+
+### Windows
+
+Eight launcher buttons, `Ctrl+1..7` and the Window menu on the same ids:
+Conversation, Picture, Music, Character, Items, **Notebook**, **Map**.
+The strip wraps to a second row when the frame is too narrow for all
+eight (588 px), so nothing falls off the right edge on a 640x480 screen.
+
+- **Notebook** (`NoteProc`) replaced the per-sheet Printout windows. One
+  window: an index of every sheet printed this session down the left,
+  the selected page beside it. Each row is the sheet's own first line,
+  captured as the bytes arrive (`paper_name_feed`) because
+  `printdoc.finish` always puts the title there. `MAX_PAPER` is 6, and
+  eviction is oldest-first. Window > Empty the Notebook (was "Close All
+  Printouts") discards the sheets, which are the memory; closing the
+  window keeps them.
+- **Map** (`MapProc`) draws the proxy's map: ruled boxes on parchment,
+  the room number in each, ink lines for corridors, dotted for one-way
+  passages and stairs, filled black for where you are, dotted outline for
+  a place only heard about. Grid coordinates come from the proxy
+  (`advmap.layout`); how big a room is on screen is the client's
+  business. The ASCII `/map` reply is unchanged and still goes to both
+  machines.
+- **Character** carries a whole sheet now, not four gauges: name, race,
+  class, level, the rolled ability scores, HP bar, mana, AC, gold, XP,
+  score, afflictions, skills, spells, starting kit, appearance,
+  companions, and a red "(as of N turns ago)" when the narrator has
+  stopped emitting state blocks.
+- **Picture** has an "Illustrate every room" checkbox along its bottom -
+  the same setting as Settings > Pictures, where nobody found it - and
+  takes only the height its art's aspect needs in the default desk
+  instead of the whole column.
+
+Geometry survives a close: `desk_remember` / `desk_place` keep each
+window's restored rectangle in MDI client coordinates, so a launcher
+toggle brings a window back where it was rather than at its built-in
+coordinates. The frame's own `MoveWindow(g_mdi, ...)` runs inside the
+`g_in_layout` guard now; without that, one drag of the frame border made
+the desk "user-arranged" and every later toggle jumped.
+
+### Three frames added to the protocol
+
+| | |
+|---|---|
+| `CHAR_SHEET` 0x6B | The STATIC half of the sheet, depth-1 JSON + NUL: `name race class abil hd skills spells gear`. `chargen.sheet()` always rolled these and then flattened them into prose; now the structure survives. `CAP_CHAR_SHEET 0x0040`, budget 900 B (lists trim, kit first). |
+| `MAP_DATA` 0x6C | The map as text: `M<turn>\t<cols>\t<rows>`, `R<num>\t<gx>\t<gy>\t<flags>\t<name>` (flags 1 visited, 2 you are here), `E<a>\t<b>\t<dir>\t<flags>` (dir `n s e w u d` or `-`, flags 1 one-way), `X<hidden>`. `CAP_MAP_DATA 0x0080`, budget 1400 B, dropping rooms farthest from the player first. |
+| `GET_SHEET` 0x44 | Client → proxy, no payload: resend character, state and map out of stored meta. Never an LLM or image call - it is what a window asks for when it opens. |
+
+`STATE_JSON` gains one proxy-owned key, `_age`: turns since the narrator
+last emitted a valid block, computed against `adv_map['turn']` *after*
+the ingest and sent on every adventure reply, so the turns where nothing
+arrived are reported rather than invisible. Meta `adv_state` stays exactly
+what the model wrote, so the re-injected prompt state is unchanged.
+
+### Bugs this batch closed
+
+- `_emit_color` emitted the one-byte marker for colour slot 11, and
+  `0x10|11` **is** `0x1B`, the marker escape byte - so `[color=darkgrey]`
+  reached the screen as a box glyph glued to the word ("the []slate
+  rooftops"), or ate two characters when the phrase began with C. Slot 11
+  now takes the three-byte form. Rich-text clients only; the C64 has no
+  slot 11 and its bytes did not change.
+- `chr_paint` formatted "With you: " plus a 159-byte companions list into
+  a 120-byte stack buffer.
+- An adventure loaded from a conversation lost `mode.background` and
+  `mode.character` - neither was ever persisted - so the restored system
+  prompt had no world bible and no character, and the illustrator lost
+  the player's fixed appearance (docs/13).
+- `MusicDirectiveFilter.MAX_HOLD` was 600, and a `[[STATE:]]` block past
+  it was printed to the player verbatim *and* never parsed, so game state
+  silently stopped updating. A 12-item inventory reaches 700. Now 1500.
+- The Character window's `valid` test named four fields, so a block
+  carrying only gold and a level rendered "No adventure state yet" over
+  live data. The Inventory title said "(16)" for 20 items; it says
+  "(16 of 20)".
+- `printdoc.render_sheet` printed HP/Mana/Gold/Score and dropped level,
+  XP and AC, which were on the wire and on screen.
+- `chargen`'s `hit_die` was computed and read by nothing, while the model
+  invented level-1 HP. It is in the prompt now as the authoritative
+  basis.
+
+### Pictures look like 1993 now
+
+`convert_to_dib8` was "downscale to 640x400 and quantize to 256 adaptive
+colours", and the docstring's claim of Floyd-Steinberg was false - Pillow
+ignores `dither` unless a palette is given, so nothing dithered. A palette
+fitted per image is also why the art kept the diffusion model's smooth
+gradients. It is now 320x200 (Mode 13h, and the client upscales with pixel
+replication), `auto_levels` first, then a real Floyd-Steinberg dither
+against the **fixed** palette in `imaging.period_palette()` - the 6x6x6
+cube, a 16-step grey ramp, the 16 EGA entries. `[images] dib_style =
+"clean"` restores the old behaviour. Wire cost fell from ~161 KB to
+~65 KB, which is also the client's largest single allocation.
+
 ## 14. Handoff
 
 *Written 2026-07-27 for picking this up on another machine. Note that

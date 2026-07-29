@@ -51,6 +51,11 @@
    this run. A control id, like ID_PANE and ID_INPUT. */
 #define ID_PICLIST      1002
 #define ID_INVLIST      1003
+/* The picture window's own "illustrate every room" checkbox - the same
+   setting as Settings > Pictures, where nobody found it. */
+#define ID_PICAUTO      1004
+/* The Notebook's index of printed sheets. */
+#define ID_NOTELIST     1005
 
 /* Menu dialog. The entry buttons are created at run time - the proxy
    decides how many there are - and numbered from IDC_MENUBASE. */
@@ -76,6 +81,8 @@
 #define IDM_TOGMUS      (IDC_LAUNCHBASE + 3)
 #define IDM_TOGCHR      (IDC_LAUNCHBASE + 4)
 #define IDM_TOGINV      (IDC_LAUNCHBASE + 5)
+#define IDM_TOGNOTE     (IDC_LAUNCHBASE + 6)
+#define IDM_TOGMAP      (IDC_LAUNCHBASE + 7)
 
 /* The Music window's playback controls. */
 #define IDC_MUSBASE     1600
