@@ -80,6 +80,17 @@ class MockHandler(BaseHTTPRequestHandler):
                     "1. Brown the salted pork.\n"
                     "2. Add root vegetables and stock.\n"
                     "3. Simmer until the dragon calms.")
+        elif 'VISUAL CANON LEDGER' in upper:
+            # Canon build/update (docs/17). The marker appears only in
+            # those two questions - the "AUTHORITATIVE VISUAL CANON"
+            # block injected into compose questions is deliberately a
+            # different string, so this branch can never shadow the
+            # scene branch below. Deterministic ledger so tests can
+            # assert verbatim injection.
+            text = ('{"player": "a wiry kobold in a patched gray cloak '
+                    'with brass goggles", '
+                    '"npcs": {"Mara": "a stout innkeeper in '
+                    'grease-stained leathers"}, "places": {}}')
         elif 'CURRENT SCENE FOR AN ILLUSTRATOR' in upper:
             # Scene composition (docs/13): /pic now asks the model to WRITE
             # the image prompt from game state instead of sending a

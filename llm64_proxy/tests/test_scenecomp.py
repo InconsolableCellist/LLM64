@@ -115,12 +115,40 @@ def test_partial_room():
     check("no dangling note phrase", "Notable here" not in q)
 
 
+def test_canon():
+    print("visual canon injection (docs/17)")
+    from src.scenecomp import normalize_canon
+    canon = normalize_canon({
+        'player': 'a wiry kobold in a patched gray cloak',
+        'npcs': {'Mara': 'a stout innkeeper in grease-stained leathers'},
+        'places': {}})
+    q = compose_question(CONVO, [], STATE, ROOM, CHARACTER, canon=canon)
+    check("authority heading present",
+          "AUTHORITATIVE VISUAL CANON" in q)
+    check("player entry injected verbatim",
+          "a wiry kobold in a patched gray cloak" in q)
+    check("npc entry injected verbatim",
+          "Mara: a stout innkeeper in grease-stained leathers" in q)
+    check("outranking wording present",
+          has(q, "outrank the transcript"))
+    check("character sheet still rides along (mechanics, not looks)",
+          "a Kobold Femboy maid" in q)
+    # Absent canon must leave no trace - the pre-canon question exactly.
+    q0 = compose_question(CONVO, [], STATE, ROOM, CHARACTER)
+    check("no canon, no heading",
+          "AUTHORITATIVE VISUAL CANON" not in q0)
+    check("no canon, question unchanged",
+          q0 == compose_question(CONVO, [], STATE, ROOM, CHARACTER,
+                                 canon=None))
+
+
 if __name__ == "__main__":
     test_full()
     test_instructions()
     test_directive()
     test_degradation()
     test_partial_room()
+    test_canon()
 
     print()
     if failures:

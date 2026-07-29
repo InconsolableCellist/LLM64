@@ -24,7 +24,9 @@ from . import chargen
 from . import printdoc
 from . import printcups
 from . import printpic
-from .scenecomp import compose_question
+from .scenecomp import (compose_question, canon_build_question,
+                        canon_update_question, canon_stale,
+                        parse_canon_reply)
 from .markup import colorize_for_wire, split_safe, UNICODE_TO_ASCII
 from .profiles import C64 as PROFILE_C64, from_hello
 from .markup import prompt_snippet as color_prompt_snippet
@@ -1472,10 +1474,65 @@ class ProtocolHandler:
         if m and m.get('at') is not None:
             room = m.get('rooms', {}).get(m['at'])
         character = getattr(self.mode, 'character', '')
+        # The settled visual ledger (docs/17): built once on the first
+        # illustration, injected verbatim into every composition, and
+        # amended only when the narrative contradicts it. Rides inside
+        # the "Studying the scene..." heartbeat the caller already runs.
+        canon = await self._ensure_canon(convo, adv_state, character)
         question = compose_question(
             convo, priors, adv_state, room, character,
-            instructions=instructions, directive=directive)
+            instructions=instructions, directive=directive, canon=canon)
         return await self._ask_model(question, limit=400)
+
+    @staticmethod
+    def _state_appearance(adv_state) -> str:
+        """The appearance phrase out of the STATE JSON, or ''."""
+        try:
+            return str((json.loads(adv_state or '{}') or {})
+                       .get('appearance') or '')
+        except (ValueError, TypeError):
+            return ''
+
+    async def _ensure_canon(self, convo: str, adv_state, character):
+        """The visual canon for this conversation (docs/17), building or
+        amending it when - and only when - that is due.
+
+        Happy path once built: one META read and one string comparison,
+        no model call. A failed build stores nothing and returns None -
+        composition degrades to exactly what it was before canon
+        existed, and the next illustration tries again."""
+        canon = self.conv_manager.get_meta('visual_canon')
+        appearance = self._state_appearance(adv_state)
+        if canon and not canon_stale(canon, appearance):
+            return canon
+        at = len(self.conv_manager.get_messages())
+        if canon:
+            self.logger.info("Visual canon: appearance changed, amending")
+            reply = await self._ask_model(
+                canon_update_question(canon, convo, appearance), limit=400)
+            got = parse_canon_reply(reply, prev=canon)
+            if not got:
+                # A failed amendment keeps the old ledger: stale canon
+                # beats no canon, and the trigger fires again next time.
+                return canon
+            got['built_at_msg'] = canon.get('built_at_msg', at)
+        else:
+            reply = await self._ask_model(
+                canon_build_question(convo, appearance, character),
+                limit=400)
+            got = parse_canon_reply(reply)
+            if not got:
+                self.logger.warning("Visual canon: build yielded nothing")
+                return None
+            got['built_at_msg'] = at
+            self.logger.info("Visual canon built "
+                             f"({len(got.get('npcs') or {})} npcs, "
+                             f"{len(got.get('places') or {})} places)")
+        got['appearance_seen'] = appearance
+        got['updated_at_msg'] = at
+        self.conv_manager.set_meta('visual_canon', got)
+        self.conv_manager.save()
+        return got
 
     async def _make_caption(self, prompt: str) -> str:
         """A short atmospheric caption, burned into the picture and
@@ -1998,7 +2055,13 @@ class ProtocolHandler:
             meta = {'instructions': instructions, 'directive': directive,
                     'caption': caption[:100],
                     'conv_id': str(self.conv_manager.current_id),
-                    'at_msg': len(self.conv_manager.get_messages())}
+                    'at_msg': len(self.conv_manager.get_messages()),
+                    # Which ledger this was composed under (docs/17
+                    # section 3) - a playtest lines the picture up
+                    # against the exact canon of its day. Absent when
+                    # the conversation never built one.
+                    'canon_version': (self.conv_manager.get_meta(
+                        'visual_canon') or {}).get('version')}
             blob, stem, bg = await self.images.generate_blob(
                 prompt, self.conv_manager.current_id, caption, meta=meta,
                 style=self.profile.image_style)
