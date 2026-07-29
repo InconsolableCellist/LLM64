@@ -97,6 +97,13 @@ class MessageType(IntEnum):
     MIDI_END = 0x67  # 'g' - hand the file to the MIDI Mapper
     STATE_JSON = 0x68  # 'h' - the normalized [[STATE:]] JSON + NUL, for
     #                    a CAP_STATE_JSON client's sheet windows
+    PIC_LIST = 0x69  # 'i' - [count] then [n][title\0]: the conversation's
+    #                  pictures, newest first, n = the /pic <n> index.
+    #                  Sent on load/new so the client's browser follows
+    #                  the conversation; empty list clears it.
+    MOOD_LIST = 0x6A  # 'j' - [count] then [mood\0]: the mood vocabulary
+    #                   of the library THIS listener plays from, for a
+    #                   client with a music picker to fill
 
 
 class ProtocolState(IntEnum):
@@ -335,6 +342,7 @@ class ProtocolHandler:
                 await self.handle_fav_tune()
             elif msg_type == MessageType.CLIENT_HELLO:
                 self.handle_client_hello()
+                await self._send_moods()
             elif msg_type == MessageType.SET_BAUD:
                 self.handle_set_baud()
             elif msg_type == MessageType.SET_OPTION:
@@ -1420,6 +1428,51 @@ class ProtocolHandler:
                 f"STATE block too large to forward ({len(data)} B)")
             return
         await self.send_message(MessageType.STATE_JSON, data)
+
+    async def _send_moods(self):
+        """The mood vocabulary, for a client whose Music window has a
+        picker to fill. MIDI clients only: the C64's jukebox learns the
+        moods from /music's own text."""
+        lib = self._music_lib()
+        if (self.profile.music_fmt != 'midi' or lib is None
+                or not lib.available):
+            return
+        moods = lib.moods[:24]
+        payload = bytearray([len(moods)])
+        for m in moods:
+            payload += m[:15].encode('ascii', errors='replace') + b'\x00'
+        await self.send_message(MessageType.MOOD_LIST, bytes(payload))
+
+    async def _send_pic_list(self):
+        """The conversation's pictures for the client-side browser:
+        newest first, each carrying its /pic index so a click on an
+        uncached entry can ask for exactly that picture. Sent on load
+        and on new - an EMPTY list is the signal that clears the shelf
+        of the previous conversation's pictures."""
+        if not self.profile.dib_images:
+            return
+        pics = list(reversed(self.conv_manager.get_meta('images', [])[-9:]))
+        payload = bytearray([len(pics)])
+        for i, p in enumerate(pics, 1):
+            title = p.get('caption') or p['prompt'][:60]
+            payload.append(i)
+            payload += title[:39].encode('ascii', errors='replace') + b'\x00'
+        await self.send_message(MessageType.PIC_LIST, bytes(payload))
+        # ...and the newest goes straight on display: loading a game
+        # brings its latest scene back without anyone asking.
+        if pics:
+            title = pics[0].get('caption') or pics[0]['prompt'][:60]
+            try:
+                data = self.images.blob_path(pics[0]['stem']).read_bytes()
+            except OSError:
+                return
+            if len(data) == 10001:
+                self._spawn_media(self._send_pic(
+                    data[:10000], data[10000], pics[0]['stem'],
+                    title=title))
+            else:
+                self._spawn_media(self._send_pic(
+                    data, 0, pics[0]['stem'], title=title, fmt=0))
 
     def _adv_location(self):
         """The location the authoritative state block last named, or
@@ -3261,6 +3314,8 @@ class ProtocolHandler:
             # whatever the previous conversation left in them.
             await self._send_state_json(
                 self.conv_manager.get_meta('adv_state') or '{}')
+            # ...and the picture browser, newest scene on display.
+            await self._send_pic_list()
         else:
             error = b"Conversation not found\x00"
             await self.send_message(MessageType.CHAT_ERROR, error)
@@ -3275,6 +3330,8 @@ class ProtocolHandler:
         self._manual_notice_sent = False
         self.conv_manager.new_conversation()
         await self.send_ack()
-        # A fresh conversation has no adventurer yet; clear the sheet.
+        # A fresh conversation has no adventurer yet; clear the sheet
+        # and the picture browser both.
         await self._send_state_json('{}')
+        await self._send_pic_list()
         await self._send_hint(0)      # fresh conversation, empty tally

@@ -891,11 +891,16 @@ static struct {
     char          title[64];
     char          path[144];
     unsigned      w, h;
-    unsigned long size;
+    unsigned long size;         /* 0 = a ghost: title known, bytes not */
+    unsigned char srvidx;       /* the /pic <n> that fetches a ghost */
 } g_shelf[MAX_SHELF];
 static int  g_shelf_count;
 static int  g_shelf_cur = -1;   /* index on display */
 static HWND g_pic_lb;           /* the browser listbox, in the pic window */
+
+/* Ghosts ask the server for their picture; defined with the Music
+   window's controls, used here first. */
+static void send_command(const char *cmd);
 
 /* Write a global block to an open file in segment-safe bites. The bite
    is 16 KB because 16 K divides 64 K: starting from GlobalLock's offset
@@ -1038,14 +1043,60 @@ static void img_abort(void)
    title in the browser list. Failure to park is not failure to show -
    the picture stays on screen either way, it just cannot be brought
    back later. */
+/* Do two titles name the same picture? The roster caps titles at 39
+   bytes while the BEGIN frame carries up to 63, so compare only what
+   both could have said. */
+static int shelf_same_title(const char *a, const char *b)
+{
+    int i;
+
+    for (i = 0; i < 39; i++) {
+        if (a[i] != b[i])
+            return 0;
+        if (!a[i])
+            return 1;
+    }
+    return 1;
+}
+
 static void shelf_add(void)
 {
     HFILE f;
     OFSTRUCT of;
-    int i;
+    int i, slot;
 
     if (!g_pic_mem)
         return;
+    /* A ghost with this title becomes real instead of a duplicate: the
+       roster listed the picture, and now its bytes have arrived. */
+    slot = -1;
+    for (i = 0; i < g_shelf_count; i++)
+        if (g_shelf[i].size == 0
+                && shelf_same_title(g_shelf[i].title, g_pic_title)) {
+            slot = i;
+            break;
+        }
+    if (slot >= 0) {
+        if (GetTempFileName(0, "L64", 0, g_shelf[slot].path) == 0)
+            return;
+        f = _lcreat(g_shelf[slot].path, 0);
+        if (f == HFILE_ERROR)
+            return;
+        if (!hfile_write(f, g_pic_mem, g_pic_size)) {
+            _lclose(f);
+            OpenFile(g_shelf[slot].path, &of, OF_DELETE);
+            g_shelf[slot].path[0] = '\0';
+            return;
+        }
+        _lclose(f);
+        g_shelf[slot].w    = g_pic_w;
+        g_shelf[slot].h    = g_pic_h;
+        g_shelf[slot].size = g_pic_size;
+        g_shelf_cur = slot;
+        if (g_pic_lb)
+            SendMessage(g_pic_lb, LB_SETCURSEL, slot, 0L);
+        return;
+    }
     if (g_shelf_count == MAX_SHELF) {
         /* Full shelf: the oldest goes, temp file and list entry both. */
         OpenFile(g_shelf[0].path, &of, OF_DELETE);
@@ -1071,9 +1122,10 @@ static void shelf_add(void)
     }
     _lclose(f);
     lstrcpy(g_shelf[g_shelf_count].title, g_pic_title);
-    g_shelf[g_shelf_count].w    = g_pic_w;
-    g_shelf[g_shelf_count].h    = g_pic_h;
-    g_shelf[g_shelf_count].size = g_pic_size;
+    g_shelf[g_shelf_count].w      = g_pic_w;
+    g_shelf[g_shelf_count].h      = g_pic_h;
+    g_shelf[g_shelf_count].size   = g_pic_size;
+    g_shelf[g_shelf_count].srvidx = 0;
     g_shelf_cur = g_shelf_count++;
     if (g_pic_lb) {
         SendMessage(g_pic_lb, LB_ADDSTRING, 0,
@@ -1095,6 +1147,17 @@ static void shelf_show(int idx)
 
     if (idx < 0 || idx >= g_shelf_count || idx == g_shelf_cur)
         return;
+    if (g_shelf[idx].size == 0) {
+        /* A ghost: the roster knows the title, the server has the
+           bytes. Ask for exactly that picture; when it arrives,
+           shelf_add turns this entry real. */
+        if (g_shelf[idx].srvidx) {
+            char cmd[16];
+            wsprintf(cmd, "/pic %d", (int)g_shelf[idx].srvidx);
+            send_command(cmd);
+        }
+        return;
+    }
     f = _lopen(g_shelf[idx].path, OF_READ);
     if (f == HFILE_ERROR) {
         set_status("That picture's temp file is gone.");
@@ -1142,9 +1205,61 @@ static void shelf_clear(void)
     int i;
 
     for (i = 0; i < g_shelf_count; i++)
-        OpenFile(g_shelf[i].path, &of, OF_DELETE);
+        if (g_shelf[i].path[0])
+            OpenFile(g_shelf[i].path, &of, OF_DELETE);
     g_shelf_count = 0;
     g_shelf_cur = -1;
+}
+
+/* The conversation's picture roster (PIC_LIST): the shelf follows the
+   conversation. Every entry arrives as a ghost - a title and the /pic
+   index that fetches it - and the newest one's bytes are already on
+   their way behind this frame. An empty roster is a new conversation
+   sweeping the desk. */
+static void pic_list_frame(const unsigned char *p, unsigned len)
+{
+    unsigned count, i = 1, j;
+
+    if (len < 1)
+        return;
+    shelf_clear();
+    /* Whatever was on display belonged to the previous conversation. */
+    if (g_pic_mem) {
+        GlobalFree(g_pic_mem);
+        g_pic_mem = NULL;
+    }
+    if (g_pic_hpal) {
+        DeleteObject(g_pic_hpal);
+        g_pic_hpal = NULL;
+    }
+    g_pic_title[0] = '\0';
+    g_pic_w = g_pic_h = 0;
+    g_pic_size = 0;
+    count = p[0];
+    while (count-- && i < len && g_shelf_count < MAX_SHELF) {
+        g_shelf[g_shelf_count].srvidx = p[i++];
+        j = 0;
+        while (i < len && p[i]) {
+            if (j + 1 < sizeof(g_shelf[0].title))
+                g_shelf[g_shelf_count].title[j++] = (char)p[i];
+            i++;
+        }
+        g_shelf[g_shelf_count].title[j] = '\0';
+        if (i < len)
+            i++;                    /* the NUL */
+        g_shelf[g_shelf_count].path[0] = '\0';
+        g_shelf[g_shelf_count].size = 0;
+        g_shelf[g_shelf_count].w = 0;
+        g_shelf[g_shelf_count].h = 0;
+        g_shelf_count++;
+    }
+    if (g_pic_lb) {
+        SendMessage(g_pic_lb, LB_RESETCONTENT, 0, 0L);
+        for (j = 0; (int)j < g_shelf_count; j++)
+            SendMessage(g_pic_lb, LB_ADDSTRING, 0,
+                        (LONG)(LPSTR)g_shelf[j].title);
+    }
+    pic_open();                     /* re-layout: the list came or went */
 }
 
 static void img_begin(const unsigned char *p, unsigned len)
@@ -1262,6 +1377,14 @@ static void img_end(void)
 
 static HWND g_mus_wnd;              /* the controls window, if open */
 static HWND g_mus_btn[3];           /* Pause/Resume, Stop, Next */
+static HWND g_mus_combo;            /* the mood picker */
+static HWND g_mus_play;             /* ...and its Play button */
+
+/* The listener's mood vocabulary (MOOD_LIST), server-fed like the F1
+   menu: the library is the proxy's, so its moods are too. */
+#define MAX_MOODS 24
+static char g_moods[MAX_MOODS][16];
+static int  g_mood_count;
 static char g_mus_title[44];
 static char g_mus_author[36];
 static char g_mus_mood[20];
@@ -1354,6 +1477,33 @@ static void mid_field(char *dst, unsigned cap,
     dst[i] = '\0';
     if (*q < end)
         (*q)++;                     /* the NUL itself */
+}
+
+static void mus_fill_moods(void);
+
+/* MOOD_LIST: the server's mood vocabulary for the picker. */
+static void mood_list_frame(const unsigned char *p, unsigned len)
+{
+    unsigned count, i = 1, j;
+
+    if (len < 1)
+        return;
+    g_mood_count = 0;
+    count = p[0];
+    while (count-- && i < len && g_mood_count < MAX_MOODS) {
+        j = 0;
+        while (i < len && p[i]) {
+            if (j + 1 < sizeof(g_moods[0]))
+                g_moods[g_mood_count][j++] = (char)p[i];
+            i++;
+        }
+        g_moods[g_mood_count][j] = '\0';
+        if (i < len)
+            i++;                    /* the NUL */
+        if (j)
+            g_mood_count++;
+    }
+    mus_fill_moods();
 }
 
 static void mid_begin(const unsigned char *p, unsigned len)
@@ -1908,6 +2058,14 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
         set_status("Music off.");
         break;
 
+    case MSG_MOOD_LIST:
+        mood_list_frame(p, len);
+        break;
+
+    case MSG_PIC_LIST:
+        pic_list_frame(p, len);
+        break;
+
     /* The narrator's bookkeeping, for the sheet windows. */
     case MSG_STATE_JSON:
         if (len >= 1 && p[len - 1] == 0) {
@@ -2306,7 +2464,7 @@ static void layout_default(void)
        stealing its column's bottom edge - or over the conversation's
        corner when there is no picture. Three text lines plus the
        button row plus its caption. */
-    mh = g_mus_wnd ? g_ch * 4 + 56 : 0;
+    mh = g_mus_wnd ? g_ch * 6 + 64 : 0;
     if (mh > (int)rc.bottom / 2)
         mh = (int)rc.bottom / 2;
     mw = pw ? pw : 260;
@@ -2677,7 +2835,7 @@ static void send_command(const char *cmd)
 static void mus_layout(HWND hwnd)
 {
     RECT rc;
-    int i, bw, bh = g_ch + 10, x;
+    int i, bw, bh = g_ch + 10, x, py;
 
     GetClientRect(hwnd, &rc);
     bw = ((int)rc.right - 4 * 4) / 3;
@@ -2689,6 +2847,30 @@ static void mus_layout(HWND hwnd)
                        bw, bh, TRUE);
         x += bw + 4;
     }
+    /* The picker row sits above the transport row. The combo's height
+       covers its dropped list, not the closed box - Win16 quirk. */
+    py = (int)rc.bottom - bh * 2 - 8;
+    if (g_mus_combo)
+        MoveWindow(g_mus_combo, 4, py,
+                   (int)rc.right - bw - 12, g_ch * 8, TRUE);
+    if (g_mus_play)
+        MoveWindow(g_mus_play, (int)rc.right - bw - 4, py, bw, bh, TRUE);
+}
+
+static void mus_fill_moods(void)
+{
+    int i;
+
+    if (!g_mus_combo)
+        return;
+    SendMessage(g_mus_combo, CB_RESETCONTENT, 0, 0L);
+    for (i = 0; i < g_mood_count; i++)
+        SendMessage(g_mus_combo, CB_ADDSTRING, 0,
+                    (LONG)(LPSTR)g_moods[i]);
+    if (g_mood_count)
+        SendMessage(g_mus_combo, CB_SETCURSEL, 0, 0L);
+    if (g_mus_play)
+        EnableWindow(g_mus_play, g_mood_count ? TRUE : FALSE);
 }
 
 static void mus_paint(HWND hwnd)
@@ -2747,6 +2929,16 @@ long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
                                         0, 0, 10, 10, hwnd,
                                         (HMENU)(IDC_MUSBASE + i), inst,
                                         NULL);
+        g_mus_combo = CreateWindow("COMBOBOX", NULL,
+                                   WS_CHILD | WS_VISIBLE | WS_VSCROLL
+                                   | CBS_DROPDOWNLIST,
+                                   0, 0, 10, 10, hwnd,
+                                   (HMENU)(IDC_MUSBASE + 3), inst, NULL);
+        g_mus_play = CreateWindow("BUTTON", "Play",
+                                  WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                  0, 0, 10, 10, hwnd,
+                                  (HMENU)(IDC_MUSBASE + 4), inst, NULL);
+        mus_fill_moods();
         mus_update();
         break;
 
@@ -2783,6 +2975,15 @@ long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
         case IDC_MUSBASE + 2:       /* Next: another of the same mood */
             send_command("/music next");
             return 0;
+        case IDC_MUSBASE + 4: {     /* Play: the picked mood */
+            char cmd[28];
+            i = (int)SendMessage(g_mus_combo, CB_GETCURSEL, 0, 0L);
+            if (i >= 0 && i < g_mood_count) {
+                wsprintf(cmd, "/music %s", (LPSTR)g_moods[i]);
+                send_command(cmd);
+            }
+            return 0;
+        }
         }
         break;
 
@@ -2790,6 +2991,8 @@ long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
         g_mus_wnd = NULL;
         for (i = 0; i < 3; i++)
             g_mus_btn[i] = NULL;
+        g_mus_combo = NULL;
+        g_mus_play = NULL;
         break;
     }
     return DefMDIChildProc(hwnd, msg, wParam, lParam);

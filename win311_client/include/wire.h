@@ -90,6 +90,17 @@
    clears them (new conversation). */
 #define MSG_STATE_JSON          0x68
 
+/* The conversation's picture roster, newest first: [count] then
+   [n][title\0] per entry, n being the /pic <n> index that re-fetches
+   it. Sent on load and new-conversation; an empty roster clears the
+   browser. The client lists them as "ghosts" - titles without bytes -
+   and a click on one asks the server for the real thing. */
+#define MSG_PIC_LIST            0x69
+
+/* The mood vocabulary of the library this machine plays from:
+   [count] then [mood\0] per entry. Fills the Music window's picker. */
+#define MSG_MOOD_LIST           0x6A
+
 /* Not wire values: parser verdicts outside the protocol's type range */
 #define WIRE_NONE               0x00
 #define WIRE_CRC_FAIL           0xFE
