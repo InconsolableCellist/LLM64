@@ -71,12 +71,13 @@
    the frame's handler consumes them before DefFrameProc could mistake
    them for Window-menu child picks.) */
 #define IDC_LAUNCHBASE  1500
-#define IDM_TOGCONV     (IDC_LAUNCHBASE + 0)
-#define IDM_TOGPIC      (IDC_LAUNCHBASE + 1)
-#define IDM_TOGACT      (IDC_LAUNCHBASE + 2)
-#define IDM_TOGMUS      (IDC_LAUNCHBASE + 3)
-#define IDM_TOGCHR      (IDC_LAUNCHBASE + 4)
-#define IDM_TOGINV      (IDC_LAUNCHBASE + 5)
+/* Slot 0 is the Menu button - the F1 dialog, not a window toggle. */
+#define IDM_TOGCONV     (IDC_LAUNCHBASE + 1)
+#define IDM_TOGPIC      (IDC_LAUNCHBASE + 2)
+#define IDM_TOGACT      (IDC_LAUNCHBASE + 3)
+#define IDM_TOGMUS      (IDC_LAUNCHBASE + 4)
+#define IDM_TOGCHR      (IDC_LAUNCHBASE + 5)
+#define IDM_TOGINV      (IDC_LAUNCHBASE + 6)
 
 /* The Music window's playback controls. */
 #define IDC_MUSBASE     1600

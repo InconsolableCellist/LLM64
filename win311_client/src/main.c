@@ -737,7 +737,7 @@ static void act_buttons(HWND hwnd)
    program let you see its rooms without memorizing its menus. Owned by
    the frame like the status strip, because it reports on the desk as a
    whole. */
-#define LAUNCH_N 6
+#define LAUNCH_N 7
 
 static HWND g_launch[LAUNCH_N];
 
@@ -749,7 +749,7 @@ static int launch_h(void)
 static void launch_create(HWND frame)
 {
     static const char *label[LAUNCH_N] =
-        { "Conversation", "Picture", "Actions", "Music",
+        { "Menu", "Conversation", "Picture", "Actions", "Music",
           "Character", "Items" };
     HINSTANCE inst = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
     int i;
@@ -764,7 +764,7 @@ static void launch_create(HWND frame)
 
 static void launch_layout(HWND frame)
 {
-    static const int w[LAUNCH_N] = { 104, 76, 72, 64, 80, 56 };
+    static const int w[LAUNCH_N] = { 52, 104, 76, 72, 64, 80, 56 };
     int i, x = 4;
 
     (void)frame;
@@ -2275,6 +2275,22 @@ long FAR PASCAL _export EditProc(HWND hwnd, UINT msg, UINT wParam,
         case 14:                    /* C-n: back toward the fresh one */
             hist_recall(hwnd, 0);
             return 0;
+        case 8:                     /* Backspace - but with Ctrl held,
+                                       the modern habit: eat the word.
+                                       Some layers deliver Ctrl+BS as 8
+                                       with the modifier, others as 127
+                                       below; both mean the same. */
+            if (!(GetKeyState(VK_CONTROL) & 0x8000))
+                break;              /* plain: the EDIT's own backspace */
+            /* fall through */
+        case 127:                   /* Ctrl+Backspace, the other spelling
+                                       - the stock EDIT inserts it as a
+                                       box character, helping no one. */
+            GetWindowText(hwnd, t, sizeof(t) - 1);
+            pos = edit_pos(hwnd);
+            if (pos > 0)
+                edit_cut(hwnd, word_left(t, pos), pos);
+            return 0;
         }
         break;
 
@@ -3773,10 +3789,16 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         launch_create(hwnd);
         g_conv = conv_create(hwnd);
         /* The picture window is part of the default desk, empty or not:
-           an adventure fills it, and until then it says what it is. */
+           an adventure fills it, and until then it says what it is.
+           So are the Music controls, tucked in their corner - and the
+           conversation takes the keyboard back from whatever opened
+           last. */
         pic_open();
+        mus_open_wnd();
         if (g_act_open)
             act_open_wnd();
+        if (g_conv)
+            SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_conv, 0L);
         return 0;
 
     case WM_SIZE:
@@ -3979,22 +4001,28 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                 && wParam < IDC_LAUNCHBASE + LAUNCH_N) {
             switch ((int)(wParam - IDC_LAUNCHBASE)) {
             case 0:
+                /* The Menu button is the F1 dialog, not a toggle.
+                   Posted rather than called: the modal box should open
+                   after this WM_COMMAND finishes, not inside it. */
+                PostMessage(hwnd, WM_COMMAND, IDM_MENU, 0L);
+                return 0;
+            case 1:
                 if (g_conv)
                     SendMessage(g_mdi, WM_MDIDESTROY, (WPARAM)g_conv, 0L);
                 else
                     g_conv = conv_create(hwnd);
                 break;
-            case 1:
+            case 2:
                 if (g_pic_wnd)
                     SendMessage(g_mdi, WM_MDIDESTROY,
                                 (WPARAM)g_pic_wnd, 0L);
                 else
                     pic_open();
                 break;
-            case 2:
+            case 3:
                 act_toggle(hwnd);
                 break;
-            case 3:
+            case 4:
                 /* The Music window floats over the desk rather than
                    claiming a column - it is controls, not a document. */
                 if (g_mus_wnd)
@@ -4003,14 +4031,14 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                 else
                     mus_open_wnd();
                 break;
-            case 4:
+            case 5:
                 if (g_chr_wnd)
                     SendMessage(g_mdi, WM_MDIDESTROY,
                                 (WPARAM)g_chr_wnd, 0L);
                 else
                     sheet_open(CHR_CLASS, &g_chr_wnd, 80, 30, 260, 230);
                 break;
-            case 5:
+            case 6:
                 if (g_inv_wnd)
                     SendMessage(g_mdi, WM_MDIDESTROY,
                                 (WPARAM)g_inv_wnd, 0L);
