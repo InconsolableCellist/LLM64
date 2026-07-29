@@ -9,10 +9,14 @@
 # Screenshots land in build/shot-*.png.
 #
 # It drives the keyboard with XTEST, which types into whatever has focus
-# on the display it is pointed at - so by default it brings up its own
-# Xvfb rather than typing into the session you are sitting in front of.
-# DISPLAY=:0 ./tools/wine_smoke.sh to watch it happen instead, and then
-# keep your hands off the keyboard while it runs.
+# on the display it is pointed at - so with no DISPLAY set it brings up
+# its own Xvfb rather than typing into the session you are sitting in
+# front of. DISPLAY=:0 ./tools/wine_smoke.sh to watch it happen instead,
+# and then keep your hands off the keyboard while it runs.
+#
+# Note that an EDIT control rings the X bell on Return, so a run on a
+# real display beeps once per message unless the session has silenced it
+# (xset -b).
 
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,16 +27,36 @@ msg="${2:-hello from windows 3.11}"
 xvfb_pid=""
 wm_pid=""
 if [ -z "${DISPLAY:-}" ]; then
+    # Checked, and not merely launched. Backgrounding Xvfb and reading
+    # only its PID cannot tell "started" from "not installed": the old
+    # version announced itself headless on a display that was never
+    # there, and the only symptom was the window never appearing.
+    command -v Xvfb >/dev/null || {
+        echo "wine_smoke: Xvfb is not installed, and it is how this runs" >&2
+        echo "  pacman -S xorg-server-xvfb   (apt/dnf: xvfb / xorg-x11-server-Xvfb)" >&2
+        echo "  or use a real display:  DISPLAY=:0 $0 $*" >&2
+        exit 1
+    }
     for n in 99 98 97 96; do
         if [ ! -e "/tmp/.X11-unix/X$n" ]; then
             Xvfb ":$n" -screen 0 1024x768x24 >/dev/null 2>&1 &
             xvfb_pid=$!
             export DISPLAY=":$n"
-            sleep 1
             break
         fi
     done
     [ -n "$xvfb_pid" ] || { echo "no free display for Xvfb"; exit 1; }
+    # Wait for it to actually answer, rather than sleeping and hoping.
+    up=0
+    for _ in $(seq 20); do
+        if xdpyinfo >/dev/null 2>&1; then up=1; break; fi
+        kill -0 "$xvfb_pid" 2>/dev/null || break
+        sleep 0.5
+    done
+    [ "$up" = 1 ] || {
+        echo "wine_smoke: Xvfb on $DISPLAY never came up" >&2
+        exit 1
+    }
     # A window manager is not decoration here: with no WM to confirm the
     # resize, Wine never turns an X ConfigureNotify into WM_SIZE, so the
     # client goes on painting at its old width and the re-flow shots
