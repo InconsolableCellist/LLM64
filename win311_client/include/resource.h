@@ -51,6 +51,7 @@
 /* The session shelf: the picture window's list of everything received
    this run. A control id, like ID_PANE and ID_INPUT. */
 #define ID_PICLIST      1002
+#define ID_INVLIST      1003
 
 /* Menu dialog. The entry buttons are created at run time - the proxy
    decides how many there are - and numbered from IDC_MENUBASE. */

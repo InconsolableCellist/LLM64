@@ -55,6 +55,8 @@
 #define PIC_CLASS   "LLM64Pic"
 #define ACT_CLASS   "LLM64Act"
 #define MUS_CLASS   "LLM64Mus"
+#define CHR_CLASS   "LLM64Chr"
+#define INV_CLASS   "LLM64Inv"
 #define PANE_CLASS  "LLM64Pane"
 #define APP_TITLE   "LLM64"
 #define INI_FILE    "LLM64.INI"
@@ -588,7 +590,7 @@ static void send_text_frame(unsigned char type, const char *text)
    rich markers, this is the line that changes with it - as it did the
    day the picture window learned to eat a DIB. */
 #define OUR_CAPS  (CAP_ZERO_WIDTH_MARKERS | CAP_RICH_TEXT \
-                   | CAP_DIB_IMAGES | CAP_MIDI)
+                   | CAP_DIB_IMAGES | CAP_MIDI | CAP_STATE_JSON)
 
 /* Introduce ourselves, before anything that could produce text.
  *
@@ -735,7 +737,7 @@ static void act_buttons(HWND hwnd)
    program let you see its rooms without memorizing its menus. Owned by
    the frame like the status strip, because it reports on the desk as a
    whole. */
-#define LAUNCH_N 4
+#define LAUNCH_N 6
 
 static HWND g_launch[LAUNCH_N];
 
@@ -747,7 +749,8 @@ static int launch_h(void)
 static void launch_create(HWND frame)
 {
     static const char *label[LAUNCH_N] =
-        { "Conversation", "Picture", "Actions", "Music" };
+        { "Conversation", "Picture", "Actions", "Music",
+          "Character", "Items" };
     HINSTANCE inst = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
     int i;
 
@@ -761,7 +764,7 @@ static void launch_create(HWND frame)
 
 static void launch_layout(HWND frame)
 {
-    static const int w[LAUNCH_N] = { 104, 76, 72, 64 };
+    static const int w[LAUNCH_N] = { 104, 76, 72, 64, 80, 56 };
     int i, x = 4;
 
     (void)frame;
@@ -1520,6 +1523,215 @@ static void mid_end(void)
 }
 
 /* ---------------------------------------------------------------- */
+/* The character sheet                                               */
+/* ---------------------------------------------------------------- */
+
+/* The adventure's [[STATE:]] block, forwarded verbatim because this
+   client claimed CAP_STATE_JSON. The proxy only ever sends the
+   NORMALIZED form - json.dumps, compact, ASCII - so the scanner below
+   is written against that contract and not against JSON at large:
+   double-quoted keys, no whitespace, standard escapes. Values we do
+   not know stay unread; keys we know may be absent. The same block is
+   re-injected into the system prompt as authoritative game state,
+   which is what makes rendering it directly the honest choice: the
+   sheet can never disagree with the narrator. */
+
+static struct {
+    long hp, maxhp, mana, maxmana, gold, score, xp, level;
+    int  has_hp, has_mana, has_gold, has_score, has_xp, has_level;
+    char location[64];
+    char appearance[200];
+    char companions[160];
+    char inv[16][40];
+    int  inv_n;
+    int  valid;
+} g_sheet;
+
+static HWND g_chr_wnd;          /* the Character window, if open */
+static HWND g_inv_wnd;          /* the Inventory window, if open */
+static HWND g_inv_lb;
+
+/* Walk to the value of "key" at depth 1, or NULL. Tracks strings and
+   escapes so an appearance like "a scarred {brace} collector" cannot
+   derail the depth count. */
+static const char *js_find(const char *j, const char *key)
+{
+    int depth = 0, instr = 0, esc = 0, matching = 0, ki = 0;
+    const char *p;
+
+    for (p = j; *p; p++) {
+        if (instr) {
+            if (esc) {
+                esc = 0;
+                matching = 0;
+            } else if (*p == '\\') {
+                esc = 1;
+                matching = 0;
+            } else if (*p == '"') {
+                instr = 0;
+                if (matching && key[ki] == '\0' && p[1] == ':')
+                    return p + 2;
+                matching = 0;
+            } else if (matching) {
+                if (key[ki] && (char)key[ki] == *p)
+                    ki++;
+                else
+                    matching = 0;
+            }
+            continue;
+        }
+        switch (*p) {
+        case '"':
+            instr = 1;
+            matching = (depth == 1);
+            ki = 0;
+            break;
+        case '{': case '[':
+            depth++;
+            break;
+        case '}': case ']':
+            depth--;
+            break;
+        }
+    }
+    return NULL;
+}
+
+static long js_num(const char *j, const char *key, int *has)
+{
+    const char *v = js_find(j, key);
+    long n = 0;
+    int neg = 0;
+
+    *has = 0;
+    if (!v)
+        return 0;
+    if (*v == '-') {
+        neg = 1;
+        v++;
+    }
+    if (*v < '0' || *v > '9')
+        return 0;
+    while (*v >= '0' && *v <= '9')
+        n = n * 10 + (*v++ - '0');
+    *has = 1;
+    return neg ? -n : n;
+}
+
+/* Copy a string value out, unescaping what json.dumps emits. Returns
+   a pointer just past the closing quote (for the array walker), or
+   NULL if v is not a string. */
+static const char *js_copy(const char *v, char *dst, unsigned cap)
+{
+    unsigned i = 0;
+
+    if (!v || *v != '"')
+        return NULL;
+    v++;
+    while (*v && *v != '"') {
+        char c = *v++;
+        if (c == '\\') {
+            if (*v == 'u') {        /* \uXXXX - not worth rendering */
+                v += (lstrlen(v) >= 5) ? 5 : lstrlen(v);
+                c = '?';
+            } else {
+                c = (*v == 'n' || *v == 't') ? ' ' : *v;
+                if (*v)
+                    v++;
+            }
+        }
+        if (i + 1 < cap)
+            dst[i++] = c;
+    }
+    dst[i] = '\0';
+    return *v ? v + 1 : v;
+}
+
+static void js_str(const char *j, const char *key, char *dst, unsigned cap)
+{
+    dst[0] = '\0';
+    js_copy(js_find(j, key), dst, cap);
+}
+
+/* An array of strings: into rows for the inventory, or joined with
+   commas for the companions line. */
+static int js_strarr(const char *j, const char *key,
+                     char rows[][40], int maxrows,
+                     char *joined, unsigned joincap)
+{
+    const char *v = js_find(j, key);
+    char item[80];
+    int n = 0;
+    unsigned ji = 0;
+
+    if (joined)
+        joined[0] = '\0';
+    if (!v || *v != '[')
+        return 0;
+    v++;
+    while (*v && *v != ']') {
+        if (*v == '"') {
+            v = js_copy(v, item, sizeof(item));
+            if (!v)
+                break;
+            if (rows && n < maxrows) {
+                lstrcpyn(rows[n], item, 40 - 1);
+                rows[n][39] = '\0';
+            }
+            if (joined) {
+                unsigned k = 0;
+                if (ji && ji + 2 < joincap) {
+                    joined[ji++] = ',';
+                    joined[ji++] = ' ';
+                }
+                while (item[k] && ji + 1 < joincap)
+                    joined[ji++] = item[k++];
+                joined[ji] = '\0';
+            }
+            n++;
+        } else {
+            v++;
+        }
+    }
+    return n > maxrows && rows ? maxrows : n;
+}
+
+static void sheet_parse(const char *j)
+{
+    memset(&g_sheet, 0, sizeof(g_sheet));
+    if (!j || *j != '{')
+        return;
+    {
+        /* The max is read into its own flag: "maxhp" absent must not
+           erase the fact that "hp" arrived. */
+        int hmax;
+        g_sheet.hp      = js_num(j, "hp",      &g_sheet.has_hp);
+        g_sheet.maxhp   = js_num(j, "maxhp",   &hmax);
+        if (!hmax)
+            g_sheet.maxhp = g_sheet.hp;
+        g_sheet.mana    = js_num(j, "mana",    &g_sheet.has_mana);
+        g_sheet.maxmana = js_num(j, "maxmana", &hmax);
+        if (!hmax)
+            g_sheet.maxmana = g_sheet.mana;
+    }
+    g_sheet.gold    = js_num(j, "gold",    &g_sheet.has_gold);
+    g_sheet.score   = js_num(j, "score",   &g_sheet.has_score);
+    g_sheet.xp      = js_num(j, "xp",      &g_sheet.has_xp);
+    g_sheet.level   = js_num(j, "level",   &g_sheet.has_level);
+    js_str(j, "location",   g_sheet.location,   sizeof(g_sheet.location));
+    js_str(j, "appearance", g_sheet.appearance, sizeof(g_sheet.appearance));
+    g_sheet.inv_n = js_strarr(j, "inventory", g_sheet.inv, 16, NULL, 0);
+    js_strarr(j, "companions", NULL, 0,
+              g_sheet.companions, sizeof(g_sheet.companions));
+    g_sheet.valid = g_sheet.has_hp || g_sheet.location[0]
+        || g_sheet.appearance[0] || g_sheet.inv_n;
+}
+
+/* Refresh whatever sheet windows are open. Defined with the windows
+   themselves, called from the wire. */
+static void sheet_update(void);
+
+/* ---------------------------------------------------------------- */
 /* Conversations: the browser's wire side                            */
 /* ---------------------------------------------------------------- */
 
@@ -1766,6 +1978,14 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
     case MSG_MUSIC_STOP:
         mus_stop();
         set_status("Music off.");
+        break;
+
+    /* The narrator's bookkeeping, for the sheet windows. */
+    case MSG_STATE_JSON:
+        if (len >= 1 && p[len - 1] == 0) {
+            sheet_parse((const char *)p);
+            sheet_update();
+        }
         break;
 
     default:
@@ -2536,6 +2756,209 @@ long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
         break;
     }
     return DefMDIChildProc(hwnd, msg, wParam, lParam);
+}
+
+/* ---------------------------------------------------------------- */
+/* The Character and Inventory windows                               */
+/* ---------------------------------------------------------------- */
+
+/* Two views of the same STATE block: what a 1993 RPG put in its
+   sidebars. Both float over the desk like the Music controls - they
+   are gauges, not documents. */
+
+static void chr_paint(HWND hwnd)
+{
+    PAINTSTRUCT ps;
+    HDC hdc;
+    RECT rc, br;
+    char line[120];
+    int y = 6, bh;
+
+    hdc = BeginPaint(hwnd, &ps);
+    GetClientRect(hwnd, &rc);
+    SetBkMode(hdc, TRANSPARENT);
+    SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+    SetTextColor(hdc, RGB(0, 0, 0));
+    if (!g_sheet.valid) {
+        DrawText(hdc, "No adventure state yet.\n\nStart an adventure "
+                 "and the narrator's own bookkeeping appears here.",
+                 -1, &rc, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
+        EndPaint(hwnd, &ps);
+        return;
+    }
+    if (g_sheet.location[0]) {
+        wsprintf(line, "At: %s", (LPSTR)g_sheet.location);
+        TextOut(hdc, 8, y, line, lstrlen(line));
+        y += g_ch + 4;
+    }
+    if (g_sheet.has_hp) {
+        /* The HP bar every sidebar had: sunken frame, red when the
+           narrator says you should be worried. */
+        bh = g_ch;
+        wsprintf(line, "HP %ld / %ld", g_sheet.hp, g_sheet.maxhp);
+        TextOut(hdc, 8, y, line, lstrlen(line));
+        br.left = 90; br.top = y + 1;
+        br.right = (int)rc.right - 10; br.bottom = y + bh - 1;
+        if (br.right > br.left + 10) {
+            HBRUSH fill = CreateSolidBrush(
+                (g_sheet.maxhp > 0 && g_sheet.hp * 4 <= g_sheet.maxhp)
+                ? RGB(0xC0, 0x20, 0x20) : RGB(0x20, 0x80, 0x30));
+            RECT in = br;
+            FrameRect(hdc, &br, GetStockObject(BLACK_BRUSH));
+            in.left++; in.top++; in.right--; in.bottom--;
+            if (g_sheet.maxhp > 0) {
+                long w = (long)(in.right - in.left) * g_sheet.hp
+                    / g_sheet.maxhp;
+                if (w < 0) w = 0;
+                if (w > in.right - in.left) w = in.right - in.left;
+                in.right = in.left + (int)w;
+            }
+            FillRect(hdc, &in, fill);
+            DeleteObject(fill);
+        }
+        y += bh + 4;
+    }
+    if (g_sheet.has_mana && g_sheet.maxmana > 0) {
+        wsprintf(line, "Mana %ld / %ld", g_sheet.mana, g_sheet.maxmana);
+        TextOut(hdc, 8, y, line, lstrlen(line));
+        y += g_ch + 2;
+    }
+    line[0] = '\0';
+    if (g_sheet.has_gold)
+        wsprintf(line, "Gold %ld   ", g_sheet.gold);
+    if (g_sheet.has_level)
+        wsprintf(line + lstrlen(line), "Level %ld   ", g_sheet.level);
+    if (g_sheet.has_xp)
+        wsprintf(line + lstrlen(line), "XP %ld   ", g_sheet.xp);
+    if (g_sheet.has_score)
+        wsprintf(line + lstrlen(line), "Score %ld", g_sheet.score);
+    if (line[0]) {
+        TextOut(hdc, 8, y, line, lstrlen(line));
+        y += g_ch + 4;
+    }
+    if (g_sheet.appearance[0]) {
+        RECT tr = rc;
+        tr.left = 8; tr.top = y; tr.right -= 8;
+        DrawText(hdc, g_sheet.appearance, -1, &tr,
+                 DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
+        DrawText(hdc, g_sheet.appearance, -1, &tr,
+                 DT_WORDBREAK | DT_NOPREFIX);
+        y = (int)tr.bottom + 4;
+    }
+    if (g_sheet.companions[0]) {
+        RECT tr = rc;
+        tr.left = 8; tr.top = y; tr.right -= 8;
+        wsprintf(line, "With you: %s", (LPSTR)g_sheet.companions);
+        DrawText(hdc, line, -1, &tr, DT_WORDBREAK | DT_NOPREFIX);
+    }
+    EndPaint(hwnd, &ps);
+}
+
+long FAR PASCAL _export ChrProc(HWND hwnd, UINT msg, UINT wParam,
+                                LONG lParam)
+{
+    switch (msg) {
+    case WM_CREATE:
+        g_chr_wnd = hwnd;
+        break;
+    case WM_PAINT:
+        chr_paint(hwnd);
+        return 0;
+    case WM_SIZE:
+    case WM_MOVE:
+        if (g_layout_ready && !g_in_layout)
+            g_user_arranged = 1;
+        InvalidateRect(hwnd, NULL, TRUE);
+        break;
+    case WM_DESTROY:
+        g_chr_wnd = NULL;
+        break;
+    }
+    return DefMDIChildProc(hwnd, msg, wParam, lParam);
+}
+
+static void inv_fill(void)
+{
+    int i;
+
+    if (!g_inv_lb)
+        return;
+    SendMessage(g_inv_lb, LB_RESETCONTENT, 0, 0L);
+    for (i = 0; i < g_sheet.inv_n && i < 16; i++)
+        SendMessage(g_inv_lb, LB_ADDSTRING, 0,
+                    (LONG)(LPSTR)g_sheet.inv[i]);
+    if (!g_sheet.inv_n)
+        SendMessage(g_inv_lb, LB_ADDSTRING, 0,
+                    (LONG)(LPSTR)"(empty-handed)");
+    if (g_inv_wnd) {
+        char title[40];
+        if (g_sheet.inv_n)
+            wsprintf(title, "Inventory (%d)", g_sheet.inv_n);
+        else
+            lstrcpy(title, "Inventory");
+        SetWindowText(g_inv_wnd, title);
+    }
+}
+
+long FAR PASCAL _export InvProc(HWND hwnd, UINT msg, UINT wParam,
+                                LONG lParam)
+{
+    RECT rc;
+
+    switch (msg) {
+    case WM_CREATE:
+        g_inv_wnd = hwnd;
+        g_inv_lb = CreateWindow("LISTBOX", NULL,
+                                WS_CHILD | WS_VISIBLE | WS_BORDER
+                                | WS_VSCROLL,
+                                0, 0, 10, 10, hwnd, (HMENU)ID_INVLIST,
+                                (HINSTANCE)GetWindowWord(hwnd,
+                                                         GWW_HINSTANCE),
+                                NULL);
+        inv_fill();
+        break;
+    case WM_SIZE:
+    case WM_MOVE:
+        if (g_layout_ready && !g_in_layout)
+            g_user_arranged = 1;
+        if (g_inv_lb) {
+            GetClientRect(hwnd, &rc);
+            MoveWindow(g_inv_lb, 0, 0, rc.right, rc.bottom, TRUE);
+        }
+        break;
+    case WM_DESTROY:
+        g_inv_wnd = NULL;
+        g_inv_lb = NULL;
+        break;
+    }
+    return DefMDIChildProc(hwnd, msg, wParam, lParam);
+}
+
+static void sheet_update(void)
+{
+    if (g_chr_wnd)
+        InvalidateRect(g_chr_wnd, NULL, TRUE);
+    inv_fill();
+}
+
+static void sheet_open(const char *cls, HWND *slot, int x, int y,
+                       int cx, int cy)
+{
+    MDICREATESTRUCT mcs;
+
+    if (*slot) {
+        SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)*slot, 0L);
+        return;
+    }
+    mcs.szClass = cls;
+    mcs.szTitle = cls[5] == 'C' ? "Character" : "Inventory";
+    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.x = x; mcs.y = y; mcs.cx = cx; mcs.cy = cy;
+    mcs.style = 0;
+    mcs.lParam = 0;
+    g_in_layout = 1;
+    SendMessage(g_mdi, WM_MDICREATE, 0, (LONG)(LPMDICREATESTRUCT)&mcs);
+    g_in_layout = 0;
 }
 
 static void mus_open_wnd(void)
@@ -3417,6 +3840,20 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                 else
                     mus_open_wnd();
                 break;
+            case 4:
+                if (g_chr_wnd)
+                    SendMessage(g_mdi, WM_MDIDESTROY,
+                                (WPARAM)g_chr_wnd, 0L);
+                else
+                    sheet_open(CHR_CLASS, &g_chr_wnd, 80, 30, 260, 230);
+                break;
+            case 5:
+                if (g_inv_wnd)
+                    SendMessage(g_mdi, WM_MDIDESTROY,
+                                (WPARAM)g_inv_wnd, 0L);
+                else
+                    sheet_open(INV_CLASS, &g_inv_wnd, 130, 70, 220, 190);
+                break;
             }
             if (!g_user_arranged)
                 layout_default();
@@ -3611,6 +4048,20 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
         wc.hbrBackground = GetStockObject(LTGRAY_BRUSH);
         wc.lpszMenuName = NULL;
         wc.lpszClassName = MUS_CLASS;
+        if (!RegisterClass(&wc))
+            return 1;
+
+        /* The sheet windows: the STATE block's two sidebars. */
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = ChrProc;
+        wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+        wc.hbrBackground = GetStockObject(LTGRAY_BRUSH);
+        wc.lpszMenuName = NULL;
+        wc.lpszClassName = CHR_CLASS;
+        if (!RegisterClass(&wc))
+            return 1;
+        wc.lpfnWndProc = InvProc;
+        wc.lpszClassName = INV_CLASS;
         if (!RegisterClass(&wc))
             return 1;
 

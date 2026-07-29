@@ -82,6 +82,14 @@
 #define MSG_MIDI_DATA           0x66
 #define MSG_MIDI_END            0x67
 
+/* The adventure's normalized [[STATE:]] block, verbatim + NUL, sent
+   only to a client that claimed CAP_STATE_JSON. Compact json.dumps
+   output by contract - double-quoted keys, no whitespace - which is
+   what lets a 16-bit client scan it without a real JSON parser. The
+   Character and Inventory windows render from it; an empty object
+   clears them (new conversation). */
+#define MSG_STATE_JSON          0x68
+
 /* Not wire values: parser verdicts outside the protocol's type range */
 #define WIRE_NONE               0x00
 #define WIRE_CRC_FAIL           0xFE
@@ -135,6 +143,7 @@
 #define CAP_RICH_TEXT           0x0002  /* italic/underline/head, 64 colours */
 #define CAP_DIB_IMAGES          0x0004  /* images as 8-bit DIBs, fmt 2 */
 #define CAP_MIDI                0x0008  /* music as .MID files */
+#define CAP_STATE_JSON          0x0020  /* STATE forwarded for sheets */
 
 /* IMG_BEGIN's first payload byte says what is coming. 0 and 1 are the
    C64's hires and multicolor blobs; 2 is ours, sent only to a client

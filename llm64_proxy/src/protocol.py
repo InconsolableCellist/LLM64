@@ -95,6 +95,8 @@ class MessageType(IntEnum):
     MIDI_BEGIN = 0x65  # 'e' - [window][len:4][title\0][author\0][mood\0]
     MIDI_DATA = 0x66  # 'f' - [offset:4][bytes]
     MIDI_END = 0x67  # 'g' - hand the file to the MIDI Mapper
+    STATE_JSON = 0x68  # 'h' - the normalized [[STATE:]] JSON + NUL, for
+    #                    a CAP_STATE_JSON client's sheet windows
 
 
 class ProtocolState(IntEnum):
@@ -1402,6 +1404,23 @@ class ProtocolHandler:
             return ''
         return out.strip()[:limit]
 
+    async def _send_state_json(self, state: str):
+        """Forward the normalized STATE block to a client that renders
+        sheet windows from it (CAP_STATE_JSON). Verbatim on purpose: the
+        client parses the same authoritative JSON the system prompt
+        re-injects, so the sheet can never disagree with the narrator.
+        An empty object clears the windows (new conversation)."""
+        if not self.profile.state_json or state is None:
+            return
+        data = state.encode('ascii', errors='replace') + b'\x00'
+        if len(data) > self.profile.max_payload:
+            # A state block past the client's frame buffer would desync
+            # its parser; better a stale sheet than a broken link.
+            self.logger.warning(
+                f"STATE block too large to forward ({len(data)} B)")
+            return
+        await self.send_message(MessageType.STATE_JSON, data)
+
     def _adv_location(self):
         """The location the authoritative state block last named, or
         None. Read back from META for the same reason _ingest_map reads
@@ -2488,6 +2507,7 @@ class ProtocolHandler:
                 if state is not None:
                     self.conv_manager.set_meta('adv_state', state)
                     self.conv_manager.save()
+                    await self._send_state_json(state)
 
             # Fold this reply into the map (docs/10). Both signals are in
             # hand: the filter has every directive from the whole stream
@@ -3232,6 +3252,11 @@ class ProtocolHandler:
             # restate it - otherwise the corner keeps showing the count
             # from whatever was open before.
             await self._send_hint(0)
+            # ...and so does the character sheet: the loaded game's
+            # state populates the windows, or an empty object clears
+            # whatever the previous conversation left in them.
+            await self._send_state_json(
+                self.conv_manager.get_meta('adv_state') or '{}')
         else:
             error = b"Conversation not found\x00"
             await self.send_message(MessageType.CHAT_ERROR, error)
@@ -3246,4 +3271,6 @@ class ProtocolHandler:
         self._manual_notice_sent = False
         self.conv_manager.new_conversation()
         await self.send_ack()
+        # A fresh conversation has no adventurer yet; clear the sheet.
+        await self._send_state_json('{}')
         await self._send_hint(0)      # fresh conversation, empty tally

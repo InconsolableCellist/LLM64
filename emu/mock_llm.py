@@ -153,9 +153,11 @@ class MockHandler(BaseHTTPRequestHandler):
             room = m.group(1).lower() if m else 'nowhere'
             text = ('[HP 10/10 | ' + room.title() + ']\n'
                     'You step into the ' + room + '.\n'
-                    '[[STATE: {"hp":10,"maxhp":10,"location":"' + room
-                    + '","inventory":[],"appearance":"a wiry traveler in '
-                    'a patched gray cloak","companions":[]}]]')
+                    '[[STATE: {"hp":10,"maxhp":10,"gold":3,"score":25,'
+                    '"location":"' + room + '","inventory":'
+                    '["a rusty lantern","the crimson key"],'
+                    '"appearance":"a wiry traveler in a patched gray '
+                    'cloak","companions":["Mara the innkeeper"]}]]')
         elif 'BEGIN THE ADVENTURE' in upper:
             # Status bar (visible) + [[STATE]] block (stripped + saved
             # to meta) - the e2e asserts both behaviors

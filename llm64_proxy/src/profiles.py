@@ -30,6 +30,7 @@ CAP_ZERO_WIDTH_MARKERS = 0x0001  # markers occupy no screen cell
 CAP_RICH_TEXT          = 0x0002  # italic/underline/heading, 64 colours
 CAP_DIB_IMAGES         = 0x0004  # images as 8-bit DIBs (IMG_BEGIN fmt=2)
 CAP_MIDI               = 0x0008  # music as .MID files (MIDI_* frames)
+CAP_STATE_JSON         = 0x0020  # the adventure STATE block, forwarded
 
 # Reserved, and NOT yet consumed by anything - the phase that will read
 # it is named so the number is not reused meanwhile.
@@ -148,6 +149,12 @@ class ClientProfile:
     # overrides every profile - the operator outranks the table.
     image_style: str = None
 
+    # The adventure's normalized [[STATE:]] JSON is forwarded verbatim
+    # (STATE_JSON frames) so the client can render character-sheet and
+    # inventory windows from the same authoritative block the system
+    # prompt re-injects. Capability-gated like everything with a parser.
+    state_json: bool = False
+
     # Colour name -> wire slot.
     palette: Dict[str, int] = field(default_factory=lambda: PALETTE_C64)
 
@@ -246,6 +253,7 @@ def from_hello(payload: bytes):
         # otherwise it keeps its table row's answer (None for anything
         # that is not a C64 - see above).
         music_fmt='midi' if caps & CAP_MIDI else base.music_fmt,
+        state_json=bool(caps & CAP_STATE_JSON),
         image_style=base.image_style,
         # The palette follows the CAPABILITY, never the table entry. A
         # win16 build that predates rich text still matches the win16
