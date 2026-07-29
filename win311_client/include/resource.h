@@ -31,6 +31,7 @@
 #define IDM_PICTURE     118
 #define IDM_DEFLAYOUT   119
 #define IDM_SAVEPIC     120
+#define IDM_PICSET      121
 
 #define IDM_FIRSTCHILD  200
 
@@ -42,6 +43,13 @@
 #define IDC_HOST        1101
 #define IDC_PORT        1102
 #define IDC_RECONNECT   1103
+
+/* Pictures dialog */
+#define IDC_ROOMPICS    1401
+
+/* The session shelf: the picture window's list of everything received
+   this run. A control id, like ID_PANE and ID_INPUT. */
+#define ID_PICLIST      1002
 
 /* Menu dialog. The entry buttons are created at run time - the proxy
    decides how many there are - and numbered from IDC_MENUBASE. */

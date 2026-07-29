@@ -8,6 +8,7 @@ test assertions are stable. Stdlib only.
 
 import argparse
 import json
+import re
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -130,6 +131,20 @@ class MockHandler(BaseHTTPRequestHandler):
             # Deterministic caption: the e2e converter probe bakes the
             # same text into its expected caption band
             text = 'The crystal deep hums with cold light.'
+        elif 'ROOMTEST' in upper:
+            # Location change on demand: "roomtest cellar" answers with a
+            # state block whose location is "cellar". Exercises the
+            # per-room picture flow (SET_OPTION room_pics), which fires
+            # on the location in [[STATE:]] and nothing else. After the
+            # scene branch above for the usual reason: the compose
+            # question embeds a transcript full of this keyword.
+            m = re.search(r'ROOMTEST\s+([A-Z]+)', upper)
+            room = m.group(1).lower() if m else 'nowhere'
+            text = ('[HP 10/10 | ' + room.title() + ']\n'
+                    'You step into the ' + room + '.\n'
+                    '[[STATE: {"hp":10,"maxhp":10,"location":"' + room
+                    + '","inventory":[],"appearance":"a wiry traveler in '
+                    'a patched gray cloak","companions":[]}]]')
         elif 'BEGIN THE ADVENTURE' in upper:
             # Status bar (visible) + [[STATE]] block (stripped + saved
             # to meta) - the e2e asserts both behaviors

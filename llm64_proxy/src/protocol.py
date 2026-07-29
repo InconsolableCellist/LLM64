@@ -48,6 +48,7 @@ class MessageType(IntEnum):
     GET_NOWPLAYING = 0x3C  # '<' - jukebox asks what is playing
     FAV_TUNE = 0x3D  # '=' - toggle favorite on the current tune
     SET_BAUD = 0x3E  # '>' - client's wire rate: 2 bytes LE, nominal/100
+    SET_OPTION = 0x43  # 'C' - [opt][value] session toggle, fire-and-forget
     # '?' - what kind of machine is on the other end (see profiles.py).
     # Absence of it means the C64, so an existing client is unaffected.
     CLIENT_HELLO = 0x3F
@@ -128,6 +129,11 @@ class ProtocolHandler:
         # keeps every existing client working unchanged.
         self.profile = PROFILE_C64
         self._caps = 0
+        # SET_OPTION room_pics: illustrate every location change in an
+        # adventure. Off until the client turns it on - each picture may
+        # be a paid API call, so the spend is the player's choice.
+        self.room_pics = False
+        self._room_loc = None      # last location a picture was decided for
         # BEGIN handshake event: set when the client ACKs a SID/IMG
         # BEGIN (music silenced, rendering drained - clear to stream)
         self._begin_ack = None
@@ -312,6 +318,8 @@ class ProtocolHandler:
                 self.handle_client_hello()
             elif msg_type == MessageType.SET_BAUD:
                 self.handle_set_baud()
+            elif msg_type == MessageType.SET_OPTION:
+                self.handle_set_option()
             elif msg_type == MessageType.ACK:
                 self.logger.debug("ACK received")
                 if self._begin_ack is not None \
@@ -877,6 +885,8 @@ class ProtocolHandler:
         self._manual_notice_sent = False
         # A parked image suggestion belongs to the old conversation
         self.images.pending_prompt = None
+        # ...as does the room the last picture was decided for
+        self._room_loc = None
         # ...as does the last thing typed: the kickoff turn has no
         # player command, and a stray one must not fill a map direction
         self._last_user_text = ''
@@ -1027,6 +1037,24 @@ class ProtocolHandler:
             f"(markers {'occupy a cell' if p.marker_cells else 'zero-width'}"
             f"{', rich text' if p.rich_text else ''}"
             f"{'' if p.pace else ', unpaced'})")
+
+    OPT_ROOM_PICS = 1
+
+    def handle_set_option(self):
+        """A session toggle from the client ([opt][value]), fire-and-
+        forget like SET_BAUD. Unknown options are logged and ignored so
+        a newer client degrades gracefully against this proxy."""
+        if len(self.payload) < 2:
+            self.logger.warning("SET_OPTION: short payload, ignored")
+            return
+        opt, val = self.payload[0], self.payload[1]
+        if opt == self.OPT_ROOM_PICS:
+            self.room_pics = bool(val)
+            self.logger.info(
+                f"SET_OPTION: a picture for every location is "
+                f"{'on' if self.room_pics else 'off'}")
+        else:
+            self.logger.info(f"SET_OPTION: unknown option {opt}, ignored")
 
     async def _send_bulk(self, msg_type: MessageType, payload: bytes):
         """Send one bulk frame and sleep out its wire time."""
@@ -1260,6 +1288,53 @@ class ProtocolHandler:
             self.logger.error(f"Utility query failed: {e}")
             return ''
         return out.strip()[:limit]
+
+    def _adv_location(self):
+        """The location the authoritative state block last named, or
+        None. Read back from META for the same reason _ingest_map reads
+        it there: a turn whose state block was dropped must not look
+        like a move."""
+        try:
+            return (json.loads(self.conv_manager.get_meta('adv_state')
+                               or '{}') or {}).get('location')
+        except (ValueError, TypeError):
+            return None
+
+    async def _room_picture(self, illustrated: bool):
+        """A picture for every location (SET_OPTION room_pics).
+
+        Each room keeps ONE picture, mapped in conversation META: the
+        first visit generates it, every return re-sends it from cache
+        for free - which is also why loading a saved game brings the
+        room's art straight back. A narrator-directed shot that already
+        went out this turn is fresher and better-composed than a generic
+        room view, so it both suppresses the generation and (via
+        _generate_and_send_image) becomes the room's picture."""
+        loc = self._adv_location()
+        if not loc:
+            return
+        key = advmap.slug(str(loc))
+        if key == self._room_loc:
+            return                          # no move this turn
+        self._room_loc = key
+        rooms = self.conv_manager.get_meta('room_pics') or {}
+        stem = rooms.get(key)
+        if illustrated:
+            return
+        if stem:
+            try:
+                data = self.images.blob_path(stem).read_bytes()
+            except OSError:
+                data = None
+            if data and len(data) == 10001:
+                self.logger.info(f"Room picture for '{key}' from cache")
+                await self._send_pic(data[:10000], data[10000], stem,
+                                     title=str(loc))
+                return
+            # A registered room whose files are gone falls through to a
+            # fresh generation, which re-registers it.
+        await self._illustrate(
+            directive=f"the player's current location: {loc}")
 
     async def _derive_scene_prompt(self, instructions: str = '',
                                    directive: str = '') -> str:
@@ -1827,6 +1902,14 @@ class ProtocolHandler:
                      'caption': caption[:100],
                      'at_msg': len(self.conv_manager.get_messages())})
         self.conv_manager.set_meta('images', pics)
+        # Whatever got illustrated while standing in a room becomes that
+        # room's picture - the narrator's shot of the place beats a
+        # generic one, and returning re-sends it from cache for free.
+        loc = self._adv_location() if self.mode.name == 'adventure' else None
+        if loc:
+            rooms = self.conv_manager.get_meta('room_pics') or {}
+            rooms[advmap.slug(str(loc))] = stem
+            self.conv_manager.set_meta('room_pics', rooms)
         self.conv_manager.save()
         await self._send_hint(0)      # the tally just went up
         # The caption lands in the scrollback before the screen freezes,
@@ -2244,6 +2327,7 @@ class ProtocolHandler:
 
             # Model requested a scene illustration: generate now (auto,
             # rate-limited) or park it as a /pic suggestion (ask)
+            illustrated = False
             if mfilter and mfilter.images and self.images.available:
                 directive = mfilter.images[0]
                 if self.images.auto_ok():
@@ -2252,11 +2336,19 @@ class ProtocolHandler:
                     # verbatim - the narrator's text is a suggestion for
                     # the shot (docs/13).
                     await self._illustrate(directive=directive)
+                    illustrated = True
                 elif self.images.mode == 'ask':
                     self.images.pending_prompt = directive
                     await self.send_status(
                         "Scene available - /pic to illustrate")
                     await self._send_hint(1)
+
+            # A picture for every location, for the client that asked
+            # for one (SET_OPTION). After the directive block so a
+            # narrator-directed shot wins the turn.
+            if (self.room_pics and self.images.available
+                    and self.mode.name == 'adventure'):
+                await self._room_picture(illustrated)
 
             # Model asked for a music change: honor at most one, after the
             # text is fully delivered (the client is idle again), unless a
@@ -2822,6 +2914,9 @@ class ProtocolHandler:
         # loaded conversation and interleave frames with the load
         self._cancel_stream()
         self.images.pending_prompt = None
+        # The loaded game's first reply re-decides its room picture -
+        # which lands from cache if the room already has one.
+        self._room_loc = None
 
         masked_id = struct.unpack('<I', self.payload[:4])[0]
         self.logger.info(f"Load conversation: {masked_id}")
@@ -2957,6 +3052,7 @@ class ProtocolHandler:
         self.logger.info("New conversation request")
         self._cancel_stream()
         self.images.pending_prompt = None
+        self._room_loc = None
         self._music_manual = False
         self._manual_notice_sent = False
         self.conv_manager.new_conversation()

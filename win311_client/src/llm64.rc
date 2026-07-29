@@ -35,6 +35,7 @@ BEGIN
         MENUITEM "&Paper (black on white)",   IDM_THEME_PAPER
         MENUITEM "&C64 Screen (light on black)", IDM_THEME_SCREEN
         MENUITEM SEPARATOR
+        MENUITEM "P&ictures...",              IDM_PICSET
         MENUITEM "Menu &Bar",                 IDM_SHOWBAR
     END
     /* The MDI window menu. It has to be a real popup that the frame can
@@ -77,6 +78,26 @@ CAPTION "Menu"
 BEGIN
     LTEXT       "", IDC_MENUTITLE, 10, 6, 240, 9
     PUSHBUTTON  "Close", IDCANCEL, 105, 150, 50, 14
+END
+
+/* Picture behaviour. One checkbox for now, but the box exists so the
+   next picture option has somewhere to live. The warning is the whole
+   reason this defaults OFF: on a hosted backend every generated scene
+   is a paid API call, and spending the player's money is the player's
+   decision. */
+LLM64PICS DIALOG 24, 24, 232, 92
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Pictures"
+BEGIN
+    CONTROL         "&Generate a picture for every location",
+                    IDC_ROOMPICS, "BUTTON",
+                    BS_AUTOCHECKBOX | WS_TABSTOP, 10, 10, 210, 10
+    LTEXT           "Each new place in an adventure gets illustrated as \
+you enter it; returning shows the same picture again for free. On a \
+hosted image backend every NEW picture is a paid API call.",
+                    -1, 10, 26, 212, 34
+    DEFPUSHBUTTON   "OK",     IDOK,     120, 72, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 174, 72, 50, 14
 END
 
 /* Where the proxy is. On a machine with no command line this is the only

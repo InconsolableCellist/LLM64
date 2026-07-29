@@ -106,6 +106,10 @@ static char     g_chrome[64];
 static char     g_host[64];
 static unsigned g_port;
 static char     g_ini[160];     /* full path to LLM64.INI */
+/* Settings > Pictures: ask the proxy to illustrate every location
+   change in an adventure. Off by default and persisted in the INI -
+   each picture may be a paid API call, so it is the player's switch. */
+static int      g_room_pics;
 
 static unsigned char g_rxbuf[WIRE_MAX_PAYLOAD];
 static WireRx        g_rx;
@@ -615,6 +619,19 @@ static void send_hello(void)
     send_frame(MSG_CLIENT_HELLO, p, 12);
 }
 
+/* Session toggles, sent after the hello and again whenever one changes.
+   Sent unconditionally rather than only-when-on: the proxy's default is
+   off, but a reconnect after toggling mid-session must say so
+   explicitly or the proxy keeps the stale answer. */
+static void send_options(void)
+{
+    unsigned char p[2];
+
+    p[0] = OPT_ROOM_PICS;
+    p[1] = (unsigned char)(g_room_pics ? 1 : 0);
+    send_frame(MSG_SET_OPTION, p, 2);
+}
+
 /* ---------------------------------------------------------------- */
 /* The server-fed menu                                               */
 /* ---------------------------------------------------------------- */
@@ -892,6 +909,46 @@ static int g_user_arranged;     /* the user moved a document themselves */
 static int g_in_layout;         /* our own MoveWindows are not "the user" */
 static int g_layout_ready;      /* creation-time WM_SIZEs are not either */
 
+/* The shelf: every picture received this session, so the browser list
+   can bring any of them back. Each one is a temp FILE, not a global
+   block - thirty 256 KB DIBs is 8 MB, which is more memory than the
+   machine this program is for. The one on display is the only one in
+   RAM. */
+#define MAX_SHELF 32
+static struct {
+    char          title[64];
+    char          path[144];
+    unsigned      w, h;
+    unsigned long size;
+} g_shelf[MAX_SHELF];
+static int  g_shelf_count;
+static int  g_shelf_cur = -1;   /* index on display */
+static HWND g_pic_lb;           /* the browser listbox, in the pic window */
+
+/* Write a global block to an open file in segment-safe bites. Huge
+   pointers normalize their offsets small, so a 16 KB bite handed on as
+   a far pointer never wraps mid-write. Returns 0 on a short write. */
+static int hfile_write(HFILE f, HGLOBAL mem, unsigned long size)
+{
+    unsigned char __huge *src;
+    unsigned long left = size;
+    unsigned chunk;
+    int ok = 1;
+
+    src = (unsigned char __huge *)GlobalLock(mem);
+    if (!src)
+        return 0;
+    while (left && ok) {
+        chunk = left > 16384UL ? 16384 : (unsigned)left;
+        if (_lwrite(f, (LPSTR)src, chunk) != chunk)
+            ok = 0;
+        src  += chunk;
+        left -= chunk;
+    }
+    GlobalUnlock(mem);
+    return ok;
+}
+
 /* Rebuild the realizable palette from the DIB's colour table, for the
    256-colour drivers this program is nominally for. On a modern deep
    display RealizePalette is a no-op and none of this matters. */
@@ -927,6 +984,8 @@ static void pic_palette(void)
     g_pic_hpal = CreatePalette((LPLOGPALETTE)&lp);
 }
 
+static void pic_layout(HWND hwnd);
+
 /* Open (or refresh) the picture window. Created through the MDI client
    like every document; PicProc records the handle in WM_CREATE because
    this call has not returned yet when the first messages arrive. */
@@ -935,6 +994,9 @@ static void pic_open(void)
     MDICREATESTRUCT mcs;
 
     if (g_pic_wnd) {
+        /* The browser list appears with the first shelf entry, and
+           only a layout pass reveals it. */
+        pic_layout(g_pic_wnd);
         InvalidateRect(g_pic_wnd, NULL, TRUE);
         return;
     }
@@ -962,6 +1024,119 @@ static void img_abort(void)
         g_img_mem = NULL;
     }
     g_img_active = 0;
+}
+
+/* Park the picture on display onto the shelf as a temp file and put its
+   title in the browser list. Failure to park is not failure to show -
+   the picture stays on screen either way, it just cannot be brought
+   back later. */
+static void shelf_add(void)
+{
+    HFILE f;
+    OFSTRUCT of;
+    int i;
+
+    if (!g_pic_mem)
+        return;
+    if (g_shelf_count == MAX_SHELF) {
+        /* Full shelf: the oldest goes, temp file and list entry both. */
+        OpenFile(g_shelf[0].path, &of, OF_DELETE);
+        for (i = 1; i < MAX_SHELF; i++)
+            g_shelf[i - 1] = g_shelf[i];
+        g_shelf_count--;
+        if (g_pic_lb)
+            SendMessage(g_pic_lb, LB_DELETESTRING, 0, 0L);
+    }
+    /* GetTempFileName with unique=0 creates the file as a side effect,
+       which is what reserves the name. */
+    if (GetTempFileName(0, "L64", 0,
+                        g_shelf[g_shelf_count].path) == 0)
+        return;
+    f = _lcreat(g_shelf[g_shelf_count].path, 0);
+    if (f == HFILE_ERROR)
+        return;
+    if (!hfile_write(f, g_pic_mem, g_pic_size)) {
+        _lclose(f);
+        OpenFile(g_shelf[g_shelf_count].path, &of, OF_DELETE);
+        set_status("Couldn't keep the picture - temp disk full?");
+        return;
+    }
+    _lclose(f);
+    lstrcpy(g_shelf[g_shelf_count].title, g_pic_title);
+    g_shelf[g_shelf_count].w    = g_pic_w;
+    g_shelf[g_shelf_count].h    = g_pic_h;
+    g_shelf[g_shelf_count].size = g_pic_size;
+    g_shelf_cur = g_shelf_count++;
+    if (g_pic_lb) {
+        SendMessage(g_pic_lb, LB_ADDSTRING, 0,
+                    (LONG)(LPSTR)(g_pic_title[0] ? g_pic_title
+                                                 : (char *)"(untitled)"));
+        SendMessage(g_pic_lb, LB_SETCURSEL, g_shelf_cur, 0L);
+    }
+}
+
+/* Bring shelf entry idx back on display, from its temp file. */
+static void shelf_show(int idx)
+{
+    HFILE f;
+    HGLOBAL mem;
+    unsigned char __huge *dst;
+    unsigned long left;
+    unsigned chunk;
+    int ok = 1;
+
+    if (idx < 0 || idx >= g_shelf_count || idx == g_shelf_cur)
+        return;
+    f = _lopen(g_shelf[idx].path, OF_READ);
+    if (f == HFILE_ERROR) {
+        set_status("That picture's temp file is gone.");
+        return;
+    }
+    mem = GlobalAlloc(GMEM_MOVEABLE, g_shelf[idx].size);
+    if (!mem) {
+        _lclose(f);
+        set_status("Not enough memory for the picture.");
+        return;
+    }
+    dst = (unsigned char __huge *)GlobalLock(mem);
+    left = g_shelf[idx].size;
+    while (left && ok) {
+        chunk = left > 16384UL ? 16384 : (unsigned)left;
+        if ((unsigned)_lread(f, (LPSTR)dst, chunk) != chunk)
+            ok = 0;
+        dst  += chunk;
+        left -= chunk;
+    }
+    GlobalUnlock(mem);
+    _lclose(f);
+    if (!ok) {
+        GlobalFree(mem);
+        set_status("That picture's temp file is damaged.");
+        return;
+    }
+    if (g_pic_mem)
+        GlobalFree(g_pic_mem);
+    g_pic_mem  = mem;
+    g_pic_size = g_shelf[idx].size;
+    g_pic_w    = g_shelf[idx].w;
+    g_pic_h    = g_shelf[idx].h;
+    lstrcpy(g_pic_title, g_shelf[idx].title);
+    g_shelf_cur = idx;
+    pic_palette();
+    if (g_pic_wnd)
+        InvalidateRect(g_pic_wnd, NULL, TRUE);
+}
+
+/* Exit: the temp files must not outlive the session. */
+static void shelf_clear(void)
+{
+    OFSTRUCT of;
+    int i;
+
+    for (i = 0; i < g_shelf_count; i++)
+        OpenFile(g_shelf[i].path, &of, OF_DELETE);
+    g_shelf_count = 0;
+    g_shelf_cur = -1;
 }
 
 static void img_begin(const unsigned char *p, unsigned len)
@@ -1063,6 +1238,7 @@ static void img_end(void)
     g_pic_h    = g_img_h;
     lstrcpy(g_pic_title, g_img_title);
     pic_palette();
+    shelf_add();
     pic_open();
     if (g_pic_title[0]) {
         wsprintf(msg, "Picture: %s", (LPSTR)g_pic_title);
@@ -1544,6 +1720,39 @@ long FAR PASCAL _export PaperProc(HWND hwnd, UINT msg, UINT wParam,
 /* The picture window                                                */
 /* ---------------------------------------------------------------- */
 
+/* Rows the browser list takes from the bottom of the picture window.
+   Zero until there is something to browse - a picture on its own
+   deserves the whole window. */
+static int pic_list_h(HWND hwnd)
+{
+    RECT rc;
+    int h;
+
+    if (!g_shelf_count)
+        return 0;
+    GetClientRect(hwnd, &rc);
+    h = g_ch * 5 + 4;
+    if (h > (int)rc.bottom / 2)
+        h = (int)rc.bottom / 2;
+    return h;
+}
+
+static void pic_layout(HWND hwnd)
+{
+    RECT rc;
+    int lh = pic_list_h(hwnd);
+
+    if (!g_pic_lb)
+        return;
+    GetClientRect(hwnd, &rc);
+    if (lh) {
+        MoveWindow(g_pic_lb, 0, rc.bottom - lh, rc.right, lh, TRUE);
+        ShowWindow(g_pic_lb, SW_SHOW);
+    } else {
+        ShowWindow(g_pic_lb, SW_HIDE);
+    }
+}
+
 static void pic_paint(HWND hwnd)
 {
     PAINTSTRUCT ps;
@@ -1554,6 +1763,10 @@ static void pic_paint(HWND hwnd)
 
     hdc = BeginPaint(hwnd, &ps);
     GetClientRect(hwnd, &rc);
+    /* The browser list owns the bottom band; paint only above it. */
+    rc.bottom -= pic_list_h(hwnd);
+    if (rc.bottom < 1)
+        rc.bottom = 1;
 
     if (!g_pic_mem || !g_pic_w || !g_pic_h) {
         FillRect(hdc, &rc, GetStockObject(DKGRAY_BRUSH));
@@ -1611,11 +1824,30 @@ static void pic_paint(HWND hwnd)
 long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
                                 LONG lParam)
 {
+    int i;
+
     switch (msg) {
     case WM_CREATE:
         /* Recorded here rather than from WM_MDICREATE's return: the
            first messages arrive before that call comes back. */
         g_pic_wnd = hwnd;
+        /* The browser list. Repopulated from the shelf because this
+           window can be closed and reopened mid-session - the shelf
+           outlives it, like the transcript outlives its window. */
+        g_pic_lb = CreateWindow("LISTBOX", NULL,
+                                WS_CHILD | WS_BORDER | WS_VSCROLL
+                                | LBS_NOTIFY,
+                                0, 0, 10, 10, hwnd, (HMENU)ID_PICLIST,
+                                (HINSTANCE)GetWindowWord(hwnd,
+                                                         GWW_HINSTANCE),
+                                NULL);
+        for (i = 0; i < g_shelf_count; i++)
+            SendMessage(g_pic_lb, LB_ADDSTRING, 0,
+                        (LONG)(LPSTR)(g_shelf[i].title[0]
+                                      ? g_shelf[i].title
+                                      : (char *)"(untitled)"));
+        if (g_shelf_cur >= 0)
+            SendMessage(g_pic_lb, LB_SETCURSEL, g_shelf_cur, 0L);
         break;
 
     case WM_PAINT:
@@ -1626,15 +1858,24 @@ long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
         /* pic_paint covers every pixel; erasing first only flickers. */
         return 1;
 
+    case WM_COMMAND:
+        if (wParam == ID_PICLIST && HIWORD(lParam) == LBN_SELCHANGE) {
+            shelf_show((int)SendMessage(g_pic_lb, LB_GETCURSEL, 0, 0L));
+            return 0;
+        }
+        break;
+
     case WM_SIZE:
     case WM_MOVE:
         if (g_layout_ready && !g_in_layout)
             g_user_arranged = 1;
+        pic_layout(hwnd);
         InvalidateRect(hwnd, NULL, TRUE);
         break;
 
     case WM_DESTROY:
         g_pic_wnd = NULL;
+        g_pic_lb  = NULL;
         break;
     }
     return DefMDIChildProc(hwnd, msg, wParam, lParam);
@@ -1647,10 +1888,7 @@ static void do_save_pic(HWND hwnd)
     OPENFILENAME ofn;
     char file[144];
     BITMAPFILEHEADER bf;
-    unsigned char __huge *src;
     HFILE f;
-    unsigned long left;
-    unsigned chunk;
     int failed = 0;
 
     if (!g_pic_mem) {
@@ -1686,23 +1924,8 @@ static void do_save_pic(HWND hwnd)
     }
     if (_lwrite(f, (LPSTR)&bf, sizeof(bf)) != sizeof(bf))
         failed = 1;
-    src = (unsigned char __huge *)GlobalLock(g_pic_mem);
-    if (src) {
-        left = g_pic_size;
-        while (left && !failed) {
-            /* Huge pointers normalize their offsets small, so a 16 KB
-               bite handed to _lwrite as a far pointer never wraps a
-               segment mid-write. */
-            chunk = left > 16384UL ? 16384 : (unsigned)left;
-            if (_lwrite(f, (LPSTR)src, chunk) != chunk)
-                failed = 1;
-            src  += chunk;
-            left -= chunk;
-        }
-        GlobalUnlock(g_pic_mem);
-    } else {
+    if (!failed && !hfile_write(f, g_pic_mem, g_pic_size))
         failed = 1;
-    }
     _lclose(f);
     if (failed) {
         MessageBox(hwnd, "The save didn't finish - disk full?",
@@ -1854,6 +2077,49 @@ BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
 /* Server settings. The one dialog the client cannot do without on a real
    machine: there is no command line there, so without this the only way
    to change the address is to rebuild the disk the program came on. */
+BOOL FAR PASCAL _export PicsDlgProc(HWND dlg, UINT msg, UINT wParam,
+                                    LONG lParam)
+{
+    (void)lParam;
+    switch (msg) {
+    case WM_INITDIALOG:
+        CheckDlgButton(dlg, IDC_ROOMPICS, g_room_pics);
+        return TRUE;
+
+    case WM_COMMAND:
+        switch (wParam) {
+        case IDOK:
+            g_room_pics = IsDlgButtonChecked(dlg, IDC_ROOMPICS) ? 1 : 0;
+            save_ini();
+            EndDialog(dlg, 1);
+            return TRUE;
+
+        case IDCANCEL:
+            EndDialog(dlg, 0);
+            return TRUE;
+        }
+        break;
+    }
+    return FALSE;
+}
+
+/* Settings > Pictures. The new answer goes to the proxy immediately if
+   the link is up; a later connect re-sends it either way. */
+static void pics_dialog(HWND owner)
+{
+    HINSTANCE inst = (HINSTANCE)GetWindowWord(owner, GWW_HINSTANCE);
+    FARPROC fn = MakeProcInstance((FARPROC)PicsDlgProc, inst);
+    int r = DialogBox(inst, "LLM64PICS", owner, (DLGPROC)fn);
+
+    FreeProcInstance(fn);
+    if (r == 1 && net_state() == NET_UP) {
+        send_options();
+        set_status(g_room_pics
+                   ? "Every location will be illustrated."
+                   : "Only asked-for pictures now.");
+    }
+}
+
 BOOL FAR PASCAL _export ServerDlgProc(HWND dlg, UINT msg, UINT wParam,
                                       LONG lParam)
 {
@@ -2100,6 +2366,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                    after it is shaped for this machine rather than for a
                    6510 (see send_hello). */
                 send_hello();
+                send_options();
                 send_frame(MSG_PING, NULL, 0);
                 /* Fetch the menu now so F1 has something in it. */
                 send_frame(MSG_GET_MENU, NULL, 0);
@@ -2162,6 +2429,10 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
 
         case IDM_SERVER:
             server_dialog(hwnd);
+            return 0;
+
+        case IDM_PICSET:
+            pics_dialog(hwnd);
             return 0;
 
         case IDM_MENU: {
@@ -2272,6 +2543,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
             GlobalFree(g_pic_mem);
         if (g_img_mem)
             GlobalFree(g_img_mem);
+        shelf_clear();
         for (i = 0; i < MAX_PAPER; i++)
             if (g_paper[i].live)
                 sb_free(&g_paper[i].sb);
@@ -2313,6 +2585,8 @@ static void load_ini(void)
                             buf, sizeof(buf), g_ini);
     g_theme = (buf[0] == 's' || buf[0] == 'S') ? THEME_SCREEN : THEME_PAPER;
     g_bar_show = GetPrivateProfileInt("Display", "MenuBar", 1, g_ini) ? 1 : 0;
+    g_room_pics = GetPrivateProfileInt("Pictures", "EveryRoom", 0, g_ini)
+        ? 1 : 0;
 }
 
 static void save_ini(void)
@@ -2327,6 +2601,8 @@ static void save_ini(void)
                               g_ini);
     WritePrivateProfileString("Display", "MenuBar",
                               g_bar_show ? "1" : "0", g_ini);
+    WritePrivateProfileString("Pictures", "EveryRoom",
+                              g_room_pics ? "1" : "0", g_ini);
 }
 
 int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)

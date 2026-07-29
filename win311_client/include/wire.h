@@ -39,6 +39,11 @@
 #define MSG_CLIENT_HELLO        0x3F
 #define MSG_ACK                 0x40
 #define MSG_NAK                 0x41
+/* [opt][value], fire-and-forget like SET_BAUD. Session toggles the
+   proxy has no config lever for because they are the PLAYER's call -
+   room_pics may cost real API money per picture. */
+#define MSG_SET_OPTION          0x43
+#define OPT_ROOM_PICS           1
 
 /* Proxy -> client */
 #define MSG_CHAT_CHUNK          0x50
