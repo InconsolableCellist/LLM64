@@ -2212,16 +2212,23 @@ class ProtocolHandler:
     async def _show_map(self, arg: str):
         """/map - the graph the proxy has been keeping (docs/10)."""
         if self.mode.name != 'adventure':
+            # Answer the window too, or a client that draws its own map
+            # cannot tell "asked and there is nothing" from "the proxy
+            # never said anything" - which is what /map outside an
+            # adventure looked like from the Map window.
+            await self._send_map_data({})
             await self._send_canned(
                 "The map only exists in adventure mode.")
             return
         m = self.conv_manager.get_meta('adv_map') or {}
         if not m.get('rooms'):
+            await self._send_map_data(m)
             await self._send_canned(
                 "No map yet - the story has not moved you anywhere.")
             return
         if arg:
             # No model call: the cheapest correct answer in the design.
+            await self._send_map_data(m)
             await self._send_canned(self._map_route(m, arg))
             return
         # A client that draws its own map gets the structure too. The

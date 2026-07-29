@@ -3431,8 +3431,23 @@ static void pic_paint(HWND hwnd)
 
     hdc = BeginPaint(hwnd, &ps);
     GetClientRect(hwnd, &rc);
+    /* The control strip along the bottom, filled before anything else.
+       This window has NO class background (pic_paint is supposed to cover
+       every pixel) and it swallows WM_ERASEBKGND, while a checkbox paints
+       only its own box and label - so the margins around it belonged to
+       nobody, and kept whatever the screen happened to have there when a
+       window was dragged across. Button-face grey, because that is the
+       colour the checkbox's own label background comes back as. */
+    {
+        RECT sr = rc;
+
+        sr.top = rc.bottom - (pic_list_h(hwnd) + PIC_AUTO_H);
+        if (sr.top < 0)
+            sr.top = 0;
+        FillRect(hdc, &sr, GetStockObject(LTGRAY_BRUSH));
+    }
     /* The checkbox strip and the browser list own the bottom bands;
-       paint only above them. */
+       the art goes above them. */
     rc.bottom -= pic_list_h(hwnd) + PIC_AUTO_H;
     if (rc.bottom < 1)
         rc.bottom = 1;
