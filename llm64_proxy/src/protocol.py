@@ -2793,9 +2793,13 @@ class ProtocolHandler:
         entries += [
             ('x', 'Cancel reply', '!x'),
             ('e', 'Server config', '!e'),
-            ('d', 'Copy client disk', '!d'),
-            ('h', 'Help', '/help'),
         ]
+        # A C64 program has to be able to copy itself onto a blank disk;
+        # nothing any other machine runs does. The menu is the server's,
+        # so the entry simply never travels to a machine it cannot help.
+        if self.profile.name == 'c64':
+            entries.append(('d', 'Copy client disk', '!d'))
+        entries.append(('h', 'Help', '/help'))
         return entries[:13]  # the client panel caps at MAX_MENU
 
     async def handle_get_menu(self):

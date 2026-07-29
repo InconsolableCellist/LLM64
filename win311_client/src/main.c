@@ -53,7 +53,6 @@
 #define CONV_CLASS  "LLM64Conv"
 #define PAPER_CLASS "LLM64Paper"
 #define PIC_CLASS   "LLM64Pic"
-#define ACT_CLASS   "LLM64Act"
 #define MUS_CLASS   "LLM64Mus"
 #define CHR_CLASS   "LLM64Chr"
 #define INV_CLASS   "LLM64Inv"
@@ -656,88 +655,19 @@ static struct {
 static int g_menu_count;
 static int g_menu_choice;
 
-/* The Actions window: the server-fed menu as a column of buttons in an
-   MDI document of its own. It used to be a panel glued to the frame's
-   right edge, permanently spending 164 pixels of a 640-wide screen -
-   the scarcest resource this program has. As a document it opens and
-   closes like everything else, from the launcher or the Window menu,
-   and the INI remembers the choice. */
-#define ACT_W       164
-#define ACT_PAD     6
-
-static HWND g_act_wnd;
-static HWND g_act_btn[MAX_MENU];
-static int  g_act_count;
-static int  g_act_open;                 /* open at startup (INI) */
-static char g_act_sig[MAX_MENU + 2];    /* what the buttons were built from */
-static int  g_quitting;                 /* app teardown, not a user close */
-
-static void act_layout(HWND hwnd)
-{
-    RECT rc;
-    int i, y, bh, avail;
-
-    if (!g_act_count)
-        return;
-    GetClientRect(hwnd, &rc);
-    avail = (int)rc.bottom - ACT_PAD * 2;
-    /* Squeeze rather than overflow: a thirteen-entry menu on a 480-line
-       screen has less room per button than a four-entry one. */
-    bh = (g_ch + 12);
-    if (bh * g_act_count > avail)
-        bh = avail / g_act_count;
-    if (bh < 14) bh = 14;
-    y = ACT_PAD;
-    for (i = 0; i < g_act_count; i++) {
-        MoveWindow(g_act_btn[i], ACT_PAD, y,
-                   (int)rc.right - ACT_PAD * 2, bh - 2, TRUE);
-        y += bh;
-    }
-}
-
-/* (Re)build the buttons inside the Actions window, but only when the
-   menu actually changed - it is re-fetched every time the F1 box opens,
-   and tearing down a column of buttons to build the identical one back
-   flickers for nothing. */
-static void act_buttons(HWND hwnd)
-{
-    char sig[MAX_MENU + 2];
-    HINSTANCE inst;
-    int i;
-
-    sig[0] = (char)g_menu_count;
-    for (i = 0; i < g_menu_count && i < MAX_MENU; i++)
-        sig[i + 1] = g_menu[i].key;
-    sig[i + 1] = '\0';
-    if (g_act_count && memcmp(sig, g_act_sig, (size_t)i + 2) == 0)
-        return;
-    memcpy(g_act_sig, sig, (size_t)i + 2);
-
-    for (i = 0; i < g_act_count; i++)
-        if (g_act_btn[i]) {
-            DestroyWindow(g_act_btn[i]);
-            g_act_btn[i] = NULL;
-        }
-    g_act_count = 0;
-    inst = (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE);
-    for (i = 0; i < g_menu_count && i < MAX_MENU; i++) {
-        g_act_btn[i] = CreateWindow("BUTTON", g_menu[i].label,
-                                    WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                    0, 0, 10, 10, hwnd,
-                                    (HMENU)(IDC_BARBASE + i), inst, NULL);
-        if (!g_act_btn[i])
-            break;
-    }
-    g_act_count = i;
-    act_layout(hwnd);
-}
+/* The server-fed menu lives in ONE place now: the Menu dialog (F1 and
+   the launcher's first button). It briefly also existed as a
+   permanent right-hand panel and then as an "Actions" document - two
+   renderings of the same entries read as two features, and the panel
+   taxed a 640-wide screen 164 pixels for entries a dialog serves on
+   demand. */
 
 /* The launcher: a row of rectangular buttons across the top of the
    frame, one per big window, click to open or close - the way a 1993
    program let you see its rooms without memorizing its menus. Owned by
    the frame like the status strip, because it reports on the desk as a
    whole. */
-#define LAUNCH_N 7
+#define LAUNCH_N 6
 
 static HWND g_launch[LAUNCH_N];
 
@@ -749,7 +679,7 @@ static int launch_h(void)
 static void launch_create(HWND frame)
 {
     static const char *label[LAUNCH_N] =
-        { "Menu", "Conversation", "Picture", "Actions", "Music",
+        { "Menu", "Conversation", "Picture", "Music",
           "Character", "Items" };
     HINSTANCE inst = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
     int i;
@@ -764,7 +694,7 @@ static void launch_create(HWND frame)
 
 static void launch_layout(HWND frame)
 {
-    static const int w[LAUNCH_N] = { 52, 104, 76, 72, 64, 80, 56 };
+    static const int w[LAUNCH_N] = { 52, 104, 76, 64, 80, 56 };
     int i, x = 4;
 
     (void)frame;
@@ -1914,8 +1844,6 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
            an adventure and Map and Picture of this scene appear on the
            side without a rebuild of anything. */
         menu_parse(p, len);
-        if (g_act_wnd)
-            act_buttons(g_act_wnd);
         break;
 
     case MSG_HINT:
@@ -2353,7 +2281,7 @@ static void conv_layout(HWND hwnd)
 static void layout_default(void)
 {
     RECT rc;
-    int pw, aw, mw, mh;
+    int pw, mw, mh;
 
     if (!g_mdi)
         return;
@@ -2364,18 +2292,15 @@ static void layout_default(void)
         SendMessage(g_mdi, WM_MDIRESTORE, (WPARAM)g_conv, 0L);
     if (g_pic_wnd && IsZoomed(g_pic_wnd))
         SendMessage(g_mdi, WM_MDIRESTORE, (WPARAM)g_pic_wnd, 0L);
-    if (g_act_wnd && IsZoomed(g_act_wnd))
-        SendMessage(g_mdi, WM_MDIRESTORE, (WPARAM)g_act_wnd, 0L);
     if (g_mus_wnd && IsZoomed(g_mus_wnd))
         SendMessage(g_mdi, WM_MDIRESTORE, (WPARAM)g_mus_wnd, 0L);
     GetClientRect(g_mdi, &rc);
-    aw = g_act_wnd ? ACT_W : 0;
     /* The multiply is long on purpose: 892 pixels x 38 is already past
        what a 16-bit int holds, and the overflow made pw negative - a
        picture window with negative width is an invisible one. The old
        side panel kept the workspace narrow enough to hide this. */
     pw = g_pic_wnd
-        ? (int)(((long)((int)rc.right - aw) * 38) / 100)
+        ? (int)(((long)(int)rc.right * 38) / 100)
         : 0;
     /* Music tucks into the bottom-right corner: under the picture,
        stealing its column's bottom edge - or over the conversation's
@@ -2385,20 +2310,17 @@ static void layout_default(void)
     if (mh > (int)rc.bottom / 2)
         mh = (int)rc.bottom / 2;
     mw = pw ? pw : 260;
-    if (mw > (int)rc.right - aw)
-        mw = (int)rc.right - aw;
+    if (mw > (int)rc.right)
+        mw = (int)rc.right;
     if (g_conv)
-        MoveWindow(g_conv, 0, 0, (int)rc.right - pw - aw,
+        MoveWindow(g_conv, 0, 0, (int)rc.right - pw,
                    (int)rc.bottom, TRUE);
     if (g_pic_wnd)
-        MoveWindow(g_pic_wnd, (int)rc.right - pw - aw, 0, pw,
+        MoveWindow(g_pic_wnd, (int)rc.right - pw, 0, pw,
                    (int)rc.bottom - mh, TRUE);
     if (g_mus_wnd)
-        MoveWindow(g_mus_wnd, (int)rc.right - mw - aw,
+        MoveWindow(g_mus_wnd, (int)rc.right - mw,
                    (int)rc.bottom - mh, mw, mh, TRUE);
-    if (g_act_wnd)
-        MoveWindow(g_act_wnd, (int)rc.right - aw, 0, aw,
-                   (int)rc.bottom, TRUE);
     g_in_layout = 0;
     g_layout_ready = 1;
 }
@@ -2730,73 +2652,9 @@ long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
     return DefMDIChildProc(hwnd, msg, wParam, lParam);
 }
 
-/* ---------------------------------------------------------------- */
-/* The Actions window                                                */
-/* ---------------------------------------------------------------- */
-
+/* menu_run lives with the menu dialog below; the music controls send
+   commands through it. */
 static void menu_run(HWND owner, int idx);
-
-long FAR PASCAL _export ActProc(HWND hwnd, UINT msg, UINT wParam,
-                                LONG lParam)
-{
-    switch (msg) {
-    case WM_CREATE:
-        /* Recorded early, like the picture window and for the same
-           reason: messages arrive before WM_MDICREATE returns. */
-        g_act_wnd = hwnd;
-        act_buttons(hwnd);
-        break;
-
-    case WM_SIZE:
-    case WM_MOVE:
-        if (g_layout_ready && !g_in_layout)
-            g_user_arranged = 1;
-        act_layout(hwnd);
-        break;
-
-    case WM_COMMAND:
-        if (wParam >= IDC_BARBASE && wParam < IDC_BARBASE + MAX_MENU) {
-            menu_run(g_frame, (int)(wParam - IDC_BARBASE));
-            return 0;
-        }
-        break;
-
-    case WM_DESTROY:
-        g_act_wnd = NULL;
-        g_act_count = 0;
-        g_act_sig[0] = '\0';
-        /* Closing the window with its close box is choosing to not have
-           it; remember that. App teardown is not a choice. */
-        if (!g_quitting)
-            g_act_open = 0;
-        break;
-    }
-    return DefMDIChildProc(hwnd, msg, wParam, lParam);
-}
-
-static void act_open_wnd(void)
-{
-    MDICREATESTRUCT mcs;
-
-    if (g_act_wnd)
-        return;
-    mcs.szClass = ACT_CLASS;
-    mcs.szTitle = "Actions";
-    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
-    mcs.x       = 40;
-    mcs.y       = 24;
-    mcs.cx      = ACT_W;
-    mcs.cy      = 300;
-    mcs.style   = 0;
-    mcs.lParam  = 0;
-    /* Same guard as pic_open: a window's own birth is not the user
-       arranging the desk. */
-    g_in_layout = 1;
-    SendMessage(g_mdi, WM_MDICREATE, 0, (LONG)(LPMDICREATESTRUCT)&mcs);
-    g_in_layout = 0;
-    if (g_conv)
-        SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_conv, 0L);
-}
 
 /* ---------------------------------------------------------------- */
 /* The Music window                                                  */
@@ -3718,28 +3576,6 @@ static HWND conv_create(HWND frame)
     return w;
 }
 
-/* Open or close the Actions window - from the launcher, the Window
-   menu, or (as IDM_SHOWBAR) the same accelerator the old panel had. */
-static void act_toggle(HWND frame)
-{
-    if (g_act_wnd) {
-        SendMessage(g_mdi, WM_MDIDESTROY, (WPARAM)g_act_wnd, 0L);
-        g_act_open = 0;
-    } else {
-        act_open_wnd();
-        g_act_open = g_act_wnd != NULL;
-        /* Opened before the first menu arrived: ask for one now so the
-           window is not an empty frame until F1 happens to be pressed. */
-        if (g_act_open && !g_menu_count && net_state() == NET_UP)
-            send_frame(MSG_GET_MENU, NULL, 0);
-    }
-    CheckMenuItem(GetMenu(frame), IDM_SHOWBAR, MF_BYCOMMAND
-        | (g_act_open ? MF_CHECKED : MF_UNCHECKED));
-    save_ini();
-    if (!g_user_arranged)
-        layout_default();
-}
-
 long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                                   LONG lParam)
 {
@@ -3754,8 +3590,6 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         /* Colours before anything can paint: the background brush lives
            with the theme, and WM_CTLCOLOR hands it out. */
         theme_apply(g_theme);
-        CheckMenuItem(GetMenu(hwnd), IDM_SHOWBAR, MF_BYCOMMAND
-            | (g_act_open ? MF_CHECKED : MF_UNCHECKED));
         if (!sb_init(&g_conv_view.sb)) {
             MessageBox(hwnd, "Not enough memory for the transcript.",
                        APP_TITLE, MB_OK | MB_ICONSTOP);
@@ -3795,8 +3629,6 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
            last. */
         pic_open();
         mus_open_wnd();
-        if (g_act_open)
-            act_open_wnd();
         if (g_conv)
             SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_conv, 0L);
         return 0;
@@ -3969,10 +3801,6 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
             do_save_pic(hwnd);
             return 0;
 
-        case IDM_SHOWBAR:
-            act_toggle(hwnd);
-            return 0;
-
         case IDM_THEME_PAPER:
         case IDM_THEME_SCREEN:
             theme_apply(wParam == IDM_THEME_SCREEN ? THEME_SCREEN
@@ -4020,9 +3848,6 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                     pic_open();
                 break;
             case 3:
-                act_toggle(hwnd);
-                break;
-            case 4:
                 /* The Music window floats over the desk rather than
                    claiming a column - it is controls, not a document. */
                 if (g_mus_wnd)
@@ -4031,14 +3856,14 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                 else
                     mus_open_wnd();
                 break;
-            case 5:
+            case 4:
                 if (g_chr_wnd)
                     SendMessage(g_mdi, WM_MDIDESTROY,
                                 (WPARAM)g_chr_wnd, 0L);
                 else
                     sheet_open(CHR_CLASS, &g_chr_wnd, 80, 30, 260, 230);
                 break;
-            case 6:
+            case 5:
                 if (g_inv_wnd)
                     SendMessage(g_mdi, WM_MDIDESTROY,
                                 (WPARAM)g_inv_wnd, 0L);
@@ -4062,10 +3887,6 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
 
     case WM_DESTROY: {
         int i;
-        /* Children are destroyed after this handler; without the flag
-           the Actions window would read its own teardown as the user
-           closing it and write that choice to the INI. */
-        g_quitting = 1;
         net_shutdown();
         /* From 1: g_fonts[0] is the stock fixed font and is not ours
            to delete. */
@@ -4131,8 +3952,6 @@ static void load_ini(void)
     GetPrivateProfileString("Display", "Theme", "paper",
                             buf, sizeof(buf), g_ini);
     g_theme = (buf[0] == 's' || buf[0] == 'S') ? THEME_SCREEN : THEME_PAPER;
-    g_act_open = GetPrivateProfileInt("Display", "Actions", 0, g_ini)
-        ? 1 : 0;
     g_room_pics = GetPrivateProfileInt("Pictures", "EveryRoom", 0, g_ini)
         ? 1 : 0;
 }
@@ -4147,8 +3966,6 @@ static void save_ini(void)
     WritePrivateProfileString("Display", "Theme",
                               g_theme == THEME_SCREEN ? "screen" : "paper",
                               g_ini);
-    WritePrivateProfileString("Display", "Actions",
-                              g_act_open ? "1" : "0", g_ini);
     WritePrivateProfileString("Pictures", "EveryRoom",
                               g_room_pics ? "1" : "0", g_ini);
 }
@@ -4222,15 +4039,6 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
         if (!RegisterClass(&wc))
             return 1;
 
-        /* The Actions window: the server-fed menu as a document. */
-        wc.style = CS_HREDRAW | CS_VREDRAW;
-        wc.lpfnWndProc = ActProc;
-        wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-        wc.hbrBackground = GetStockObject(LTGRAY_BRUSH);
-        wc.lpszMenuName = NULL;
-        wc.lpszClassName = ACT_CLASS;
-        if (!RegisterClass(&wc))
-            return 1;
 
         /* The Music window: playback controls for the MIDI pipeline. */
         wc.style = CS_HREDRAW | CS_VREDRAW;

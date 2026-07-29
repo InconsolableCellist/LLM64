@@ -48,10 +48,9 @@ BEGIN
            Ctrl+number - land in one handler. */
         MENUITEM "Con&versation\tCtrl+1", IDM_TOGCONV
         MENUITEM "P&icture\tCtrl+2",      IDM_TOGPIC
-        MENUITEM "&Actions\tCtrl+3",      IDM_TOGACT
-        MENUITEM "&Music\tCtrl+4",        IDM_TOGMUS
-        MENUITEM "C&haracter\tCtrl+5",    IDM_TOGCHR
-        MENUITEM "In&ventory\tCtrl+6",    IDM_TOGINV
+        MENUITEM "&Music\tCtrl+3",        IDM_TOGMUS
+        MENUITEM "C&haracter\tCtrl+4",    IDM_TOGCHR
+        MENUITEM "In&ventory\tCtrl+5",    IDM_TOGINV
         MENUITEM SEPARATOR
         MENUITEM "&New Conversation Window", IDM_NEWWINDOW
         MENUITEM "Close All &Printouts",     IDM_CLOSEPAPER
@@ -76,13 +75,12 @@ BEGIN
     VK_F2, IDM_NEWCONV, VIRTKEY
     VK_F3, IDM_CANCEL,  VIRTKEY
     VK_F5, IDM_CONVS,   VIRTKEY
-    /* Ctrl+1..6: the launcher without the mouse. 0x31 is VK '1'. */
+    /* Ctrl+1..5: the launcher without the mouse. 0x31 is VK '1'. */
     0x31,  IDM_TOGCONV, VIRTKEY, CONTROL
     0x32,  IDM_TOGPIC,  VIRTKEY, CONTROL
-    0x33,  IDM_TOGACT,  VIRTKEY, CONTROL
-    0x34,  IDM_TOGMUS,  VIRTKEY, CONTROL
-    0x35,  IDM_TOGCHR,  VIRTKEY, CONTROL
-    0x36,  IDM_TOGINV,  VIRTKEY, CONTROL
+    0x33,  IDM_TOGMUS,  VIRTKEY, CONTROL
+    0x34,  IDM_TOGCHR,  VIRTKEY, CONTROL
+    0x35,  IDM_TOGINV,  VIRTKEY, CONTROL
 END
 
 /* The server-fed menu, as a 1993 program would have shown it: a modal
