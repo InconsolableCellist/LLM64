@@ -28,10 +28,10 @@ from typing import Dict
 
 CAP_ZERO_WIDTH_MARKERS = 0x0001  # markers occupy no screen cell
 CAP_RICH_TEXT          = 0x0002  # italic/underline/heading, 64 colours
+CAP_DIB_IMAGES         = 0x0004  # images as 8-bit DIBs (IMG_BEGIN fmt=2)
 
 # Reserved, and NOT yet consumed by anything - the phases that will read
 # them are named so the numbers are not reused meanwhile.
-CAP_DIB_IMAGES         = 0x0004  # phase 3: IMG_BEGIN fmt=2
 CAP_MIDI               = 0x0008  # phase 5: MIDI_* frames
 CAP_PRINT_GDI          = 0x0010  # phase 6: a printer DC sink
 
@@ -125,6 +125,20 @@ class ClientProfile:
     # Italic, underline, headings, and the extended colour marker.
     rich_text: bool = False
 
+    # Images leave as an 8-bit DIB rendered from the retained original
+    # PNG (IMG_BEGIN fmt=2) instead of the C64 multicolor blob. Like
+    # rich_text this follows the CAPABILITY, not the table row: only a
+    # client that claimed CAP_DIB_IMAGES has the fmt=2 parser.
+    dib_images: bool = False
+
+    # The art-style prompt this machine's pictures are generated with
+    # (docs/16 section 6.1, path C): a C64 scene wants flat areas and
+    # strong silhouettes because that is what survives the 160x200
+    # dither, a 1993 PC scene wants VGA pixel art. None = images.py's
+    # C64 default. An explicit [images].style_prefix in config.toml
+    # overrides every profile - the operator outranks the table.
+    image_style: str = None
+
     # Colour name -> wire slot.
     palette: Dict[str, int] = field(default_factory=lambda: PALETTE_C64)
 
@@ -135,6 +149,15 @@ class ClientProfile:
 
 
 C64 = ClientProfile()
+
+# What a 1993 PC's pictures should look like. 640x400 in 256 colours is
+# what the client-side DIB actually is, so the prompt asks for art that
+# is honest at that resolution rather than a downsampled oil painting.
+VGA_STYLE = (
+    "256-color VGA pixel art from a 1993 MS-DOS adventure game, "
+    "hand-dithered gradients, visible pixels, painted backdrop in the "
+    "style of Sierra and LucasArts VGA, no text, no UI, no border. "
+    "Scene: ")
 
 WIN16 = ClientProfile(
     name='win16',
@@ -147,6 +170,7 @@ WIN16 = ClientProfile(
     pace=False,
     marker_cells=False,
     rich_text=True,
+    image_style=VGA_STYLE,
     palette=PALETTE_RICH,
 )
 
@@ -202,6 +226,10 @@ def from_hello(payload: bytes):
         pace=base.pace,
         marker_cells=not (caps & CAP_ZERO_WIDTH_MARKERS),
         rich_text=rich,
+        # Capability-gated for the same reason as the palette below: a
+        # client without the fmt=2 parser must never be sent one.
+        dib_images=bool(caps & CAP_DIB_IMAGES),
+        image_style=base.image_style,
         # The palette follows the CAPABILITY, never the table entry. A
         # win16 build that predates rich text still matches the win16
         # row, and handing it the rich palette would let a [color=teal]

@@ -12,6 +12,8 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "&New Conversation\tF2", IDM_NEWCONV
         MENUITEM SEPARATOR
+        MENUITEM "&Save Picture As...",   IDM_SAVEPIC
+        MENUITEM SEPARATOR
         MENUITEM "E&xit",                 IDM_EXIT
     END
     POPUP "&Link"
@@ -41,8 +43,10 @@ BEGIN
     POPUP "&Window"
     BEGIN
         MENUITEM "&New Conversation Window", IDM_NEWWINDOW
+        MENUITEM "P&icture",                 IDM_PICTURE
         MENUITEM "Close All &Printouts",     IDM_CLOSEPAPER
         MENUITEM SEPARATOR
+        MENUITEM "&Default Layout",       IDM_DEFLAYOUT
         MENUITEM "&Cascade\tShift+F5",    IDM_CASCADE
         MENUITEM "&Tile\tShift+F4",       IDM_TILE
         MENUITEM "Arrange &Icons",        IDM_ARRANGE

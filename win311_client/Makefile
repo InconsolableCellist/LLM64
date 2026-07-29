@@ -71,7 +71,7 @@ build/%.obj: src/%.c | build
 	$(OWBIN)/wcc $(CFLAGS) -fo=$@ $<
 
 $(EXE): $(OBJ) $(RC) | build
-	$(OWBIN)/wcl $(LFLAGS) -fe=$@ $(OBJ) winsock.lib
+	$(OWBIN)/wcl $(LFLAGS) -fe=$@ $(OBJ) winsock.lib commdlg.lib
 	$(OWBIN)/wrc -q -bt=windows -i=$(WATCOM)/h/win -i=include -fo=build/llm64.res $(RC) $@
 	@rm -f __wcl_*.lnk
 

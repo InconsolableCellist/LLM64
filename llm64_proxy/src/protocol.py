@@ -1096,17 +1096,27 @@ class ProtocolHandler:
                 self._begin_ack = None
         return False
 
-    async def _send_bulk_stream(self, msg_type: MessageType, data: bytes):
+    async def _send_bulk_stream(self, msg_type: MessageType, data: bytes,
+                                wide: bool = False, chunk: int = None):
         """Chunk a large blob into paced, flow-controlled frames. Each
         frame carries its byte offset so the client can place it even
         after a gap; every FLOW_WINDOW frames the proxy waits for the
-        client's ACK so the modem's packet queue can never overflow."""
+        client's ACK so the modem's packet queue can never overflow.
+
+        `wide` widens the offset tag to 4 bytes: the 16-bit tag was
+        sized for C64 payloads (a 10 KB image, a 4 KB SID) and a
+        quarter-megabyte DIB laps it. Only a fmt=2 transfer - so only a
+        client whose parser expects it - ever sees the wide form.
+        `chunk` overrides the C64-sized SID_CHUNK for clients whose
+        frame buffer allows bigger bites."""
         n = 0
+        step = chunk or self.SID_CHUNK
+        off_fmt = '<I' if wide else '<H'
         self._flow_ack = asyncio.Event()
         try:
-            for i in range(0, len(data), self.SID_CHUNK):
-                await self._send_bulk(msg_type, struct.pack('<H', i)
-                                      + data[i:i + self.SID_CHUNK])
+            for i in range(0, len(data), step):
+                await self._send_bulk(msg_type, struct.pack(off_fmt, i)
+                                      + data[i:i + step])
                 n += 1
                 if n % self.FLOW_WINDOW == 0:
                     try:
@@ -1176,6 +1186,54 @@ class ProtocolHandler:
             await self._send_bulk(MessageType.IMG_END, b'')
         self.logger.info(f"Sent image ({len(blob)} bytes"
                          f"{', retry' if is_retry else ''})")
+
+    async def send_image_dib(self, dib: bytes, w: int, h: int,
+                             title: str = '', keep_music: bool = False):
+        """Stream a packed 8-bit DIB to a CAP_DIB_IMAGES client.
+
+        BEGIN payload for fmt=2 (all little-endian):
+
+            0     2 (the format byte the C64 variants also lead with)
+            1     flow window, in frames per ACK
+            2     keep_music flag
+            3-4   pixel width
+            5-6   pixel height
+            7-10  total DIB length in bytes
+            11..  title, NUL-terminated - the browser list's label
+
+        Data frames carry a 4-byte offset (wide=True below) because the
+        blob outgrows the 16-bit tag, and bites sized to the client's
+        own frame buffer rather than the C64's 256."""
+        self._img_sent = True
+        head = bytes([2, self.FLOW_WINDOW, 1 if keep_music else 0]) \
+            + struct.pack('<HHI', w, h, len(dib)) \
+            + title[:60].encode('ascii', errors='replace') + b'\x00'
+        chunk = max(256, self.profile.max_payload - 8)
+        async with self._media_lock:
+            if not await self._send_begin(MessageType.IMG_BEGIN, head):
+                self.logger.error("IMG_BEGIN never ACKed - aborting send")
+                await self.send_status("Image transfer couldn't start.")
+                return
+            await self._send_bulk_stream(MessageType.IMG_DATA, dib,
+                                         wide=True, chunk=chunk)
+            await self._send_bulk(MessageType.IMG_END, b'')
+        self.logger.info(f"Sent DIB image ({w}x{h}, {len(dib)} bytes)")
+
+    async def _send_pic(self, blob: bytes, bg: int, stem: str,
+                        title: str = '', fmt: int = 1):
+        """One picture, in whatever format this client asked for. The
+        C64 blob is every registered picture's guaranteed artifact, so
+        it is both the C64 path and the fallback when a DIB profile's
+        original PNG has gone missing."""
+        if self.profile.dib_images:
+            try:
+                dib, w, h = await self.images.dib_from_stem(stem)
+                await self.send_image_dib(dib, w, h, title=title)
+                return
+            except OSError:
+                self.logger.warning(f"No PNG for {stem} - sending the "
+                                    "C64 blob to a DIB client")
+        await self.send_image_blob(blob, bg, fmt=fmt)
 
     async def _ask_model(self, question: str, limit: int = 300,
                          sampling: dict = None,
@@ -1707,13 +1765,15 @@ class ProtocolHandler:
         except OSError:
             await self._send_canned("That picture's data is gone.")
             return
-        await self._send_canned(
-            f"Showing: {pics[n - 1].get('caption') or pics[n - 1]['prompt'][:60]}")
+        pic = pics[n - 1]
+        title = pic.get('caption') or pic['prompt'][:60]
+        await self._send_canned(f"Showing: {title}")
         if len(data) == 10001:      # multicolor: blob + bg byte
-            self._spawn_media(self.send_image_blob(data[:10000],
-                                                   data[10000]))
+            self._spawn_media(self._send_pic(data[:10000], data[10000],
+                                             pic['stem'], title=title))
         else:                       # hires-era blob
-            self._spawn_media(self.send_image_blob(data, 0, fmt=0))
+            self._spawn_media(self._send_pic(data, 0, pic['stem'],
+                                             title=title, fmt=0))
 
     async def _illustrate(self, instructions: str = '',
                           directive: str = ''):
@@ -1754,7 +1814,8 @@ class ProtocolHandler:
                     'conv_id': str(self.conv_manager.current_id),
                     'at_msg': len(self.conv_manager.get_messages())}
             blob, stem, bg = await self.images.generate_blob(
-                prompt, self.conv_manager.current_id, caption, meta=meta)
+                prompt, self.conv_manager.current_id, caption, meta=meta,
+                style=self.profile.image_style)
         except Exception as e:
             self.logger.error(f"Image generation failed: {e}")
             await self.send_status("Illustration failed.")
@@ -1771,7 +1832,7 @@ class ProtocolHandler:
         # The caption lands in the scrollback before the screen freezes,
         # so it's also the last chat line when the picture is dismissed
         await self._send_canned(f'"{caption}"')
-        await self.send_image_blob(blob, bg)
+        await self._send_pic(blob, bg, stem, title=caption)
 
     async def _send_text(self, seq: int, text: str) -> int:
         """Every path that streams prose to the C64 goes through here.

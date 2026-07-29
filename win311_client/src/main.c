@@ -39,6 +39,7 @@
  */
 
 #include <windows.h>
+#include <commdlg.h>
 #include <string.h>
 #include <stdlib.h>
 #include "wire.h"
@@ -49,6 +50,7 @@
 #define APP_CLASS   "LLM64Main"
 #define CONV_CLASS  "LLM64Conv"
 #define PAPER_CLASS "LLM64Paper"
+#define PIC_CLASS   "LLM64Pic"
 #define PANE_CLASS  "LLM64Pane"
 #define APP_TITLE   "LLM64"
 #define INI_FILE    "LLM64.INI"
@@ -575,8 +577,9 @@ static void send_text_frame(unsigned char type, const char *text)
 
 /* What this build can render. Kept as a named constant next to the
    sender so the two can never drift: the day the painter learns the
-   rich markers, this is the line that changes with it. */
-#define OUR_CAPS  (CAP_ZERO_WIDTH_MARKERS | CAP_RICH_TEXT)
+   rich markers, this is the line that changes with it - as it did the
+   day the picture window learned to eat a DIB. */
+#define OUR_CAPS  (CAP_ZERO_WIDTH_MARKERS | CAP_RICH_TEXT | CAP_DIB_IMAGES)
 
 /* Introduce ourselves, before anything that could produce text.
  *
@@ -851,6 +854,224 @@ static void print_end(void)
     send_frame(MSG_ACK, NULL, 0);
 }
 
+/* ---------------------------------------------------------------- */
+/* Pictures                                                          */
+/* ---------------------------------------------------------------- */
+
+/* The proxy generates a scene, keeps the original PNG, and - because
+   CLIENT_HELLO claimed CAP_DIB_IMAGES - sends this machine a packed
+   8-bit DIB rendered from it (IMG_BEGIN fmt=2, wire.h) instead of the
+   C64's 10 KB multicolor blob. A DIB is the one image format a 16-bit
+   Windows program decodes natively: one StretchDIBits call to show it,
+   one BITMAPFILEHEADER in front of it to save it.
+
+   The transfer is the same offset-tagged bulk stream every C64 media
+   transfer uses, except the offset is four bytes (a quarter-megabyte
+   DIB laps the 16-bit tag) and the frames are sized to our own buffer
+   rather than a 6551's. The blob outgrows a 64 KB segment, so every
+   pointer into it is huge. */
+
+static HWND          g_pic_wnd;         /* the persistent picture child */
+static HGLOBAL       g_pic_mem;         /* finished DIB, whole */
+static unsigned long g_pic_size;
+static unsigned      g_pic_w, g_pic_h;
+static char          g_pic_title[64];
+static HPALETTE      g_pic_hpal;        /* its 256 colours, realizable */
+
+/* The transfer in flight. Separate from the finished picture so a
+   failed transfer never takes the picture on screen down with it. */
+static HGLOBAL       g_img_mem;
+static unsigned long g_img_size, g_img_got;
+static unsigned      g_img_w, g_img_h;
+static unsigned      g_img_win, g_img_frames;
+static int           g_img_active;
+static char          g_img_title[64];
+
+/* Default-layout bookkeeping (see layout_default). */
+static int g_user_arranged;     /* the user moved a document themselves */
+static int g_in_layout;         /* our own MoveWindows are not "the user" */
+static int g_layout_ready;      /* creation-time WM_SIZEs are not either */
+
+/* Rebuild the realizable palette from the DIB's colour table, for the
+   256-colour drivers this program is nominally for. On a modern deep
+   display RealizePalette is a no-op and none of this matters. */
+static void pic_palette(void)
+{
+    static struct {
+        WORD         ver;
+        WORD         n;
+        PALETTEENTRY pe[256];
+    } lp;
+    unsigned char far *dib;
+    int i;
+
+    if (g_pic_hpal) {
+        DeleteObject(g_pic_hpal);
+        g_pic_hpal = NULL;
+    }
+    if (!g_pic_mem)
+        return;
+    dib = (unsigned char far *)GlobalLock(g_pic_mem);
+    if (!dib)
+        return;
+    lp.ver = 0x300;
+    lp.n   = 256;
+    for (i = 0; i < 256; i++) {
+        /* RGBQUAD stores B,G,R; PALETTEENTRY wants R,G,B. */
+        lp.pe[i].peBlue  = dib[40 + i * 4];
+        lp.pe[i].peGreen = dib[40 + i * 4 + 1];
+        lp.pe[i].peRed   = dib[40 + i * 4 + 2];
+        lp.pe[i].peFlags = 0;
+    }
+    GlobalUnlock(g_pic_mem);
+    g_pic_hpal = CreatePalette((LPLOGPALETTE)&lp);
+}
+
+/* Open (or refresh) the picture window. Created through the MDI client
+   like every document; PicProc records the handle in WM_CREATE because
+   this call has not returned yet when the first messages arrive. */
+static void pic_open(void)
+{
+    MDICREATESTRUCT mcs;
+
+    if (g_pic_wnd) {
+        InvalidateRect(g_pic_wnd, NULL, TRUE);
+        return;
+    }
+    mcs.szClass = PIC_CLASS;
+    mcs.szTitle = "Picture";
+    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.x       = 24;
+    mcs.y       = 16;
+    mcs.cx      = 336;
+    mcs.cy      = 240;
+    mcs.style   = 0;
+    mcs.lParam  = 0;
+    SendMessage(g_mdi, WM_MDICREATE, 0, (LONG)(LPMDICREATESTRUCT)&mcs);
+    /* A picture arriving mid-game must not steal the keyboard: MDI
+       activates what it creates, so hand the conversation straight
+       back. The picture has nothing to type into anyway. */
+    if (g_conv)
+        SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_conv, 0L);
+}
+
+static void img_abort(void)
+{
+    if (g_img_mem) {
+        GlobalFree(g_img_mem);
+        g_img_mem = NULL;
+    }
+    g_img_active = 0;
+}
+
+static void img_begin(const unsigned char *p, unsigned len)
+{
+    unsigned long size;
+
+    /* A re-sent BEGIN means the proxy never heard the first ACK; the
+       C64 re-ACKs for the same reason. */
+    if (g_img_active) {
+        send_frame(MSG_ACK, NULL, 0);
+        return;
+    }
+    if (len < IMG_DIB_HDR || p[0] != IMG_FMT_DIB8) {
+        /* fmt 0/1 is a C64 blob: only a proxy that predates
+           CLIENT_HELLO would send us one. Refuse rather than render it
+           wrong - the NAK makes the proxy report the failure. */
+        send_frame(MSG_NAK, NULL, 0);
+        set_status("Server sent a C64-format image - proxy too old?");
+        return;
+    }
+    size = (unsigned long)p[7] | ((unsigned long)p[8] << 8)
+         | ((unsigned long)p[9] << 16) | ((unsigned long)p[10] << 24);
+    /* 40 is an empty header; the cap is a 640x400 DIB with slack, and
+       what it really guards is GlobalAlloc against a corrupt length. */
+    if (size < 40UL || size > 600000UL) {
+        send_frame(MSG_NAK, NULL, 0);
+        return;
+    }
+    g_img_mem = GlobalAlloc(GMEM_MOVEABLE, size);
+    if (!g_img_mem) {
+        send_frame(MSG_NAK, NULL, 0);
+        set_status("Not enough memory for the picture.");
+        return;
+    }
+    g_img_size   = size;
+    g_img_got    = 0;
+    g_img_w      = p[3] | ((unsigned)p[4] << 8);
+    g_img_h      = p[5] | ((unsigned)p[6] << 8);
+    g_img_win    = p[1];
+    g_img_frames = 0;
+    g_img_title[0] = '\0';
+    if (len > IMG_DIB_HDR)
+        lstrcpyn(g_img_title, (const char far *)(p + IMG_DIB_HDR),
+                 sizeof(g_img_title) - 1);
+    g_img_active = 1;
+    set_status("Receiving picture...");
+    send_frame(MSG_ACK, NULL, 0);
+}
+
+static void img_data(const unsigned char *p, unsigned len)
+{
+    unsigned long off;
+    unsigned n, i;
+    unsigned char __huge *dst;
+
+    if (!g_img_active || len < 4)
+        return;
+    off = (unsigned long)p[0] | ((unsigned long)p[1] << 8)
+        | ((unsigned long)p[2] << 16) | ((unsigned long)p[3] << 24);
+    n = len - 4;
+    if (off >= g_img_size)
+        n = 0;
+    else if (off + n > g_img_size)
+        n = (unsigned)(g_img_size - off);
+    if (n) {
+        dst = (unsigned char __huge *)GlobalLock(g_img_mem);
+        if (dst) {
+            dst += off;
+            for (i = 0; i < n; i++)
+                dst[i] = p[4 + i];
+            GlobalUnlock(g_img_mem);
+        }
+        g_img_got += n;
+    }
+    /* The proxy stops and waits for this every g_img_win frames - the
+       same flow control the C64 does with its 256-byte bites. */
+    if (g_img_win && ++g_img_frames % g_img_win == 0) {
+        char msg[48];
+        wsprintf(msg, "Receiving picture... %u%%",
+                 (unsigned)(g_img_got * 100UL / g_img_size));
+        set_status(msg);
+        send_frame(MSG_ACK, NULL, 0);
+    }
+}
+
+static void img_end(void)
+{
+    char msg[96];
+
+    if (!g_img_active)
+        return;
+    g_img_active = 0;
+    if (g_pic_mem)
+        GlobalFree(g_pic_mem);
+    g_pic_mem  = g_img_mem;
+    g_img_mem  = NULL;
+    g_pic_size = g_img_size;
+    g_pic_w    = g_img_w;
+    g_pic_h    = g_img_h;
+    lstrcpy(g_pic_title, g_img_title);
+    pic_palette();
+    pic_open();
+    if (g_pic_title[0]) {
+        wsprintf(msg, "Picture: %s", (LPSTR)g_pic_title);
+        set_status(msg);
+    } else {
+        set_status("Picture received.");
+    }
+}
+
 static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
 {
     char note[160];
@@ -931,6 +1152,21 @@ static void on_frame(unsigned char type, const unsigned char *p, unsigned len)
 
     case MSG_PRINT_END:
         print_end();
+        break;
+
+    /* A scene illustration, as a DIB because CLIENT_HELLO asked for
+       one. It lands in the persistent picture window - the Wasteland
+       arrangement, art beside the prose. */
+    case MSG_IMG_BEGIN:
+        img_begin(p, len);
+        break;
+
+    case MSG_IMG_DATA:
+        img_data(p, len);
+        break;
+
+    case MSG_IMG_END:
+        img_end();
         break;
 
     default:
@@ -1108,6 +1344,39 @@ static void conv_layout(HWND hwnd)
         MoveWindow(g_input, 0, paneh, rc.right, inputh, TRUE);
 }
 
+/* The default desk: conversation on the left, picture beside it - the
+   old text-adventure arrangement, prose with the art in view. Applied
+   at startup and re-applied as the frame resizes, but only until the
+   user drags a document themselves: after that the desk is theirs, and
+   Window > Default Layout is the way to ask for this one back.
+
+   The g_in_layout guard is what tells our own MoveWindows apart from
+   the user's - a child's WM_SIZE cannot otherwise know who caused it. */
+static void layout_default(void)
+{
+    RECT rc;
+    int pw, ph;
+
+    if (!g_mdi)
+        return;
+    g_in_layout = 1;
+    /* A maximized document owns the whole workspace, and MoveWindow on
+       it is quietly ignored - restore first. */
+    if (g_conv && IsZoomed(g_conv))
+        SendMessage(g_mdi, WM_MDIRESTORE, (WPARAM)g_conv, 0L);
+    if (g_pic_wnd && IsZoomed(g_pic_wnd))
+        SendMessage(g_mdi, WM_MDIRESTORE, (WPARAM)g_pic_wnd, 0L);
+    GetClientRect(g_mdi, &rc);
+    pw = g_pic_wnd ? (int)rc.right * 38 / 100 : 0;
+    ph = (int)rc.bottom;
+    if (g_conv)
+        MoveWindow(g_conv, 0, 0, (int)rc.right - pw, (int)rc.bottom, TRUE);
+    if (g_pic_wnd)
+        MoveWindow(g_pic_wnd, (int)rc.right - pw, 0, pw, ph, TRUE);
+    g_in_layout = 0;
+    g_layout_ready = 1;
+}
+
 /* The frame gives everything except the status strip to the MDI client,
    which is what actually owns the document windows. */
 static void frame_layout(HWND hwnd)
@@ -1147,7 +1416,14 @@ long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
         break;
 
     case WM_SIZE:
+        if (g_layout_ready && !g_in_layout)
+            g_user_arranged = 1;
         conv_layout(hwnd);
+        break;
+
+    case WM_MOVE:
+        if (g_layout_ready && !g_in_layout)
+            g_user_arranged = 1;
         break;
 
     case WM_MDIACTIVATE:
@@ -1262,6 +1538,180 @@ long FAR PASCAL _export PaperProc(HWND hwnd, UINT msg, UINT wParam,
         break;
     }
     return DefMDIChildProc(hwnd, msg, wParam, lParam);
+}
+
+/* ---------------------------------------------------------------- */
+/* The picture window                                                */
+/* ---------------------------------------------------------------- */
+
+static void pic_paint(HWND hwnd)
+{
+    PAINTSTRUCT ps;
+    HDC hdc;
+    RECT rc;
+    HPALETTE oldpal = NULL;
+    unsigned char far *dib;
+
+    hdc = BeginPaint(hwnd, &ps);
+    GetClientRect(hwnd, &rc);
+
+    if (!g_pic_mem || !g_pic_w || !g_pic_h) {
+        FillRect(hdc, &rc, GetStockObject(DKGRAY_BRUSH));
+        SetBkMode(hdc, TRANSPARENT);
+        SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+        SetTextColor(hdc, RGB(0xC0, 0xC0, 0xC0));
+        DrawText(hdc, "No picture yet.", -1, &rc,
+                 DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        EndPaint(hwnd, &ps);
+        return;
+    }
+
+    if (g_pic_hpal) {
+        oldpal = SelectPalette(hdc, g_pic_hpal, FALSE);
+        RealizePalette(hdc);
+    }
+    dib = (unsigned char far *)GlobalLock(g_pic_mem);
+    if (dib) {
+        int dw, dh, dx;
+
+        /* Aspect-fit to the window's width, top-aligned: the window is
+           a column, and the space under the art belongs to the caption
+           now and the browser list later. */
+        dw = (int)rc.right;
+        dh = (int)((long)dw * g_pic_h / g_pic_w);
+        if (dh > (int)rc.bottom) {
+            dh = (int)rc.bottom;
+            dw = (int)((long)dh * g_pic_w / g_pic_h);
+        }
+        dx = ((int)rc.right - dw) / 2;
+        FillRect(hdc, &rc, GetStockObject(BLACK_BRUSH));
+        SetStretchBltMode(hdc, STRETCH_DELETESCANS);
+        /* Bits start after the header and the always-256-entry colour
+           table (the proxy writes biClrUsed=256, so 40+1024 is a
+           constant, not a guess). */
+        StretchDIBits(hdc, dx, 0, dw, dh, 0, 0, g_pic_w, g_pic_h,
+                      (LPSTR)(dib + 40 + 1024), (LPBITMAPINFO)dib,
+                      DIB_RGB_COLORS, SRCCOPY);
+        GlobalUnlock(g_pic_mem);
+        if (g_pic_title[0] && dh + g_ch < (int)rc.bottom) {
+            RECT tr = rc;
+            tr.top = dh + 4;
+            SetBkMode(hdc, TRANSPARENT);
+            SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+            SetTextColor(hdc, RGB(0xC0, 0xC0, 0xC0));
+            DrawText(hdc, g_pic_title, -1, &tr,
+                     DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
+        }
+    }
+    if (oldpal)
+        SelectPalette(hdc, oldpal, FALSE);
+    EndPaint(hwnd, &ps);
+}
+
+long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
+                                LONG lParam)
+{
+    switch (msg) {
+    case WM_CREATE:
+        /* Recorded here rather than from WM_MDICREATE's return: the
+           first messages arrive before that call comes back. */
+        g_pic_wnd = hwnd;
+        break;
+
+    case WM_PAINT:
+        pic_paint(hwnd);
+        return 0;
+
+    case WM_ERASEBKGND:
+        /* pic_paint covers every pixel; erasing first only flickers. */
+        return 1;
+
+    case WM_SIZE:
+    case WM_MOVE:
+        if (g_layout_ready && !g_in_layout)
+            g_user_arranged = 1;
+        InvalidateRect(hwnd, NULL, TRUE);
+        break;
+
+    case WM_DESTROY:
+        g_pic_wnd = NULL;
+        break;
+    }
+    return DefMDIChildProc(hwnd, msg, wParam, lParam);
+}
+
+/* File > Save Picture As: the DIB with a BITMAPFILEHEADER in front of
+   it IS a .BMP - the whole reason the wire format is what it is. */
+static void do_save_pic(HWND hwnd)
+{
+    OPENFILENAME ofn;
+    char file[144];
+    BITMAPFILEHEADER bf;
+    unsigned char __huge *src;
+    HFILE f;
+    unsigned long left;
+    unsigned chunk;
+    int failed = 0;
+
+    if (!g_pic_mem) {
+        MessageBox(hwnd, "No picture to save yet.", APP_TITLE,
+                   MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    lstrcpy(file, "PICTURE.BMP");
+    memset(&ofn, 0, sizeof(ofn));
+    ofn.lStructSize = sizeof(OPENFILENAME);
+    ofn.hwndOwner   = hwnd;
+    ofn.lpstrFilter = "Bitmap (*.BMP)\0*.bmp\0All files (*.*)\0*.*\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrFile   = file;
+    ofn.nMaxFile    = sizeof(file);
+    ofn.lpstrDefExt = "bmp";
+    ofn.Flags       = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST
+                    | OFN_HIDEREADONLY;
+    if (!GetSaveFileName(&ofn))
+        return;
+
+    bf.bfType      = 0x4D42;                    /* 'BM' */
+    bf.bfSize      = sizeof(bf) + g_pic_size;
+    bf.bfReserved1 = 0;
+    bf.bfReserved2 = 0;
+    bf.bfOffBits   = sizeof(bf) + 40 + 1024;
+
+    f = _lcreat(file, 0);
+    if (f == HFILE_ERROR) {
+        MessageBox(hwnd, "Couldn't create that file.", APP_TITLE,
+                   MB_OK | MB_ICONEXCLAMATION);
+        return;
+    }
+    if (_lwrite(f, (LPSTR)&bf, sizeof(bf)) != sizeof(bf))
+        failed = 1;
+    src = (unsigned char __huge *)GlobalLock(g_pic_mem);
+    if (src) {
+        left = g_pic_size;
+        while (left && !failed) {
+            /* Huge pointers normalize their offsets small, so a 16 KB
+               bite handed to _lwrite as a far pointer never wraps a
+               segment mid-write. */
+            chunk = left > 16384UL ? 16384 : (unsigned)left;
+            if (_lwrite(f, (LPSTR)src, chunk) != chunk)
+                failed = 1;
+            src  += chunk;
+            left -= chunk;
+        }
+        GlobalUnlock(g_pic_mem);
+    } else {
+        failed = 1;
+    }
+    _lclose(f);
+    if (failed) {
+        MessageBox(hwnd, "The save didn't finish - disk full?",
+                   APP_TITLE, MB_OK | MB_ICONEXCLAMATION);
+    } else {
+        char msg[176];
+        wsprintf(msg, "Saved picture to %s.", (LPSTR)file);
+        set_status(msg);
+    }
 }
 
 static void paint_status(HWND hwnd)
@@ -1556,10 +2006,9 @@ static HWND conv_create(HWND frame)
 
     w = (HWND)(WORD)SendMessage(g_mdi, WM_MDICREATE, 0,
                                 (LONG)(LPMDICREATESTRUCT)&mcs);
-    /* With a single document the workspace border is all cost and no
-       information, so open maximized anyway. */
-    if (w)
-        SendMessage(g_mdi, WM_MDIMAXIMIZE, (WPARAM)w, 0L);
+    /* Not maximized any more: the desk holds two documents now, and
+       layout_default puts this one beside the picture. Maximizing is
+       one double-click away for anyone who wants the old look. */
     return w;
 }
 
@@ -1610,10 +2059,18 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         if (!g_mdi)
             return -1;
         g_conv = conv_create(hwnd);
+        /* The picture window is part of the default desk, empty or not:
+           an adventure fills it, and until then it says what it is. */
+        pic_open();
         return 0;
 
     case WM_SIZE:
         frame_layout(hwnd);
+        /* Keep the two-document desk proportioned to the frame - but
+           only while it is still ours. The first drag makes it the
+           user's, and Window > Default Layout is the way back. */
+        if (!g_user_arranged)
+            layout_default();
         /* Text written before the pane knew its size used to wrap at the
            10x10 placeholder width and stay that way; now it re-flows on
            the first WM_SIZE like everything else. The session still
@@ -1654,11 +2111,33 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
             pump_socket();
         } else if (event == NET_EV_CLOSE) {
             print_abort();
+            img_abort();
             set_status(err);
             say(2, "Disconnected.");
         }
         return 0;
     }
+
+    /* A 256-colour driver arbitrates the hardware palette through
+       these; the picture's colours are the only ones we bargain for.
+       On a deep display neither ever matters. */
+    case WM_QUERYNEWPALETTE:
+        if (g_pic_hpal && g_pic_wnd) {
+            HDC dc = GetDC(g_pic_wnd);
+            HPALETTE old = SelectPalette(dc, g_pic_hpal, FALSE);
+            UINT n = RealizePalette(dc);
+            SelectPalette(dc, old, FALSE);
+            ReleaseDC(g_pic_wnd, dc);
+            if (n)
+                InvalidateRect(g_pic_wnd, NULL, TRUE);
+            return n;
+        }
+        break;
+
+    case WM_PALETTECHANGED:
+        if ((HWND)wParam != hwnd && g_pic_hpal && g_pic_wnd)
+            InvalidateRect(g_pic_wnd, NULL, TRUE);
+        break;
 
     case WM_COMMAND:
         switch (wParam) {
@@ -1710,6 +2189,26 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                 SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_conv, 0L);
             else
                 g_conv = conv_create(hwnd);
+            return 0;
+
+        case IDM_PICTURE:
+            /* Bring the picture back if it was closed, or to the front
+               if it is buried. */
+            if (g_pic_wnd)
+                SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_pic_wnd, 0L);
+            else
+                pic_open();
+            return 0;
+
+        case IDM_DEFLAYOUT:
+            if (!g_pic_wnd)
+                pic_open();
+            g_user_arranged = 0;
+            layout_default();
+            return 0;
+
+        case IDM_SAVEPIC:
+            do_save_pic(hwnd);
             return 0;
 
         case IDM_SHOWBAR:
@@ -1767,6 +2266,12 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         }
         if (g_bg_brush)
             DeleteObject(g_bg_brush);
+        if (g_pic_hpal)
+            DeleteObject(g_pic_hpal);
+        if (g_pic_mem)
+            GlobalFree(g_pic_mem);
+        if (g_img_mem)
+            GlobalFree(g_img_mem);
         for (i = 0; i < MAX_PAPER; i++)
             if (g_paper[i].live)
                 sb_free(&g_paper[i].sb);
@@ -1879,6 +2384,17 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
         wc.hbrBackground = GetStockObject(LTGRAY_BRUSH);
         wc.lpszMenuName = NULL;
         wc.lpszClassName = PAPER_CLASS;
+        if (!RegisterClass(&wc))
+            return 1;
+
+        /* The picture. No class background: pic_paint covers every
+           pixel itself, empty state included. */
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = PicProc;
+        wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+        wc.hbrBackground = NULL;
+        wc.lpszMenuName = NULL;
+        wc.lpszClassName = PIC_CLASS;
         if (!RegisterClass(&wc))
             return 1;
 

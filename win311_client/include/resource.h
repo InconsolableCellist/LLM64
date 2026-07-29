@@ -28,6 +28,9 @@
 #define IDM_CLOSEPAPER  115
 #define IDM_MENU        116
 #define IDM_SHOWBAR     117
+#define IDM_PICTURE     118
+#define IDM_DEFLAYOUT   119
+#define IDM_SAVEPIC     120
 
 #define IDM_FIRSTCHILD  200
 

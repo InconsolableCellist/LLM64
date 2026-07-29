@@ -114,6 +114,28 @@
 #define HELLO_VERSION           1
 #define CAP_ZERO_WIDTH_MARKERS  0x0001  /* markers occupy no cell */
 #define CAP_RICH_TEXT           0x0002  /* italic/underline/head, 64 colours */
+#define CAP_DIB_IMAGES          0x0004  /* images as 8-bit DIBs, fmt 2 */
+
+/* IMG_BEGIN's first payload byte says what is coming. 0 and 1 are the
+   C64's hires and multicolor blobs; 2 is ours, sent only to a client
+   that claimed CAP_DIB_IMAGES:
+
+       0     2
+       1     flow window, in data frames per ACK
+       2     keep_music flag
+       3-4   pixel width, LE
+       5-6   pixel height, LE
+       7-10  total DIB length in bytes, LE
+       11..  title, NUL-terminated
+
+   What follows in IMG_DATA is a packed 8-bit DIB - BITMAPINFOHEADER,
+   256 RGBQUADs, bottom-up rows - the thing StretchDIBits eats whole.
+   fmt=2 data frames tag their offset with FOUR bytes, not the two the
+   C64 formats use: a quarter-megabyte DIB laps a 16-bit offset. */
+#define IMG_FMT_HIRES    0
+#define IMG_FMT_MC       1
+#define IMG_FMT_DIB8     2
+#define IMG_DIB_HDR      11     /* fixed bytes before the title */
 
 enum wire_state {
     WS_SYNC = 0,

@@ -421,3 +421,60 @@ def render_preview(bitmap, matrix):
             for bit in range(8):
                 put((cx * 8 + bit, y), fg if byte & (0x80 >> bit) else bg)
     return img
+
+
+# --- the Windows target -----------------------------------------------
+#
+# Not a C64 format at all, but it lives here because this file is where
+# "a generated PNG becomes what a client can display" happens. A Win16
+# client cannot decode PNG; what it decodes natively - one StretchDIBits
+# call - is a packed DIB: BITMAPINFOHEADER, colour table, bottom-up
+# pixel rows padded to 4 bytes. So that is what goes on the wire
+# (IMG_BEGIN fmt=2), and saving it to disk client-side is nothing but
+# prepending a BITMAPFILEHEADER.
+
+DIB_MAX_W, DIB_MAX_H = 640, 400
+
+
+def convert_to_dib8(img, max_w=DIB_MAX_W, max_h=DIB_MAX_H):
+    """PIL image -> (packed 8-bit DIB bytes, width, height).
+
+    Scaled down to fit max_w x max_h (never up), quantized to 256
+    colours with error diffusion. No letterboxing: the client aspect-fits
+    at paint time, so baking bars in would only waste wire bytes. The
+    default 640x400 is the era's resolution, a quarter megabyte at
+    worst - a real 486 has to hold this in its global heap - and an
+    exact 0.625 scale of the generator's 1024x640 frame.
+    """
+    import struct
+
+    img = trim_border(img.convert("RGB"))
+    scale = min(max_w / img.width, max_h / img.height, 1.0)
+    w = max(1, round(img.width * scale))
+    h = max(1, round(img.height * scale))
+    if (w, h) != img.size:
+        img = img.resize((w, h), Image.LANCZOS)
+
+    q = img.quantize(colors=256)        # median cut + Floyd-Steinberg
+    pal = q.getpalette() or []
+    pal = (pal + [0] * 768)[:768]       # always a full 256-entry table
+
+    header = struct.pack(
+        "<IiiHHIIiiII",
+        40,                 # biSize
+        w, h,               # biHeight > 0 = bottom-up
+        1, 8,               # biPlanes, biBitCount
+        0,                  # BI_RGB
+        ((w + 3) & ~3) * h,  # biSizeImage
+        0, 0,               # pels per meter: unspecified
+        256, 0)             # biClrUsed, biClrImportant
+    # RGBQUAD order is B,G,R,reserved - the one byte-order trap in DIBs.
+    table = bytes(b for i in range(256)
+                  for b in (pal[i * 3 + 2], pal[i * 3 + 1], pal[i * 3], 0))
+
+    raw = q.tobytes()
+    stride = (w + 3) & ~3
+    pad = b"\x00" * (stride - w)
+    rows = b"".join(raw[y * w:(y + 1) * w] + pad
+                    for y in range(h - 1, -1, -1))
+    return header + table + rows, w, h
