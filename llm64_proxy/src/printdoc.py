@@ -294,8 +294,15 @@ def render_sheet(adv_state, character: str = '', background: str = '') -> str:
         if st.get('maxhp') is not None:
             hp += f"/{st['maxhp']}"
         stats.append('HP ' + hp)
-    for key, label in (('mana', 'Mana'), ('gold', 'Gold'),
-                       ('score', 'Score')):
+    if st.get('mana') is not None:
+        mana = str(st['mana'])
+        if st.get('maxmana'):
+            mana += f"/{st['maxmana']}"
+        stats.append('Mana ' + mana)
+    # Level and XP were on the screen sidebar and on the wire, and only
+    # the printed sheet did not have them.
+    for key, label in (('ac', 'AC'), ('level', 'Level'), ('xp', 'XP'),
+                       ('gold', 'Gold'), ('score', 'Score')):
         if st.get(key) is not None:
             stats.append(f"{label} {st[key]}")
     if stats:
@@ -304,7 +311,8 @@ def render_sheet(adv_state, character: str = '', background: str = '') -> str:
     if st.get('appearance'):
         out += ['', 'Appearance:', '  ' + str(st['appearance'])]
 
-    for key, label, empty in (('inventory', 'Inventory', '(nothing)'),
+    for key, label, empty in (('effects', 'Afflictions', '(none)'),
+                              ('inventory', 'Inventory', '(nothing)'),
                               ('companions', 'Companions', '(alone)')):
         items = st.get(key)
         if items is None:

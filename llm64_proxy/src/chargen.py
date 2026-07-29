@@ -161,6 +161,12 @@ def describe(rules: dict, answers: dict) -> str:
         bits.append(f"Their kind: {aside}.")
     if s['scores']:
         bits.append("Ability scores: " + fmt_scores(rules, s['scores']) + ".")
+    # The hit die is a rules value the proxy has and the model was
+    # inventing: it rolled the class, so it owns the HP that class starts
+    # with. Said out loud, level 1 maxhp stops being a coin flip.
+    if s.get('hit_die'):
+        bits.append(f"Hit die: d{s['hit_die']}, so their maximum HP at "
+                    f"level 1 is {s['hit_die']} plus their CON modifier.")
     if s['skills']:
         bits.append("Trained skills: " + ", ".join(s['skills']) + ".")
     if s['spells']:

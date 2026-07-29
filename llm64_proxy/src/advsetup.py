@@ -991,3 +991,10 @@ class AdventureSetup:
     def character_block(self) -> str:
         """Prose for the stable head of the system prompt (docs/09 §4b)."""
         return chargen.describe(self.rules, self.answers)
+
+    def character_sheet(self) -> dict:
+        """The same character, still structured. The prose above is what
+        the model reads; this is what a client with a sheet window draws,
+        and what the conversation stores so a /load gets the character
+        back instead of an empty sidebar."""
+        return chargen.sheet(self.rules, self.answers)

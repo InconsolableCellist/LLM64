@@ -52,6 +52,10 @@ class MessageType(IntEnum):
     FAV_TUNE = 0x3D  # '=' - toggle favorite on the current tune
     SET_BAUD = 0x3E  # '>' - client's wire rate: 2 bytes LE, nominal/100
     SET_OPTION = 0x43  # 'C' - [opt][value] session toggle, fire-and-forget
+    GET_SHEET = 0x44  # 'D' - send the sheets again (character, state,
+    #                   map) out of what is already stored. No payload,
+    #                   and by contract never an LLM or image call: it is
+    #                   a refresh for a window that just opened.
     # '?' - what kind of machine is on the other end (see profiles.py).
     # Absence of it means the C64, so an existing client is unaffected.
     CLIENT_HELLO = 0x3F
@@ -101,6 +105,19 @@ class MessageType(IntEnum):
     #                  pictures, newest first, n = the /pic <n> index.
     #                  Sent on load/new so the client's browser follows
     #                  the conversation; empty list clears it.
+    CHAR_SHEET = 0x6B  # 'k' - the STATIC half of the sheet as depth-1
+    #                    JSON + NUL: name, race, class, the rolled ability
+    #                    scores (flattened to one string), skills, spells,
+    #                    starting kit. Proxy-owned and fixed for the whole
+    #                    adventure, so it is sent once rather than
+    #                    restated by the narrator every turn.
+    #                    CAP_CHAR_SHEET only.
+    MAP_DATA = 0x6C  # 'l' - the map as structure, tab-separated + NUL:
+    #                  M<turn>\t<cols>\t<rows>, then R<num>\t<gx>\t<gy>
+    #                  \t<flags>\t<name> per room (flags: 1 visited,
+    #                  2 you are here), E<a>\t<b>\t<dir>\t<flags> per
+    #                  edge (dir n s e w u d or -, flags 1 one-way), and
+    #                  X<hidden> if rooms did not fit. CAP_MAP_DATA only.
     MOOD_LIST = 0x6A  # 'j' - [count] then [mood\0]: the mood vocabulary
     #                   of the library THIS listener plays from, for a
     #                   client with a music picker to fill
@@ -233,7 +250,8 @@ class ProtocolHandler:
             mode=getattr(self.config, 'images_mode', 'ask'),
             backend=make_backend(images_cfg, self.config.data_dir,
                                  getattr(self.config, 'config_dir', '.')),
-            style_prefix=images_cfg.get('style_prefix'))
+            style_prefix=images_cfg.get('style_prefix'),
+            dib_period=images_cfg.get('dib_style', 'period') != 'clean')
         if self.images.available:
             self.logger.info(f"Images enabled (backend: "
                              f"{self.images.backend.name}, "
@@ -347,6 +365,8 @@ class ProtocolHandler:
                 self.handle_set_baud()
             elif msg_type == MessageType.SET_OPTION:
                 self.handle_set_option()
+            elif msg_type == MessageType.GET_SHEET:
+                await self.handle_get_sheet()
             elif msg_type == MessageType.ACK:
                 self.logger.debug("ACK received")
                 if self._begin_ack is not None \
@@ -1412,14 +1432,39 @@ class ProtocolHandler:
             return ''
         return out.strip()[:limit]
 
+    def _adv_turn(self) -> int:
+        """The adventure's turn counter, as advmap keeps it."""
+        m = self.conv_manager.get_meta('adv_map') or {}
+        try:
+            return int(m.get('turn', 0) or 0)
+        except (ValueError, TypeError):
+            return 0
+
     async def _send_state_json(self, state: str):
         """Forward the normalized STATE block to a client that renders
         sheet windows from it (CAP_STATE_JSON). Verbatim on purpose: the
         client parses the same authoritative JSON the system prompt
         re-injects, so the sheet can never disagree with the narrator.
-        An empty object clears the windows (new conversation)."""
+        An empty object clears the windows (new conversation).
+
+        One key is added that the narrator did not write: '_age', the
+        number of turns since it last handed over a valid block. The
+        narrator drops the block often enough that a sheet can be several
+        turns stale while looking live, and the client has no other way to
+        know. Underscored so it reads as ours, and added HERE rather than
+        stored, so meta 'adv_state' - which goes back into the system
+        prompt as authoritative - stays exactly what the model wrote."""
         if not self.profile.state_json or state is None:
             return
+        stamp = self.conv_manager.get_meta('adv_state_turn')
+        if stamp is not None and state.strip() not in ('', '{}'):
+            try:
+                obj = json.loads(state)
+                if isinstance(obj, dict):
+                    obj['_age'] = max(0, self._adv_turn() - int(stamp))
+                    state = json.dumps(obj, separators=(',', ':'))
+            except (ValueError, TypeError):
+                pass        # send it as it stands; an age is a nicety
         data = state.encode('ascii', errors='replace') + b'\x00'
         if len(data) > self.profile.max_payload:
             # A state block past the client's frame buffer would desync
@@ -1428,6 +1473,161 @@ class ProtocolHandler:
                 f"STATE block too large to forward ({len(data)} B)")
             return
         await self.send_message(MessageType.STATE_JSON, data)
+
+    # The static sheet's own budget. Well under the 2048-byte frame cap:
+    # this is name/race/class plus three short lists, and a payload that
+    # needs more than this is a setup that has gone wrong.
+    CHAR_SHEET_MAX = 900
+
+    def _char_sheet_payload(self, sheet: dict) -> str:
+        """The structured chargen sheet as the depth-1 JSON the client
+        parses: strings, numbers, and arrays of strings, with the ability
+        scores flattened to one line because that is how they are drawn.
+        Trims the lists rather than overflowing the budget."""
+        if not sheet:
+            return '{}'
+        scores = sheet.get('scores') or {}
+        abil = '  '.join(f"{k} {v}" for k, v in scores.items())
+        out = {
+            'name': str(sheet.get('name') or ''),
+            'race': str(sheet.get('race') or ''),
+            'class': str(sheet.get('class') or ''),
+            'abil': abil,
+            'skills': [str(s) for s in (sheet.get('skills') or [])],
+            'spells': [str(s) for s in (sheet.get('spells') or [])],
+            'gear': [str(s) for s in (sheet.get('gear') or [])],
+        }
+        if sheet.get('hit_die'):
+            out['hd'] = int(sheet['hit_die'])
+        body = json.dumps(out, separators=(',', ':'))
+        # Give back the least useful thing first: kit, then spells, then
+        # skills. A dropped list is better than a dropped frame.
+        for key in ('gear', 'spells', 'skills'):
+            while len(body) + 1 > self.CHAR_SHEET_MAX and out[key]:
+                out[key].pop()
+                body = json.dumps(out, separators=(',', ':'))
+                self.logger.warning(
+                    "CHAR_SHEET over %d B, dropped a %s entry",
+                    self.CHAR_SHEET_MAX, key)
+        return body
+
+    async def _send_char_sheet(self, sheet=None):
+        """The half of the sheet the proxy rolled. Sent at the start of an
+        adventure, on load, and empty on a new conversation - the same
+        three moments STATE_JSON is sent, because the two halves are one
+        window."""
+        if not self.profile.char_sheet:
+            return
+        if sheet is None:
+            sheet = self.conv_manager.get_meta('character_sheet') or {}
+        body = self._char_sheet_payload(sheet)
+        data = body.encode('ascii', errors='replace') + b'\x00'
+        if len(data) > self.profile.max_payload:
+            self.logger.warning(
+                f"CHAR_SHEET too large to forward ({len(data)} B)")
+            return
+        await self.send_message(MessageType.CHAR_SHEET, data)
+
+    # The map's budget. The client holds 40 rooms and 72 edges; this is
+    # the byte ceiling that goes with them.
+    MAP_DATA_MAX = 1400
+
+    def _map_payload(self, m: dict) -> str:
+        """The map as the tab-separated block the client draws from.
+        Rooms the budget cannot fit are dropped FARTHEST-FIRST (BFS from
+        where the player is), because the near geography is the part
+        anyone reads, and the count is reported on an X line so the window
+        can say so rather than quietly lying about the world's size."""
+        rooms = (m or {}).get('rooms') or {}
+        if not rooms:
+            return "M0\t0\t0\n"
+
+        pos = advmap.layout(m)
+        at = m.get('at')
+        # _bfs gives slug -> (distance, previous, direction); only the
+        # distance matters here, and a room the walk never reached (a
+        # seeded place with no edges yet) sorts last.
+        reach = advmap._bfs(m, at) if at in rooms else {}
+        placed = [s for s in pos if s in rooms]
+        # Nearest first, then by room number so the order is stable.
+        placed.sort(key=lambda s: (reach.get(s, (9999,))[0],
+                                   rooms[s].get('num', 0)))
+
+        def room_line(slug):
+            r = rooms[slug]
+            gx, gy = pos[slug]
+            flags = (1 if r.get('visited', True) else 0) \
+                | (2 if slug == at else 0)
+            name = ''.join(c for c in str(r.get('name') or slug)
+                           if 0x20 <= ord(c) < 0x7F)[:20]
+            return f"R{r.get('num', 0)}\t{gx}\t{gy}\t{flags}\t{name}\n"
+
+        edges = []
+        for e in (m.get('edges') or []):
+            a, b = e.get('a'), e.get('b')
+            if a not in rooms or b not in rooms:
+                continue
+            d = (e.get('dir') or '')[:1].lower() or '-'
+            if d not in ('n', 's', 'e', 'w', 'u', 'd'):
+                d = '-'
+            edges.append((a, b, d, 1 if e.get('oneway') else 0))
+
+        # Grow the room list while it fits, then the edges between the
+        # rooms that made it.
+        kept, hidden = [], 0
+        head_len = len("M9999\t99\t99\n")
+        used = head_len
+        for slug in placed:
+            line = room_line(slug)
+            if used + len(line) > self.MAP_DATA_MAX:
+                hidden = len(placed) - len(kept)
+                break
+            kept.append(slug)
+            used += len(line)
+        keptset = set(kept)
+
+        cols = max((pos[s][0] for s in kept), default=-1) + 1
+        rows = max((pos[s][1] for s in kept), default=-1) + 1
+        out = [f"M{self._adv_turn()}\t{cols}\t{rows}\n"]
+        out += [room_line(s) for s in kept]
+        for a, b, d, one in edges:
+            if a not in keptset or b not in keptset:
+                continue
+            line = (f"E{rooms[a].get('num', 0)}\t{rooms[b].get('num', 0)}"
+                    f"\t{d}\t{one}\n")
+            if used + len(line) > self.MAP_DATA_MAX:
+                break
+            out.append(line)
+            used += len(line)
+        if hidden:
+            out.append(f"X{hidden}\n")
+        return ''.join(out)
+
+    async def _send_map_data(self, m=None):
+        """The structured map, for a client that draws one. The ASCII map
+        /map and /print produce is untouched - this is additive, and both
+        come from the same authoritative dict."""
+        if not self.profile.map_data:
+            return
+        if m is None:
+            m = self.conv_manager.get_meta('adv_map') or {}
+        body = self._map_payload(m if self.mode.name == 'adventure' else {})
+        data = body.encode('ascii', errors='replace') + b'\x00'
+        if len(data) > self.profile.max_payload:
+            self.logger.warning(
+                f"MAP_DATA too large to forward ({len(data)} B)")
+            return
+        await self.send_message(MessageType.MAP_DATA, data)
+
+    async def handle_get_sheet(self):
+        """A window just opened and wants filling. Everything here comes
+        out of meta - no model call, no image call, nothing that costs
+        money or time."""
+        self.logger.debug("Sheet refresh requested")
+        await self._send_char_sheet()
+        await self._send_state_json(
+            self.conv_manager.get_meta('adv_state') or '{}')
+        await self._send_map_data()
 
     async def _send_moods(self):
         """The mood vocabulary, for a client whose Music window has a
@@ -2024,6 +2224,10 @@ class ProtocolHandler:
             # No model call: the cheapest correct answer in the design.
             await self._send_canned(self._map_route(m, arg))
             return
+        # A client that draws its own map gets the structure too. The
+        # ASCII below is still sent: it is the answer to what was typed,
+        # and on the C64 it is the only map there is.
+        await self._send_map_data(m)
         lines = advmap.render_ascii(m, width=self.MAP_WIDTH)
         # Every line opens with a colour tag. It becomes a marker cell,
         # so cur_len > 0 by the time the first space of the art arrives
@@ -2560,7 +2764,6 @@ class ProtocolHandler:
                 if state is not None:
                     self.conv_manager.set_meta('adv_state', state)
                     self.conv_manager.save()
-                    await self._send_state_json(state)
 
             # Fold this reply into the map (docs/10). Both signals are in
             # hand: the filter has every directive from the whole stream
@@ -2570,6 +2773,22 @@ class ProtocolHandler:
                 # The place in the status row is only as current as the
                 # last ingest, so refresh it in the same breath.
                 await self._send_hint()
+
+            # The sheets go out AFTER the ingest, because the ingest is
+            # what advances the turn counter and the state block is
+            # stamped against it. Unconditional in adventure mode, not
+            # only when a block arrived: reporting the turns where the
+            # narrator gave us nothing is the entire point of the stamp.
+            if self.mode.name == 'adventure':
+                if state is not None:
+                    self.conv_manager.set_meta('adv_state_turn',
+                                               self._adv_turn())
+                    self.conv_manager.save()
+                await self._send_state_json(
+                    self.conv_manager.get_meta('adv_state') or '{}')
+                await self._send_map_data()
+            elif state is not None:
+                await self._send_state_json(state)
 
             self.logger.info(f"Response complete: {len(full_response)} bytes")
 
@@ -2801,12 +3020,21 @@ class ProtocolHandler:
             entries.append(('q', 'Leave code mode', '/chat'))
         elif mode in ('adventure', 'roleplay'):
             entries += [
+                # Starting over was the one thing the menu could not do
+                # from inside an adventure: 'New conversation' keeps the
+                # mode but not the world, and the way to a fresh world
+                # was knowing to type /adventure. In adventure mode this
+                # reads as "another one"; in roleplay it is the same
+                # quick-start the chat menu offers.
+                ('a', 'New adventure' if mode == 'adventure'
+                 else 'Start an adventure', '/adventure'),
                 ('p', 'Picture of this scene', '/pic'),
                 ('v', 'Past pictures', '/pics'),
                 ('t', 'Save checkpoint', '/save'),
                 ('q', 'Back to chat mode', '/chat'),
-                # The panel caps at 13 and this branch already fills it,
-                # so the map costs the /models entry - in ADVENTURE
+                # The panel caps at 13 and this branch now fills it
+                # exactly on the C64 (n c a p v t q m j x e d h), so the
+                # map costs the /models entry - in ADVENTURE
                 # only, the one mode that has a geography. Switching
                 # models mid-adventure is rare (and /models is still
                 # typeable); a map is something you reach for
@@ -2934,7 +3162,7 @@ class ProtocolHandler:
             if bible else '', character) if x)
 
     async def _start_adventure(self, theme: str, background: str = '',
-                               character: str = ''):
+                               character: str = '', sheet: dict = None):
         """Shared by /adventure <theme> and the setup flow, so both take
         exactly the same path into play."""
         mode = AdventureMode(self.config, theme=theme)
@@ -2944,6 +3172,21 @@ class ProtocolHandler:
         mode.character = character
         self._attach_snippets(mode)
         self._switch_mode(mode)
+        # Persist what the adventure IS, not just its theme. Without this
+        # a /load rebuilt the mode from `theme` alone: the prep notes and
+        # the whole rolled character were gone from the system prompt, the
+        # illustrator lost the player's fixed appearance (docs/13), and
+        # /print character sheet came back without its Character section.
+        # _switch_mode has just opened the conversation, so this is the
+        # first thing written to it.
+        if background:
+            self.conv_manager.set_meta('background', background)
+        if character:
+            self.conv_manager.set_meta('character', character)
+        if sheet:
+            self.conv_manager.set_meta('character_sheet', sheet)
+        self.conv_manager.save()
+        await self._send_char_sheet(sheet or {})
         # Seed the map from the prep notes' MAP: section, so the first
         # /map is not empty and - more valuable - the model is anchored
         # to place names it already committed to. Best-effort: a bad
@@ -3018,11 +3261,17 @@ class ProtocolHandler:
                 await self._setup_music()
                 return
             self._adv_setup = None
+            # The template kept the answers, so the structured sheet can be
+            # rolled again from them - same dice, same character, and the
+            # sheet window is not left empty just because the world came
+            # off the shelf.
+            bundle = saved.get('bundle') or {}
             await self._start_adventure(
-                self._theme_from(saved.get('bundle') or {}),
+                self._theme_from(bundle),
                 background=self._background(saved.get('bible') or '',
                                            saved.get('character') or ''),
-                character=saved.get('character') or '')
+                character=saved.get('character') or '',
+                sheet=chargen.sheet(setup.rules, bundle) if bundle else None)
             return
         if act in (ACT_QUICK, ACT_THEME, ACT_BEGIN):
             self._adv_setup = None
@@ -3054,7 +3303,7 @@ class ProtocolHandler:
                                      model=self.model_override or '')
             await self._start_adventure(
                 theme, background=self._background(bible, character),
-                character=character)
+                character=character, sheet=setup.character_sheet())
             return
         if reply:
             await self._send_canned(reply)
@@ -3275,6 +3524,14 @@ class ProtocolHandler:
             if meta_mode == 'adventure':
                 mode = AdventureMode(
                     self.config, theme=self.conv_manager.get_meta('theme', ''))
+                # The prep notes and the rolled character are as much a
+                # part of the adventure as its theme: without them the
+                # restored system prompt has no world bible and no
+                # character, and the illustrator loses the player's fixed
+                # appearance (docs/13). Conversations saved before these
+                # keys existed simply have nothing to restore.
+                mode.background = self.conv_manager.get_meta('background', '')
+                mode.character = self.conv_manager.get_meta('character', '')
                 self._attach_snippets(mode)
                 self.mode = mode  # not _switch_mode: keep the conversation
                 self.logger.info("Restored adventure mode from conversation")
@@ -3314,6 +3571,11 @@ class ProtocolHandler:
             # whatever the previous conversation left in them.
             await self._send_state_json(
                 self.conv_manager.get_meta('adv_state') or '{}')
+            # ...both halves of it: the rolled sheet is meta too, so a
+            # loaded game gets its own character back rather than the one
+            # from whatever adventure was open before.
+            await self._send_char_sheet()
+            await self._send_map_data()
             # ...and the picture browser, newest scene on display.
             await self._send_pic_list()
         else:
@@ -3333,5 +3595,7 @@ class ProtocolHandler:
         # A fresh conversation has no adventurer yet; clear the sheet
         # and the picture browser both.
         await self._send_state_json('{}')
+        await self._send_char_sheet({})
+        await self._send_map_data({})
         await self._send_pic_list()
         await self._send_hint(0)      # fresh conversation, empty tally
