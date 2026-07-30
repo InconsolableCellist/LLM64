@@ -30,8 +30,9 @@
  */
 
 #include <windows.h>
-#include <windowsx.h>   /* GET_X_LPARAM / GET_Y_LPARAM */
 #include <string.h>     /* strstr, for the command line */
+#include "llmport.h"    /* the 16-bit/32-bit seam - and it brings
+                           windowsx.h, GET_X_LPARAM and LLM_WORKAREA */
 
 #define CAP_H       18      /* caption, measured */
 #define BTN_W       18      /* measured: square, the caption height */
@@ -256,9 +257,9 @@ static HMENU popup_from(const MItem *items, int n)
     return h;
 }
 
-static void popup_measure(MEASUREITEMSTRUCT *mis)
+static void popup_measure(MEASUREITEMSTRUCT FAR *mis)
 {
-    const MItem *it = (const MItem *)mis->itemData;
+    const MItem FAR *it = (const MItem FAR *)mis->itemData;
     HDC hdc = GetDC(NULL);
     HFONT of = SelectObject(hdc, GetStockObject(SYSTEM_FONT));
     SIZE a, b;
@@ -267,10 +268,11 @@ static void popup_measure(MEASUREITEMSTRUCT *mis)
         mis->itemHeight = POPUP_SEP_H;
         mis->itemWidth = 0;
     } else {
-        GetTextExtentPoint32(hdc, it->text, lstrlen(it->text), &a);
+        a.cx = LOWORD(GetTextExtent(hdc, it->text, lstrlen(it->text)));
         b.cx = 0;
         if (it->accel)
-            GetTextExtentPoint32(hdc, it->accel, lstrlen(it->accel), &b);
+            b.cx = LOWORD(GetTextExtent(hdc, it->accel,
+                                        lstrlen(it->accel)));
         mis->itemHeight = POPUP_ITEM_H;
         mis->itemWidth = POPUP_GUTTER + a.cx + (b.cx ? b.cx + 24 : 0)
                        + POPUP_PADR;
@@ -279,9 +281,9 @@ static void popup_measure(MEASUREITEMSTRUCT *mis)
     ReleaseDC(NULL, hdc);
 }
 
-static void popup_draw(DRAWITEMSTRUCT *dis)
+static void popup_draw(DRAWITEMSTRUCT FAR *dis)
 {
-    const MItem *it = (const MItem *)dis->itemData;
+    const MItem FAR *it = (const MItem FAR *)dis->itemData;
     RECT r = dis->rcItem;
     int sel = (dis->itemState & ODS_SELECTED) != 0;
     int dis_ = (dis->itemState & ODS_GRAYED) != 0;
@@ -366,7 +368,7 @@ static int menu_layout(HWND hwnd, HDC hdc, RECT out[])
             lbl++;
         }
         plain[n] = '\0';
-        GetTextExtentPoint32(hdc, plain, n, &sz);
+        sz.cx = LOWORD(GetTextExtent(hdc, plain, n));
 
         out[i].left   = x;
         out[i].right  = x + MENU_PAD * 2 + sz.cx;
@@ -612,6 +614,10 @@ static LRESULT cap_hittest(HWND hwnd, LPARAM lParam)
    on Windows 7, where the call does not exist. */
 static void square_corners(HWND hwnd)
 {
+#ifdef __WATCOMC__
+    /* Windows 3.1 has no compositor and no rounded corners to switch off. */
+    (void)hwnd;
+#else
     HMODULE dwm = LoadLibraryA("dwmapi.dll");
     HRESULT (WINAPI *setattr)(HWND, DWORD, LPCVOID, DWORD);
     DWORD pref = 1;                 /* DWMWCP_DONOTROUND */
@@ -623,10 +629,11 @@ static void square_corners(HWND hwnd)
     if (setattr)
         setattr(hwnd, 33, &pref, sizeof(pref));  /* CORNER_PREFERENCE */
     FreeLibrary(dwm);
+#endif
 }
 
-static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam,
-                                LPARAM lParam)
+long FAR PASCAL _export WndProc(HWND hwnd, UINT msg, UINT wParam,
+                                LONG lParam)
 {
     PAINTSTRUCT ps;
     POINT pt;
@@ -663,18 +670,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam,
        Measured as 6 px on this machine - precisely the kind of thing that
        is invisible by eye and obvious to a pixel differ. */
     case WM_GETMINMAXINFO: {
-        MINMAXINFO *mmi = (MINMAXINFO *)lParam;
-        MONITORINFO mi;
+        MINMAXINFO FAR *mmi = (MINMAXINFO FAR *)lParam;
+        RECT wa;
 
-        mi.cbSize = sizeof(mi);
-        if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
-                           &mi)) {
-            mmi->ptMaxPosition.x = mi.rcWork.left - mi.rcMonitor.left;
-            mmi->ptMaxPosition.y = mi.rcWork.top - mi.rcMonitor.top;
-            mmi->ptMaxSize.x = mi.rcWork.right - mi.rcWork.left;
-            mmi->ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top;
-            mmi->ptMaxTrackSize = mmi->ptMaxSize;
-        }
+        LLM_WORKAREA(&wa);
+        mmi->ptMaxPosition.x = wa.left;
+        mmi->ptMaxPosition.y = wa.top;
+        mmi->ptMaxSize.x = wa.right - wa.left;
+        mmi->ptMaxSize.y = wa.bottom - wa.top;
+        mmi->ptMaxTrackSize = mmi->ptMaxSize;
         return 0;
     }
 
@@ -780,7 +784,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam,
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
-int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
+int PASCAL WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 {
     WNDCLASS wc;
     HWND hwnd;
@@ -788,7 +792,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 
     (void)prev;
 
-    ZeroMemory(&wc, sizeof(wc));
+    memset(&wc, 0, sizeof(wc));
     wc.style         = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
     wc.lpfnWndProc   = WndProc;
     wc.hInstance     = inst;

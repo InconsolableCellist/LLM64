@@ -74,6 +74,25 @@
    Win16 handle IS a word. */
 #define LLM_HWND(r)     ((HWND)(WORD)(r))
 
+/* Win32 added these TrackPopupMenu flags; 3.1 aligns a popup to the top
+   of the given point anyway, so asking for it is a no-op. */
+#define TPM_TOPALIGN    0
+#define TPM_BOTTOMALIGN 0
+
+/* windowsx.h is where Win32 keeps these; 3.1 predates it. Signed, because
+   a mouse can be dragged off the left edge of a window and an unsigned
+   read turns -3 into 65533. */
+#define GET_X_LPARAM(l) ((int)(short)LOWORD(l))
+#define GET_Y_LPARAM(l) ((int)(short)HIWORD(l))
+
+/* Where a maximised window may go. Windows 3.1 has no notion of a work
+   area - no taskbar to keep clear of - so it is the whole screen. */
+#define LLM_WORKAREA(r) do {                            \
+        (r)->left = 0; (r)->top = 0;                    \
+        (r)->right  = GetSystemMetrics(SM_CXSCREEN);    \
+        (r)->bottom = GetSystemMetrics(SM_CYSCREEN);    \
+    } while (0)
+
 /* What CallWindowProc will accept for the proc a subclass displaced.
    Win16 declares it FARPROC - int (far pascal *)() - and Win32 declares
    it WNDPROC; each rejects the other's spelling outright. */
@@ -115,6 +134,22 @@ typedef FARPROC LlmOldProc;
    That compiles without complaint and hands you a window that does not
    exist, which is the whole reason this macro is not just a cast. */
 #define LLM_HWND(r)     ((HWND)(r))
+
+/* GET_X_LPARAM / GET_Y_LPARAM come from here on Win32. */
+#include <windowsx.h>
+
+/* The monitor's work area, so a maximised window keeps clear of the
+   taskbar. Multi-monitor aware, and it needs no frame metrics. */
+#define LLM_WORKAREA(r) do {                                            \
+        MONITORINFO mi_;                                                \
+        mi_.cbSize = sizeof(mi_);                                       \
+        if (GetMonitorInfo(MonitorFromWindow(hwnd,                      \
+                           MONITOR_DEFAULTTONEAREST), &mi_))            \
+            *(r) = mi_.rcWork;                                          \
+        else                                                            \
+            SetRect((r), 0, 0, GetSystemMetrics(SM_CXSCREEN),           \
+                    GetSystemMetrics(SM_CYSCREEN));                     \
+    } while (0)
 
 typedef WNDPROC LlmOldProc;     /* see the Watcom branch above */
 

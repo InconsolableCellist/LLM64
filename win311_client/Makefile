@@ -75,7 +75,7 @@ PORT ?= 6400
 VMHOST ?= 10.0.2.2
 VMPORT ?= 6410
 
-.PHONY: all both run run32 spike run-spike devproxy test floppy vm-in vm-out clean
+.PHONY: all both run run32 spike spike16 run-spike devproxy test floppy vm-in vm-out clean
 
 all: $(EXE)
 
@@ -112,6 +112,17 @@ build/CAPSPIKE.EXE: spike/caption.c | build/w32
 
 run-spike: build/CAPSPIKE.EXE
 	WINEPREFIX=$(WINEPREFIX) WINEDEBUG=-all wine build/CAPSPIKE.EXE
+
+# The SAME spike source as a 16-bit NE. This is the claim that the chrome
+# is target-neutral, made checkable: if it builds and runs here, the 3.1
+# look can go on Windows 95 and 98 too, where the OS would otherwise dress
+# the app as 1995.
+spike16: build/CAPSPK16.EXE
+
+build/CAPSPK16.EXE: spike/caption.c | build
+	$(OWBIN)/wcl $(CFLAGS) $(LFLAGS) -fe=$@ $<
+	@rm -f __wcl_*.lnk caption.obj
+	@echo "-> $@"
 
 build/%.obj: src/%.c | build
 	$(OWBIN)/wcc $(CFLAGS) -fo=$@ $<
