@@ -100,6 +100,13 @@ static const char *MENUS[] = {
 #define NMENUS  ((int)(sizeof(MENUS) / sizeof(MENUS[0])))
 static HMENU g_pop[NMENUS];
 static int   g_open = -1;       /* bar item with its popup showing */
+/* Which bar item the mouse went down on. The popup is opened on the UP,
+   not the DOWN: TrackPopupMenu with TPM_LEFTBUTTON, called while the
+   button is still physically held, sees the release that follows and
+   dismisses itself. Under Wine that was survivable; on real 3.11 the
+   menu appears for one frame, half drawn, and vanishes. The sysmenu box
+   never had the bug because caption buttons always acted on the UP. */
+static int   g_bar_down = -1;
 
 /* ------------------------------------------------------------------ */
 
@@ -380,6 +387,29 @@ static int menu_layout(HWND hwnd, HDC hdc, RECT out[])
     return NMENUS;
 }
 
+/* Just the caption strip, or just the menu bar. Repainting the whole
+   window to un-press an 18x18 button is a visible flash on a real 3.11
+   machine - it was invisible under Wine on a 2026 CPU. */
+static void bar_rect(HWND hwnd, RECT *r, int menu)
+{
+    RECT rc;
+    int f = FRAME_W();
+
+    GetClientRect(hwnd, &rc);
+    r->left  = f;
+    r->right = rc.right - f;
+    r->top   = menu ? f + CAP_H + RULE : f;
+    r->bottom = menu ? r->top + MENU_H : f + CAP_H;
+}
+
+static void inval_bar(HWND hwnd, int menu)
+{
+    RECT r;
+
+    bar_rect(hwnd, &r, menu);
+    InvalidateRect(hwnd, &r, FALSE);
+}
+
 static void menu_paint(HWND hwnd, HDC hdc)
 {
     RECT rc, bar, items[NMENUS];
@@ -445,7 +475,7 @@ static void menu_drop(HWND hwnd, int i)
     if (i < 0 || i >= NMENUS || !g_pop[i])
         return;
     g_open = i;
-    InvalidateRect(hwnd, NULL, FALSE);
+    inval_bar(hwnd, 1);
     UpdateWindow(hwnd);
     p.x = items[i].left;
     p.y = items[i].bottom + 1;
@@ -453,7 +483,7 @@ static void menu_drop(HWND hwnd, int i)
     TrackPopupMenu(g_pop[i], TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON,
                    p.x, p.y, 0, hwnd, NULL);
     g_open = -1;
-    InvalidateRect(hwnd, NULL, FALSE);
+    inval_bar(hwnd, 1);
 }
 
 static void cap_paint(HWND hwnd, HDC hdc)
@@ -656,9 +686,13 @@ long FAR PASCAL _export WndProc(HWND hwnd, UINT msg, UINT wParam,
        OS caption and the OS border without giving up WS_THICKFRAME - so
        resizing, snapping and minimise/maximise all still work. */
     case WM_NCCALCSIZE:
-        if (wParam)
-            return 0;
-        break;
+        /* Both forms, not just wParam=TRUE. Falling through to
+           DefWindowProc on the FALSE call lets it inset the rect by a
+           frame we do not draw, so the two answers disagree by the frame
+           width and the edge is left with a stale margin that never
+           repaints. Returning 0 leaves the rect alone, which is exactly
+           "the client area is the whole window". */
+        return 0;
 
     /* A maximised WS_THICKFRAME window is sized LARGER than the work area
        on purpose - the sizing frame is meant to hang off the screen edges.
@@ -696,6 +730,11 @@ long FAR PASCAL _export WndProc(HWND hwnd, UINT msg, UINT wParam,
         break;
 
     case WM_PAINT:
+        /* A minimised Win16 window with no class icon is painted by its
+           own WM_PAINT - so this used to draw a caption and a menu bar
+           into a 32x32 icon, which is precisely what it looked like. */
+        if (IsIconic(hwnd))
+            break;
         BeginPaint(hwnd, &ps);
         cap_paint(hwnd, ps.hdc);
         EndPaint(hwnd, &ps);
@@ -704,22 +743,34 @@ long FAR PASCAL _export WndProc(HWND hwnd, UINT msg, UINT wParam,
     case WM_LBUTTONDOWN:
         pt.x = GET_X_LPARAM(lParam);
         pt.y = GET_Y_LPARAM(lParam);
-        {
-            int m = menu_at(hwnd, pt);
-
-            if (m >= 0) {
-                menu_drop(hwnd, m);
-                return 0;
-            }
+        g_bar_down = menu_at(hwnd, pt);
+        if (g_bar_down >= 0) {
+            g_open = g_bar_down;        /* highlight on the press */
+            inval_bar(hwnd, 1);
+            return 0;
         }
         g_down = cap_button_at(hwnd, pt);
         if (g_down != HIT_NONE) {
             SetCapture(hwnd);
-            InvalidateRect(hwnd, NULL, FALSE);
+            inval_bar(hwnd, 0);
         }
         return 0;
 
     case WM_LBUTTONUP:
+        if (g_bar_down >= 0) {
+            int m = g_bar_down;
+
+            g_bar_down = -1;
+            pt.x = GET_X_LPARAM(lParam);
+            pt.y = GET_Y_LPARAM(lParam);
+            if (menu_at(hwnd, pt) == m) {
+                menu_drop(hwnd, m);
+            } else {
+                g_open = -1;
+                inval_bar(hwnd, 1);
+            }
+            return 0;
+        }
         if (g_down != HIT_NONE) {
             int was = g_down;
 
@@ -727,7 +778,7 @@ long FAR PASCAL _export WndProc(HWND hwnd, UINT msg, UINT wParam,
             pt.y = GET_Y_LPARAM(lParam);
             g_down = HIT_NONE;
             ReleaseCapture();
-            InvalidateRect(hwnd, NULL, FALSE);
+            inval_bar(hwnd, 0);
             /* Only fires if the release lands on the same button, which
                is what every real button does. */
             if (cap_button_at(hwnd, pt) == was) {
@@ -797,6 +848,7 @@ int PASCAL WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     wc.lpfnWndProc   = WndProc;
     wc.hInstance     = inst;
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
+    wc.hIcon         = LoadIcon(NULL, IDI_APPLICATION);
     wc.hbrBackground = NULL;        /* we cover every pixel ourselves */
     wc.lpszClassName = "LLM64CapSpike";
     if (!RegisterClass(&wc))
