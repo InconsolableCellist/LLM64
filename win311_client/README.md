@@ -18,8 +18,8 @@ because a 6510 has no TCP stack.
 and how to run it on real hardware, in a VM, or under Wine.** What the
 program *does* and every proxy-side setting live in the
 [top-level README](../README.md), and the proxy has to be running first —
-see [Installing the proxy](../README.md#installing-the-proxy). The design and the
-phase plan are
+see [Installing the proxy](../llm64_proxy/README.md#installation). The design
+and the phase plan are
 [docs/16-windows-311-client.md](../docs/16-windows-311-client.md).
 
 ## What works
@@ -75,7 +75,7 @@ never need a Windows machine to produce one.
 | `make run` | `wine` (its 16-bit subsystem) |
 | `make test` | nothing but a host C compiler |
 | `tools/wine_smoke.sh` | `wine`, `xdotool`, `imagemagick`, `Xvfb`, and a window manager (`openbox`) |
-| `tools/devproxy.sh` | the proxy's venv, for Pillow — see the [top-level README](../README.md#installing-the-proxy) |
+| `tools/devproxy.sh` | the proxy's venv, for Pillow — see the [proxy README](../llm64_proxy/README.md#installation) |
 
 Open Watcom is not packaged on most distributions, so fetch the snapshot
 once (522 MB extracted):
@@ -117,7 +117,7 @@ another box, and often already running. Don't start a second one here;
 point the client at it. `run.conf` at the repo root names it
 (`PROXY_HOST` / `PROXY_PORT`). Installing it from scratch — venv,
 requirements, `config.toml`, model endpoint, image and music backends —
-is the [top-level README](../README.md#installing-the-proxy).
+is the [proxy README](../llm64_proxy/README.md#installation).
 
 **`/print` needs the proxy's printer backend to be `c64`** — the shipped
 default, and the one that sends `PRINT_*` frames to the client. A proxy
@@ -125,7 +125,11 @@ set to `cups` spools the document to a real print queue and the client
 never sees it; `both` does both. That is `[printer] backend` in
 `config.toml`, or `LLM64_PRINTER_BACKEND=c64` in the environment.
 
-## Run it: under Wine
+## Running it
+
+Three places this binary runs, in increasing order of authenticity.
+
+### Under Wine
 
 The development loop, and the fastest way to see a build:
 
@@ -146,7 +150,7 @@ machine (or a VM) before they can be called working — see the last
 section. Sound needs an ALSA sequencer client listening: see
 [Getting sound out of Wine](#getting-sound-out-of-wine).
 
-## Run it: in a VM
+### In a VM
 
 `make floppy` writes a 1.44 MB image holding the EXE and a matching INI,
 which is how the binary gets into a guest:
@@ -179,7 +183,7 @@ TCP/IP-32.
 A **bridged** guest is not on the host's loopback, so the proxy has to
 bind wider: `./tools/devproxy.sh 6410 0.0.0.0`.
 
-## Run it: on real hardware
+### On real hardware
 
 A 386 or better running Windows 3.1, WfW 3.11, or 95/98. What the machine
 needs:
@@ -240,7 +244,7 @@ image and runs its play routine off the raster IRQ; a 486 has no SID,
 and what this machine would actually have played in 1993 is a `.MID`
 through the MIDI Mapper. The proxy keeps a separate mood-tagged MIDI
 library for exactly this client — building it is documented in the
-[main README](../README.md#music-for-the-windows-client-midi), and the
+[proxy README](../llm64_proxy/README.md#music-for-the-windows-client-midi), and the
 mood vocabulary is shared with the SID side, so one narrator can score
 both machines in the same adventure.
 
@@ -249,7 +253,7 @@ temp file, and go to MCI's `sequencer` device. The Music window has the
 transport, the current mood and the jukebox picker; the narrator scores
 the adventure the same way it does on the C64. **Nothing plays until the
 proxy has a MIDI library** — that build is four steps in the
-[main README](../README.md#music-for-the-windows-client-midi), and until
+[proxy README](../llm64_proxy/README.md#music-for-the-windows-client-midi), and until
 it exists the jukebox says so.
 
 ### What was measured before any of it was written
@@ -300,7 +304,7 @@ With no synth running, `midiOutGetNumDevs()` still returns the kernel's
 `Midi Through` port, so "no devices" is not a reliable no-op test; the
 notes simply go nowhere.
 
-## When it does not connect
+### When it does not connect
 
 **Read the status strip.** It names the address it dialled while
 connecting, and the failure afterwards — `Connection refused or

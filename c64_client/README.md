@@ -16,7 +16,7 @@ its keys and slash commands, and every proxy-side setting (models,
 images, music library, printing) live in the
 [top-level README](../README.md) — and the proxy has to be running
 before any of this is interesting, so start with
-[Installing the proxy](../README.md#installing-the-proxy).
+[installing the proxy](../llm64_proxy/README.md#installation).
 
 ## What you need
 
@@ -225,6 +225,4 @@ c64-soft80.cfg    linker config: program capped below $C000, which is
 build/            output: llm64.prg, the overlay modules, llm64.d64
 ```
 
-Design notes: [docs/02-c64-client-design.md](../docs/02-c64-client-design.md),
-and [docs/15-bss-overflow-hayes-mode80.md](../docs/15-bss-overflow-hayes-mode80.md)
-for how tight the memory map actually is.
+Design notes: [docs/02-c64-client-design.md](../docs/02-c64-client-design.md).

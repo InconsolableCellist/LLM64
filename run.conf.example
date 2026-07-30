@@ -2,7 +2,6 @@
 #
 #     cp run.conf.example run.conf
 #
-# run.conf is gitignored - it holds your addresses, not the project's.
 # Everything here can also be set per-invocation with an environment
 # variable (LLM64_PROXY_HOST=... ./run.sh emu-80), and the emulator
 # target can be overridden with an argument (./run.sh emu-80 host:port).

@@ -52,8 +52,8 @@ built-in modem provides over WiFi.
    nothing happened. Partial pages sit in a 256-byte buffer until F5 →
    Flush Printer/Eject Page. A real MPS-803 on the IEC bus works the
    same way with nothing to configure. Paper on the *proxy* side instead
-   (a USB printer via CUPS) is `[printer] backend` —
-   `docs/14-printer-hardcopy.md` §13.
+   (a USB printer via CUPS) is `[printer] backend` — see the Printing
+   section of `llm64_proxy/README.md`.
 
 ## Build and deploy the client
 
