@@ -4,14 +4,7 @@ LLM64 lets a Commodore 64 (or a Windows 3.11/95/98 PC) play an
 infinite D&D-style text adventure with a local (or remote) Large Language
 Model like Gemma 4, ChatGPT, Claude, Grok, GLM, Kimi, etc.
 
-![Status](https://img.shields.io/badge/status-working-brightgreen)
-![Platform](https://img.shields.io/badge/clients-C64%20%2F%20C64%20Ultimate%20%2F%20VICE-red)
-![Platform](https://img.shields.io/badge/clients-Windows%203.1%20%2F%203.11%20%2F%2095-blue)
-![Language](https://img.shields.io/badge/c64-C%2FASM%20(cc65)-orange)
-![Language](https://img.shields.io/badge/win16-C%20(Open%20Watcom)-orange)
-![Language](https://img.shields.io/badge/proxy-Python%203.10%2B-green)
-
-LLM64 has the following main features:
+You can:
 
 1. Play a fully interactive, custom, D&D style text adventure, with the narrator
    streaming period-appropriate music, period-appropriate images, and keeping
@@ -23,21 +16,20 @@ LLM64 has the following main features:
    "/print please give me a summary of the story so far, with plot points and
    the result of combat" or "/print the complete recipe we just discussed")
 
-Everything runs through one **proxy** — a small Python server on a modern
-machine that holds the conversations, talks to the model, converts the
-images, and streams the music. The clients are programs that speak
-a binary protocol to the proxy while being period-correct.
 
-```
-┌─────────────────┐  TCP over
-│  C64 / VICE /   │  a SwiftLink ACIA ┐
-│  C64 Ultimate   │  (9600-38400 bd)  │   ┌──────────────┐         ┌──────────────────┐
-└─────────────────┘                   ├──►│ Linux proxy  │  HTTPS  │ OpenAI-compatible│
-┌─────────────────┐                   │   │  (Python,    │ ◄─────► │ API (llama.cpp,  │
-│ Windows 3.1 /   │  TCP over         │   │   asyncio)   │   SSE   │ OpenAI, Ollama…) │
-│ 3.11 / 95 PC    │  Winsock 1.1     ─┘   └──────────────┘         └──────────────────┘
-└─────────────────┘
-```
+## Quickstart
+
+1. [Install the proxy](llm64_proxy/README.md#installation). You'll setup Python in a venv on any modern machine
+2. [Configure the proxy](llm64_proxy/README.md#configuration). Copy
+   `config.toml.example` and point `[api]` at your model, then
+   [start it](llm64_proxy/README.md#running-the-proxy)
+3. Download (or build) the [C64](c64_client/README.md#build) or
+   [Windows](win311_client/README.md#build) client — pre-compiled binaries
+   are on the Releases page
+4. Run the client — [on a C64, a C64 Ultimate or VICE](c64_client/README.md#running-it),
+   or [on a PC, a VM or Wine](win311_client/README.md#running-it)
+5. Optionally, [enable more features in the proxy](llm64_proxy/README.md#optional-features)
+   — pictures, SID music, MIDI music, real printing, `/code`
 
 ## C64 and Win 3.11/95/98 Clients
 
@@ -56,6 +48,17 @@ a binary protocol to the proxy while being period-correct.
 | Music | SIDs relocated to `$B000` and streamed into RAM | `.MID` files through the MIDI Mapper |
 | `/print` | a real printer on IEC device 4 (or the proxy's CUPS queue) | virtual paper in a Notebook window (or real printer with CUPS) |
 | Install steps | [c64_client/README.md](c64_client/README.md) | [win311_client/README.md](win311_client/README.md) |
+```
+┌─────────────────┐  TCP over
+│  C64 / VICE /   │  a SwiftLink ACIA ┐
+│  C64 Ultimate   │  (9600-38400 bd)  │   ┌──────────────┐         ┌──────────────────┐
+└─────────────────┘                   ├──►│ Linux proxy  │  HTTPS  │ OpenAI-compatible│
+┌─────────────────┐                   │   │  (Python,    │ ◄─────► │ API (llama.cpp,  │
+│ Windows 3.1 /   │  TCP over         │   │   asyncio)   │   SSE   │ OpenAI, Ollama…) │
+│ 3.11 / 95 PC    │  Winsock 1.1     ─┘   └──────────────┘         └──────────────────┘
+└─────────────────┘
+```
+
 
 ## Using it
 
@@ -171,54 +174,6 @@ n-key rollover and typing speed of around 150 WPM.
 The Windows client takes the same slash commands, and you can also use `Ctrl+1..7` to toggle the desk's windows, F1 is the server-fed menu as
 a box of buttons, F5 the conversation browser.
 
-## Installation
-
-1. [Install the proxy](llm64_proxy/README.md#installation) — a venv and
-   three packages on a machine your old hardware can reach
-2. [Configure the proxy](llm64_proxy/README.md#configuration) — copy
-   `config.toml.example` and point `[api]` at your model, then
-   [start it](llm64_proxy/README.md#running-the-proxy)
-3. Download (or build) the [C64](c64_client/README.md#build) or
-   [Windows](win311_client/README.md#build) client — pre-compiled binaries
-   are on the Releases page
-4. Run the client — [on a C64, a C64 Ultimate or VICE](c64_client/README.md#running-it),
-   or [on a PC, a VM or Wine](win311_client/README.md#running-it)
-5. Optionally, [enable more features in the proxy](llm64_proxy/README.md#optional-features)
-   — pictures, SID music, MIDI music, real printing, `/code`
-
-
-## Trying it out
-
-Some prompts to test with once the proxy is up:
-
-- **Chat:** just type anything — `what's special about the SID chip?`
-- **Adventure:** `/adventure` picks from a theme chooser, or
-  `/adventure haunted castle`. Then classic commands (`LOOK`, `GO NORTH`,
-  `EXAMINE the altar`, `INVENTORY`) or free-form actions. Step outside the
-  story with `[OOC: make the dragon friendlier]`. Dice roll for real:
-  `I attack [roll:1d20]`.
-- **Roleplay:** `/chars` lists your character cards, `/char <name>` starts
-  one, `/assist` chats with the built-in Assistant card.
-- **Pictures:** `/pic` (illustrate the current scene), `/pic a knight at a
-  campfire`, `/pics`, `/pic 1` (re-show).
-- **Music:** `/music urgent`, `/music next`, `/music stop`, `/auto` (hand
-  control back to the narrator).
-- **Printing:** `/print` puts the last reply on paper, `/print my
-  inventory` the character sheet, `/print the complete recipe`
-  whatever you ask for - composed on the proxy and printed through a
-  printer on IEC device 4 (a real MPS-803, the C64 Ultimate's virtual
-  printer, or VICE's). Soft-80 builds only. `[printer] backend` in
-  config.toml can send the same document to a CUPS queue instead
-  ("cups") or as well ("both") - a printer on the proxy host or shared
-  by a Pi behind the C64, which also gives you /print with no C64
-  printer at all ([Printing](llm64_proxy/README.md#printing)). On the Windows client the
-  same document arrives as virtual paper in the Notebook window, which
-  needs no printer of any kind.
-- **Claude Code:** `/code` (or `/code sonnet`) drives a coding-agent session
-  from the C64, tool approvals answered at the prompt.
-- **Housekeeping:** `/save`, `/restore`, `/history`, `/find <text>`,
-  `/findall <text>`, `/stats`.
-
 ## Repository layout
 
 ```
@@ -246,15 +201,15 @@ run.sh          one-stop launcher: proxy, emulator, hardware deploys
 
 ## Documentation
 
-Installation and configuration live with each piece — the
-[proxy](llm64_proxy/README.md), the [C64 client](c64_client/README.md),
-the [Windows client](win311_client/README.md). The docs below are design
-records instead.
+- [Proxy](llm64_proxy/README.md) docs
+- [C64 client](c64_client/README.md)
+- [Windows client](win311_client/README.md)
+
+and some additional design docs:
 
 - [01-system-architecture.md](docs/01-system-architecture.md),
   [02-c64-client-design.md](docs/02-c64-client-design.md),
   [03-linux-proxy-design.md](docs/03-linux-proxy-design.md) — original design
 - [05-ultimate-setup.md](docs/05-ultimate-setup.md) — real hardware setup
 - [16-windows-311-client.md](docs/16-windows-311-client.md) — the Windows
-  client, the multi-client profile design, and §13b for the desk as it
-  stands
+  client, the multi-client profile design

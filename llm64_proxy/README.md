@@ -1,30 +1,24 @@
 # LLM64 Proxy Server
 
-The bridge every LLM64 client talks to: a TCP server that holds the
+The LLM64 proxy server is a Python TCP server that holds the
 conversations, calls an OpenAI-compatible model, converts the pictures,
-streams the music and composes the printouts — for a C64 over a SwiftLink
-ACIA and for a Windows 3.x machine over Winsock, at the same time.
-
-**Everything about the proxy lives here**: installation, configuration,
-and the optional image, music and printing backends. The clients have
-their own READMEs — [c64_client](../c64_client/README.md),
-[win311_client](../win311_client/README.md) — and what the whole thing
-*is* is the [top-level README](../README.md).
+streams the music and composes the printouts. It currently supports a C64 client over a SwiftLink
+ACIA and a Windows 3.x machine over Winsock (at the same time).
 
 | | |
 |---|---|
-| Install | [venv and three packages](#installation) |
+| Install | [venv and requirements](#installation) |
 | Configure | [`config.toml`, starting with `[api]`](#configuration) |
 | Run | [`./run.sh proxy`, and how to check it](#running-the-proxy) |
 | Pictures, music, paper | [Optional features](#optional-features) |
-| When it misbehaves | [Troubleshooting](#troubleshooting) |
+| Problems | [Troubleshooting](#troubleshooting) |
 
 ## What it does
 
 - TCP server serving several clients at once, each with its own profile
   (`profiles.py`): widths, payload caps and capabilities per machine
 - Binary protocol with framing and CRC, and pacing tuned to the wire
-  speed the client reports on connect
+  speed the client reports on connect (developed with a C64 Ultimate)
 - OpenAI API streaming (SSE), with the reply filtered for directives as
   it arrives
 - Conversation persistence in Open WebUI format
@@ -38,8 +32,7 @@ their own READMEs — [c64_client](../c64_client/README.md),
 
 ## Installation
 
-Python 3.10+ on a machine the old hardware can reach. Three packages, no
-service, nothing system-wide.
+Install Python 3.10+ on a machine the old/emulated hardware can reach.
 
 ```bash
 git clone https://github.com/InconsolableCellist/c64_llm.git
@@ -81,7 +74,6 @@ every reply will fail with an API error.
 
 Every other setting has a default; the full reference is
 [below](#every-configtoml-section).
-
 
 ### Every config.toml section
 
@@ -125,22 +117,47 @@ preset is used.
 
 ## Running the proxy
 
-### run.conf, so the address lives in one place 
+### run.conf
 
-run.sh is a helper script that handles starting the proxy
-
-Setup an empty run.conf:
+`run.sh` at the repo root starts and stops the proxy, launches the
+emulator, and deploys to real hardware. It reads your addresses from
+`run.conf` so you type them once:
 
 ```bash
 cd ..            # repo root
-./run.sh config  # writes run.conf, then prints what it will use
+./run.sh config  # copies run.conf.example, then prints the settings in effect
 ```
 
-`run.conf` holds `PROXY_HOST` / `PROXY_PORT` (and `C64U_HOST`, if you have
-a C64 Ultimate). Everything in `run.sh` and both clients' deploy targets
-read it, so the address lives in one place.
+**You can skip this entirely if the proxy, the model and VICE all run on
+this machine.** With no `run.conf`, `run.sh` uses `127.0.0.1:6400`, and
+`./run.sh emu-80` even starts the proxy for you when nothing is listening
+there. Set the file up when one of these is true:
+
+- **The proxy runs on another machine.** Put its address in `PROXY_HOST`.
+  This never changes what the proxy binds to — it always listens on
+  `0.0.0.0` — it tells `run.sh` where to point everything else.
+- **You deploy to a real C64.** `./run.sh c64-80` and `./run.sh install`
+  compile `PROXY_HOST` into the client as the address it dials, and the
+  C64 dials it itself: `127.0.0.1` there means *the C64*, so the dial
+  fails and the client offers F1 to fix the address. Give it the proxy
+  machine's LAN address — one the C64 can reach on its own, so not a VPN
+  or tailnet address. (What gets compiled in is only a default: booting
+  from the disk image, you retype the address in the config editor and it
+  saves into `llm64.cfg` on the disk. The bare-PRG deploys have no config
+  editor to load, so there you fix `run.conf` and deploy again.)
+- **You have a C64 Ultimate.** `C64U_HOST` is its address. Leave it empty
+  and the three hardware commands refuse to run and tell you to set it;
+  the emulator commands never look at it.
+- **You want `./run.sh status` to say whether the C64 is really
+  connected.** Point `PROXY_SSH` at the proxy host and it logs in to check.
+
+`run.sh` takes an argument over the environment (`LLM64_PROXY_HOST` and
+friends) over `run.conf` over those defaults. The file is gitignored — the
+addresses are yours, not the project's.
 
 ### Start it
+
+With run.sh: 
 
 ```bash
 ./run.sh proxy       # foreground, Ctrl-C stops it
@@ -149,7 +166,7 @@ read it, so the address lives in one place.
 ./run.sh status      # what's up and what isn't
 ```
 
-Or directly, if you'd rather not use the launcher:
+Or directly:
 
 ```bash
 cd llm64_proxy && .venv/bin/python -m src.main --host 0.0.0.0 --port 6400
@@ -161,11 +178,18 @@ run a firewall: `sudo ufw allow 6400/tcp`.
 ### Check it
 
 ```bash
-ss -ltn | grep 6400          # listening?
-nc <proxy-host> 6400         # reachable from elsewhere on the LAN?
+ss -ltn | grep 6400          # on this host: is it listening?
+nc <proxy-host> 6400         # from another machine: can you reach it?
 ```
 
-Check that the connection opens and stays open.
+`ss` should print a line ending `0.0.0.0:6400`. `nc` should sit there with
+no output and no error — the proxy is waiting for a framed message, and
+that silence is success; press Ctrl-C. If `nc` returns "Connection
+refused" the proxy isn't running (or a firewall ate it: `sudo ufw allow
+6400/tcp`), and if it hangs without connecting at all, you are not on a
+network that reaches this machine. Run `nc` from something as close to the
+old hardware as you can get — the C64 and the 486 have no VPN, so a
+tailnet address that works from your workstation proves nothing.
 
 
 ### Command line, and the environment

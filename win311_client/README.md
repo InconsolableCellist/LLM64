@@ -114,10 +114,12 @@ bridged VM or a real machine: `./tools/devproxy.sh 6410 0.0.0.0`.
 
 **The real one**, which is the same proxy the C64 uses — usually on
 another box, and often already running. Don't start a second one here;
-point the client at it. `run.conf` at the repo root names it
-(`PROXY_HOST` / `PROXY_PORT`). Installing it from scratch — venv,
-requirements, `config.toml`, model endpoint, image and music backends —
-is the [proxy README](../llm64_proxy/README.md#installation).
+point the client at it with `make run HOST=… PORT=…` or the INI. Nothing
+in this directory reads the repo's `run.conf`, but that is where the
+address is written down (`PROXY_HOST` / `PROXY_PORT`) if you have used the
+C64 side. Installing a proxy from scratch — venv, requirements,
+`config.toml`, model endpoint, image and music backends — is the
+[proxy README](../llm64_proxy/README.md#installation).
 
 **`/print` needs the proxy's printer backend to be `c64`** — the shipped
 default, and the one that sends `PRINT_*` frames to the client. A proxy
