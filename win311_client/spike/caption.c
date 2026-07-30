@@ -36,7 +36,18 @@
 
 #define CAP_H       18      /* caption, measured */
 #define BTN_W       18      /* measured: square, the caption height */
-#define FRAME       4       /* sizing border: 1 black + 3 bevel */
+/* The sizing border, measured off File Manager on real 3.11: one black
+   line, TWO rows of flat C0C0C0, one black line. Four pixels, and no
+   bevel anywhere in it - the 3D look everyone remembers from 3.1 is the
+   buttons, not the frame. Drawing it raised was wrong and obvious the
+   moment a real window sat beside it. */
+#define FRAME       4
+
+/* How far in from each outer corner the border carries a black tick.
+   Measured at 22 px on all four sides. It is not decoration: it marks
+   where the corner-resize zone ends and the edge-resize zone begins, so
+   the hit-test below uses the same number. */
+#define CORNER      22
 
 /* A maximised 3.1 window has NO border - it is flush to the screen, which
    is why the reference capture's sysmenu box starts at x=0. Getting this
@@ -502,17 +513,26 @@ static void cap_paint(HWND hwnd, HDC hdc)
        also why the reference cannot verify this part at all. */
     if (f) {
         HBRUSH k = CreateSolidBrush(C_FRAME);
+        int a = 1, b = FRAME - 2;           /* the face rows/cols */
+        int xl = rc.left + CORNER, xr = rc.right - 1 - CORNER;
+        int yt = rc.top + CORNER,  yb = rc.bottom - 1 - CORNER;
 
         r = rc;
         fill(hdc, &r, C_FACE);
-        FrameRect(hdc, &r, k);
+        FrameRect(hdc, &r, k);              /* outer black line */
+        InflateRect(&r, -(FRAME - 1), -(FRAME - 1));
+        FrameRect(hdc, &r, k);              /* inner black line */
         DeleteObject(k);
-        r = rc;
-        InflateRect(&r, -1, -1);
-        hline(hdc, r.left, r.right - 1, r.top, C_HILIGHT);
-        vline(hdc, r.left, r.top, r.bottom - 1, C_HILIGHT);
-        hline(hdc, r.left, r.right - 1, r.bottom - 1, C_SHADOW);
-        vline(hdc, r.right - 1, r.top, r.bottom - 1, C_SHADOW);
+
+        /* Eight corner grips, two per side. */
+        vline(hdc, xl, rc.top + a, rc.top + b, C_FRAME);
+        vline(hdc, xr, rc.top + a, rc.top + b, C_FRAME);
+        vline(hdc, xl, rc.bottom - 1 - b, rc.bottom - 1 - a, C_FRAME);
+        vline(hdc, xr, rc.bottom - 1 - b, rc.bottom - 1 - a, C_FRAME);
+        hline(hdc, rc.left + a, rc.left + b, yt, C_FRAME);
+        hline(hdc, rc.left + a, rc.left + b, yb, C_FRAME);
+        hline(hdc, rc.right - 1 - b, rc.right - 1 - a, yt, C_FRAME);
+        hline(hdc, rc.right - 1 - b, rc.right - 1 - a, yb, C_FRAME);
     }
 
     /* Caption: one flat colour, no gradient. */
@@ -620,15 +640,22 @@ static LRESULT cap_hittest(HWND hwnd, LPARAM lParam)
     l = (x < FRAME); t = (y < FRAME);
     rr = (x >= rc.right - FRAME); b = (y >= rc.bottom - FRAME);
 
-    if (!g_maxed) {                 /* a maximised window does not resize */
-        if (l && t)  return HTTOPLEFT;
-        if (rr && t) return HTTOPRIGHT;
-        if (l && b)  return HTBOTTOMLEFT;
-        if (rr && b) return HTBOTTOMRIGHT;
+    if (!g_maxed && (l || t || rr || b)) {
+        /* Anywhere in the border within CORNER of a corner resizes
+           diagonally - which is exactly what the tick marks delimit, so
+           the grip you can see and the grip you can grab agree. A 4 px
+           corner (the old behaviour) is very hard to hit on purpose. */
+        int nl = (x < CORNER), nr = (x >= rc.right - CORNER);
+        int nt = (y < CORNER), nb = (y >= rc.bottom - CORNER);
+
+        if (nl && nt) return HTTOPLEFT;
+        if (nr && nt) return HTTOPRIGHT;
+        if (nl && nb) return HTBOTTOMLEFT;
+        if (nr && nb) return HTBOTTOMRIGHT;
         if (l)  return HTLEFT;
         if (rr) return HTRIGHT;
         if (t)  return HTTOP;
-        if (b)  return HTBOTTOM;
+        return HTBOTTOM;
     }
     if (cap_button_at(hwnd, pt) != HIT_NONE)
         return HTCLIENT;            /* ours; we handle the click */
