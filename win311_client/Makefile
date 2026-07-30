@@ -75,7 +75,7 @@ PORT ?= 6400
 VMHOST ?= 10.0.2.2
 VMPORT ?= 6410
 
-.PHONY: all both run run32 spike spike16 run-spike devproxy test floppy vm-in vm-out clean
+.PHONY: all both run run32 spike spike16 spike-floppy run-spike devproxy test floppy vm-in vm-out clean
 
 all: $(EXE)
 
@@ -123,6 +123,50 @@ build/CAPSPK16.EXE: spike/caption.c | build
 	$(OWBIN)/wcl $(CFLAGS) $(LFLAGS) -fe=$@ $<
 	@rm -f __wcl_*.lnk caption.obj
 	@echo "-> $@"
+
+# A floppy carrying the 16-bit spike into a real 3.11 or 95 guest - and
+# the screenshots back out, since the EXE is 8 KB and the disk is 1.44 MB.
+# Only the NE build goes on it: CAPSPIKE.EXE is a 32-bit PE, which 3.11
+# cannot run at all and 95 cannot either (it imports the UCRT).
+#
+#   make spike-floppy
+#   ./tools/vmfloppy.sh in build/spike.img     (running guest)
+#   qemu ... -fda build/spike.img              (at boot)
+spike-floppy: build/CAPSPK16.EXE
+	rm -f build/spike.img
+	mformat -C -f 1440 -v SPIKE -i build/spike.img ::
+	mcopy -i build/spike.img build/CAPSPK16.EXE ::/CAPSPK16.EXE
+	printf '%s\r\n' \
+	  'CAPSPK16.EXE - the Windows 3.1 chrome, drawn by the program.' \
+	  '' \
+	  'Run it:        A:\CAPSPK16.EXE          (a normal window)' \
+	  '               A:\CAPSPK16.EXE max      (starts maximised)' \
+	  '' \
+	  'Captures wanted, in order of value:' \
+	  '' \
+	  ' 1. UNMAXIMISED, beside a real 3.11 window (Notepad will do),' \
+	  '    both visible at once. The reference capture we have is' \
+	  '    maximised, and a maximised 3.1 window has no sizing border,' \
+	  '    so the border is the one thing that cannot be checked.' \
+	  '' \
+	  ' 2. MENUS OPEN - Notepad Edit menu (it has greyed items) and' \
+	  '    this program File menu. Every popup metric here is guessed;' \
+	  '    none of it is measured.' \
+	  '' \
+	  ' 3. MAXIMISED, to compare against what we already have.' \
+	  '' \
+	  'How: PrintScreen grabs the screen, Alt+PrintScreen just the' \
+	  'active window. Then PBRUSH.EXE, and BEFORE pasting set' \
+	  'Options > Image Attributes to the screen size in pels, or the' \
+	  'paste is cropped to the default canvas. Edit > Paste, then' \
+	  'File > Save As to A: as PCX - a 1024x768 BMP is ~790 KB and' \
+	  'only one will fit; PCX is run-length coded and flat UI shrinks' \
+	  'to a fraction of that.' \
+	  > build/SPIKE.TXT
+	mcopy -i build/spike.img build/SPIKE.TXT ::/README.TXT
+	@echo
+	@mdir -i build/spike.img :: | tail -4
+	@echo "-> $(CURDIR)/build/spike.img"
 
 build/%.obj: src/%.c | build
 	$(OWBIN)/wcc $(CFLAGS) -fo=$@ $<
