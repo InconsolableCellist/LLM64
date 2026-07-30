@@ -213,3 +213,9 @@ and some additional design docs:
 - [05-ultimate-setup.md](docs/05-ultimate-setup.md) — real hardware setup
 - [16-windows-311-client.md](docs/16-windows-311-client.md) — the Windows
   client, the multi-client profile design
+
+## Version history
+
+### 1.0 -- 2026-07-29
+
+Initial release.
