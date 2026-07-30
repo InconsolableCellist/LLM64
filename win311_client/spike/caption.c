@@ -50,6 +50,12 @@
    loud as the caption buttons. Measured off the reference: rows y21..y38
    are pure #FFFFFF with a black rule under them. */
 #define C_MENU      RGB(0xFF, 0xFF, 0xFF)
+/* 3.1's COLOR_HIGHLIGHT. An open bar item and a selected popup item are
+   navy with white text - NOT inverted to black, which is what this drew
+   first and what reads wrong beside the real thing. */
+#define C_HILITE    RGB(0x00, 0x00, 0x80)
+#define C_HILITETX  RGB(0xFF, 0xFF, 0xFF)
+#define C_GRAYTEXT  RGB(0x80, 0x80, 0x80)
 #define MENU_PAD    8       /* per side, measured: "File" ink starts at x=9 */
 /* Zero, not 3, even though the ink does start 3 rows into the bar:
    DT_TOP aligns the font's CELL to the rect, and the System font carries
@@ -202,6 +208,137 @@ static void btn_rects(HWND hwnd, RECT *sys, RECT *mn, RECT *mx)
     sys->bottom = mn->bottom = mx->bottom = f + CAP_H;
 }
 
+/* A popup entry. MF_OWNERDRAW replaces the string with a pointer, so the
+   label has to live somewhere we own - hence the static tables below.
+   id == 0 with no text is a separator. */
+typedef struct {
+    const char *text;       /* '&' marks the mnemonic */
+    const char *accel;      /* right-aligned, or NULL */
+    UINT        id;
+} MItem;
+
+/* 3.1's control menu, which is what the sysmenu box has always opened.
+   Double-clicking the box closes the window; that is 3.1 too. */
+static const MItem SYSITEMS[] = {
+    { "&Restore",   NULL,     SC_RESTORE  },
+    { "&Move",      NULL,     SC_MOVE     },
+    { "&Size",      NULL,     SC_SIZE     },
+    { "Mi&nimize",  NULL,     SC_MINIMIZE },
+    { "Ma&ximize",  NULL,     SC_MAXIMIZE },
+    { NULL,         NULL,     0           },
+    { "&Close",     "Alt+F4", SC_CLOSE    },
+};
+#define NSYSITEMS ((int)(sizeof(SYSITEMS) / sizeof(SYSITEMS[0])))
+
+static const MItem DEMOITEMS[] = {
+    { "&First item",  NULL,      201 },
+    { "Second &item", "Ctrl+I",  202 },
+    { NULL,           NULL,      0   },
+    { "A&nother",     "F5",      203 },
+};
+#define NDEMOITEMS ((int)(sizeof(DEMOITEMS) / sizeof(DEMOITEMS[0])))
+
+#define POPUP_GUTTER 14     /* the checkmark column 3.1 reserves */
+#define POPUP_ITEM_H 16
+#define POPUP_SEP_H  6
+#define POPUP_PADR   18     /* space past the accelerator */
+static HMENU g_sysmenu;
+
+/* Build a popup out of a table. MF_OWNERDRAW keeps every behaviour -
+   arrow keys, mnemonics, dismissal - and hands us only the pixels. */
+static HMENU popup_from(const MItem *items, int n)
+{
+    HMENU h = CreatePopupMenu();
+    int i;
+
+    for (i = 0; i < n; i++)
+        AppendMenu(h, MF_OWNERDRAW, items[i].id, (LPCSTR)&items[i]);
+    return h;
+}
+
+static void popup_measure(MEASUREITEMSTRUCT *mis)
+{
+    const MItem *it = (const MItem *)mis->itemData;
+    HDC hdc = GetDC(NULL);
+    HFONT of = SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+    SIZE a, b;
+
+    if (!it || !it->text) {
+        mis->itemHeight = POPUP_SEP_H;
+        mis->itemWidth = 0;
+    } else {
+        GetTextExtentPoint32(hdc, it->text, lstrlen(it->text), &a);
+        b.cx = 0;
+        if (it->accel)
+            GetTextExtentPoint32(hdc, it->accel, lstrlen(it->accel), &b);
+        mis->itemHeight = POPUP_ITEM_H;
+        mis->itemWidth = POPUP_GUTTER + a.cx + (b.cx ? b.cx + 24 : 0)
+                       + POPUP_PADR;
+    }
+    SelectObject(hdc, of);
+    ReleaseDC(NULL, hdc);
+}
+
+static void popup_draw(DRAWITEMSTRUCT *dis)
+{
+    const MItem *it = (const MItem *)dis->itemData;
+    RECT r = dis->rcItem;
+    int sel = (dis->itemState & ODS_SELECTED) != 0;
+    int dis_ = (dis->itemState & ODS_GRAYED) != 0;
+    HFONT of;
+
+    if (!it || !it->text) {
+        /* 3.1's separator is etched: a shadow line with a highlight under
+           it, not a single black rule. */
+        fill(dis->hDC, &r, C_MENU);
+        hline(dis->hDC, r.left + 2, r.right - 3,
+              (r.top + r.bottom) / 2 - 1, C_SHADOW);
+        hline(dis->hDC, r.left + 2, r.right - 3,
+              (r.top + r.bottom) / 2, C_HILIGHT);
+        return;
+    }
+
+    fill(dis->hDC, &r, sel ? C_HILITE : C_MENU);
+    SetBkMode(dis->hDC, TRANSPARENT);
+    SetTextColor(dis->hDC, dis_ ? C_GRAYTEXT
+                                : (sel ? C_HILITETX : C_FRAME));
+    of = SelectObject(dis->hDC, GetStockObject(SYSTEM_FONT));
+    r.left += POPUP_GUTTER;
+    /* No DT_NOPREFIX: the '&' must become the underline. */
+    DrawText(dis->hDC, it->text, -1, &r,
+             DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    if (it->accel) {
+        RECT a = dis->rcItem;
+
+        a.right -= POPUP_PADR;
+        DrawText(dis->hDC, it->accel, -1, &a,
+                 DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+    SelectObject(dis->hDC, of);
+}
+
+/* Open the control menu under the sysmenu box, and grey what does not
+   apply - Restore is dead unless maximised, Maximize is dead when it
+   already is. 3.1 did exactly this. */
+static void sysmenu_drop(HWND hwnd)
+{
+    RECT sys, mn, mx;
+    POINT p;
+
+    btn_rects(hwnd, &sys, &mn, &mx);
+    EnableMenuItem(g_sysmenu, SC_RESTORE,
+                   MF_BYCOMMAND | (g_maxed ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(g_sysmenu, SC_MAXIMIZE,
+                   MF_BYCOMMAND | (g_maxed ? MF_GRAYED : MF_ENABLED));
+    EnableMenuItem(g_sysmenu, SC_SIZE,
+                   MF_BYCOMMAND | (g_maxed ? MF_GRAYED : MF_ENABLED));
+    p.x = sys.left;
+    p.y = sys.bottom + 1;
+    ClientToScreen(hwnd, &p);
+    TrackPopupMenu(g_sysmenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON,
+                   p.x, p.y, 0, hwnd, NULL);
+}
+
 /* Item rects along the bar, laid end to end from x=1 with MENU_PAD each
    side. Windows would normally compute these; owning the bar means owning
    the arithmetic, and it is the one place a hand-drawn menu can drift out
@@ -262,9 +399,9 @@ static void menu_paint(HWND hwnd, HDC hdc)
         int open = (i == g_open);
 
         if (open) {
-            /* 3.1 inverts an open bar item rather than tinting it. */
-            fill(hdc, &t, C_FRAME);
-            SetTextColor(hdc, C_MENU);
+            /* COLOR_HIGHLIGHT, not black. */
+            fill(hdc, &t, C_HILITE);
+            SetTextColor(hdc, C_HILITETX);
         } else {
             SetTextColor(hdc, C_FRAME);
         }
@@ -502,13 +639,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam,
         /* Real HMENUs, so the popups behave natively. In main.c these come
            straight from llm64.rc instead - the point of the spike is that
            the bar is ours and the contents are not. */
-        for (i = 0; i < NMENUS; i++) {
-            g_pop[i] = CreatePopupMenu();
-            AppendMenu(g_pop[i], MF_STRING, 100 + i * 10 + 1, "&First item");
-            AppendMenu(g_pop[i], MF_STRING, 100 + i * 10 + 2, "Second &item");
-            AppendMenu(g_pop[i], MF_SEPARATOR, 0, NULL);
-            AppendMenu(g_pop[i], MF_STRING, 100 + i * 10 + 3, "A&nother");
-        }
+        for (i = 0; i < NMENUS; i++)
+            g_pop[i] = popup_from(DEMOITEMS, NDEMOITEMS);
+        g_sysmenu = popup_from(SYSITEMS, NSYSITEMS);
         return 0;
     }
 
@@ -599,10 +732,38 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam,
                 else if (was == HIT_MAX)
                     ShowWindow(hwnd, g_maxed ? SW_RESTORE : SW_MAXIMIZE);
                 else if (was == HIT_SYS)
-                    /* 3.1's sysmenu box. The menu itself is not part of
-                       the visual question, so the spike only proves the
-                       hit lands. */
-                    MessageBeep(0);
+                    sysmenu_drop(hwnd);
+            }
+        }
+        return 0;
+
+    case WM_MEASUREITEM:
+        popup_measure((MEASUREITEMSTRUCT *)lParam);
+        return TRUE;
+
+    case WM_DRAWITEM:
+        popup_draw((DRAWITEMSTRUCT *)lParam);
+        return TRUE;
+
+    case WM_COMMAND:
+        /* The control menu's items are SC_* values, so hand them straight
+           back to the system and let it run the move/size/close loops. */
+        if (LOWORD(wParam) >= SC_SIZE && LOWORD(wParam) <= SC_CLOSE) {
+            PostMessage(hwnd, WM_SYSCOMMAND, LOWORD(wParam), 0);
+            return 0;
+        }
+        return 0;
+
+    case WM_LBUTTONDBLCLK:
+        /* Double-clicking the sysmenu box closes the window. 3.1 again. */
+        {
+            POINT d;
+
+            d.x = GET_X_LPARAM(lParam);
+            d.y = GET_Y_LPARAM(lParam);
+            if (cap_button_at(hwnd, d) == HIT_SYS) {
+                PostMessage(hwnd, WM_CLOSE, 0, 0);
+                return 0;
             }
         }
         return 0;
@@ -628,7 +789,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     (void)prev;
 
     ZeroMemory(&wc, sizeof(wc));
-    wc.style         = CS_HREDRAW | CS_VREDRAW;
+    wc.style         = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
     wc.lpfnWndProc   = WndProc;
     wc.hInstance     = inst;
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
