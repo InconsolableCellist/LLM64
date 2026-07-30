@@ -64,7 +64,7 @@ Anything that serves OpenAI-compatible Chat Completions works: llama.cpp's
 `llama-server`, LMStudio, vLLM, Ollama (if you must), OpenRouter (highly recommended) 
 or OpenAI itself
 (then `base_url = "https://api.openai.com/v1"` and a real `key`, or the
-`OPENAI_API_KEY` environment variable — every setting has an env
+`OPENAI_API_KEY` environment variable -- every setting has an env
 override). Claude is reached through `/code` mode instead, which drives
 the `claude` CLI on the proxy host, so Claude Code has to be installed and
 authenticated on the proxy machine.
@@ -81,7 +81,7 @@ Refer also to the included `config.toml.example`.
 
 `config.toml` sections (environment variables override the file):
 
-#### `[api]` — the LLM backend
+#### `[api]` -- the LLM backend
 
 | Key | Default | Env override | Meaning |
 |-----|---------|--------------|---------|
@@ -92,9 +92,9 @@ Refer also to the included `config.toml.example`.
 | `max_tokens` | `2000` | `OPENAI_MAX_TOKENS` | Reply cap |
 | `max_context_tokens` | `8192` | `OPENAI_MAX_CONTEXT` | Auto-detected from llama.cpp when possible |
 | `system_prompt` | `""` | `OPENAI_SYSTEM_PROMPT` | Prepended to chat mode |
-| `disable_thinking` | `true` | — | Suppresses Gemma/Qwen thinking blocks (thinking adds 20-25s of latency on a C64) |
+| `disable_thinking` | `true` | -- | Suppresses Gemma/Qwen thinking blocks (thinking adds 20-25s of latency on a C64) |
 
-#### `[modes]` — adventure & roleplay
+#### `[modes]` -- adventure & roleplay
 
 `user_name` (what `{{user}}` expands to in character cards), `cards_dir`
 (default `./cards`, env `LLM64_CARDS_DIR`) for SillyTavern v1/v2/v3 cards
@@ -105,59 +105,19 @@ preset is used.
 
 #### `[storage]`, `[serial]`, `[claude]`
 
-- `[storage] data_dir` (default `./data`, env `LLM64_DATA_DIR`) —
+- `[storage] data_dir` (default `./data`, env `LLM64_DATA_DIR`) --
   conversations land in `data/conversations/`, images in `data/images/`.
-- `[serial] wire_baud` (default `9600`, env `LLM64_WIRE_BAUD`) — bulk
+- `[serial] wire_baud` (default `9600`, env `LLM64_WIRE_BAUD`) -- bulk
   transfer pacing. Only a *fallback*: modern clients announce their rate
   on connect (`MSG_SET_BAUD`) and the proxy paces to that automatically,
   so this just covers clients too old to report.
-- `[claude] command`, `workdir`, `model` — the `claude` CLI invocation for
+- `[claude] command`, `workdir`, `model` -- the `claude` CLI invocation for
   `/code` mode (env `LLM64_CLAUDE_CMD`).
 
 
 ## Running the proxy
 
-### run.conf
-
-`run.sh` at the repo root starts and stops the proxy, launches the
-emulator, and deploys to real hardware. It reads your addresses from
-`run.conf` so you type them once:
-
-```bash
-cd ..            # repo root
-./run.sh config  # copies run.conf.example, then prints the settings in effect
-```
-
-**You can skip this entirely if the proxy, the model and VICE all run on
-this machine.** With no `run.conf`, `run.sh` uses `127.0.0.1:6400`, and
-`./run.sh emu-80` even starts the proxy for you when nothing is listening
-there. Set the file up when one of these is true:
-
-- **The proxy runs on another machine.** Put its address in `PROXY_HOST`.
-  This never changes what the proxy binds to — it always listens on
-  `0.0.0.0` — it tells `run.sh` where to point everything else.
-- **You deploy to a real C64.** `./run.sh c64-80` and `./run.sh install`
-  compile `PROXY_HOST` into the client as the address it dials, and the
-  C64 dials it itself: `127.0.0.1` there means *the C64*, so the dial
-  fails and the client offers F1 to fix the address. Give it the proxy
-  machine's LAN address — one the C64 can reach on its own, so not a VPN
-  or tailnet address. (What gets compiled in is only a default: booting
-  from the disk image, you retype the address in the config editor and it
-  saves into `llm64.cfg` on the disk. The bare-PRG deploys have no config
-  editor to load, so there you fix `run.conf` and deploy again.)
-- **You have a C64 Ultimate.** `C64U_HOST` is its address. Leave it empty
-  and the three hardware commands refuse to run and tell you to set it;
-  the emulator commands never look at it.
-- **You want `./run.sh status` to say whether the C64 is really
-  connected.** Point `PROXY_SSH` at the proxy host and it logs in to check.
-
-`run.sh` takes an argument over the environment (`LLM64_PROXY_HOST` and
-friends) over `run.conf` over those defaults. The file is gitignored — the
-addresses are yours, not the project's.
-
 ### Start it
-
-With run.sh: 
 
 ```bash
 ./run.sh proxy       # foreground, Ctrl-C stops it
@@ -166,50 +126,19 @@ With run.sh:
 ./run.sh status      # what's up and what isn't
 ```
 
-Or directly:
-
-```bash
-cd llm64_proxy && .venv/bin/python -m src.main --host 0.0.0.0 --port 6400
-```
-
 It listens on TCP **6400** by default, on all interfaces. Open the port if you
 run a firewall: `sudo ufw allow 6400/tcp`.
 
 ### Check it
 
-```bash
-ss -ltn | grep 6400          # on this host: is it listening?
-nc <proxy-host> 6400         # from another machine: can you reach it?
-```
-
-`ss` should print a line ending `0.0.0.0:6400`. `nc` should sit there with
-no output and no error — the proxy is waiting for a framed message, and
-that silence is success; press Ctrl-C. If `nc` returns "Connection
-refused" the proxy isn't running (or a firewall ate it: `sudo ufw allow
-6400/tcp`), and if it hangs without connecting at all, you are not on a
-network that reaches this machine. Run `nc` from something as close to the
-old hardware as you can get — the C64 and the 486 have no VPN, so a
-tailnet address that works from your workstation proves nothing.
-
-
-### Command line, and the environment
+Check that the connection opens and stays open:
 
 ```bash
-python -m src.main                              # 0.0.0.0:6400
-python -m src.main --host 127.0.0.1 --port 6400 # somewhere else
-python -m src.main -v                           # every frame, every directive
-python -m src.main --config my-config.toml      # another config file
+ss -ltn | grep 6400          # listening?
+nc <proxy-host> 6400         # reachable from elsewhere on the LAN?
 ```
-
-Environment overrides worth knowing (each shadows the file):
-`OPENAI_API_KEY`, `OPENAI_API_BASE`, `OPENAI_MODEL`, `LLM64_DATA_DIR`,
-`LLM64_PRINTER_BACKEND`, `LLM64_PRINTER_QUEUE`, `GEMINI_API_KEY`.
 
 ## Optional features
-
-All of these are inert until configured, and every one can be added long
-after the clients are running - nothing here changes anything on the C64
-or the PC. Paths in the commands below are written from the repo root.
 
 | Want | Do this |
 |------|---------|
@@ -224,22 +153,22 @@ or the PC. Paths in the commands below are written from the repo root.
 Set `[images] mode` to `ask` (the model suggests, you confirm with `/pic`),
 `auto` (striking scenes illustrate themselves, rate-limited), or `off`
 (directives ignored; explicit `/pic <desc>` still works). Optional
-`style_prefix` wraps every prompt; the default is a dark-fantasy style — set
+`style_prefix` wraps every prompt; the default is a dark-fantasy style -- set
 it to `""` if your ComfyUI workflow carries its own style. Backends
 (`[images] backend`):
 
-- **`gemini`** (Nano Banana, the default) — `[images.gemini]` with
+- **`gemini`** (Nano Banana, the default) -- `[images.gemini]` with
   `model = "gemini-2.5-flash-image"` and a key from
   [aistudio.google.com/apikey](https://aistudio.google.com/apikey), via
   `key` or the `GEMINI_API_KEY` env var.
-- **`openai`** — any `POST /v1/images/generations` server (OpenAI,
+- **`openai`** -- any `POST /v1/images/generations` server (OpenAI,
   Together, LocalAI): `base_url`, `model` (default `dall-e-3`), `size`,
   `key` (or env `LLM64_IMAGES_KEY`).
-- **`comfyui`** — a local ComfyUI instance: `url` (default
+- **`comfyui`** -- a local ComfyUI instance: `url` (default
   `http://127.0.0.1:8188`), `workflow` (an API-format JSON export
   containing the literal token `{PROMPT}` in a node input), `timeout`,
-  `randomize_seed`. No auth — keep it on a trusted LAN.
-- **`fixture`** — a fixed local image, for tests.
+  `randomize_seed`. No auth -- keep it on a trusted LAN.
+- **`fixture`** -- a fixed local image, for tests.
 
 Minimum to get pictures: install Pillow (it's in requirements.txt), set
 `mode = "ask"`, and supply a Gemini key. Then type `/pic a snake-like
@@ -248,9 +177,7 @@ green dragon with one arm lover a burningi village` on the C64 to test.
 ### Building the SID music library (the C64's music)
 
 Music activates automatically when `data/sids/moods.json` exists. No
-library ships with this repo — every tune in HVSC is copyrighted by its
-composer, and HVSC's own notice limits use to private enjoyment, so you
-build your own from your own copy. One command does the whole thing:
+library ships with this repo for copyright reasons. 
 
 ```
 # 1. Get HVSC (85 MB) from https://www.hvsc.c64.org/downloads
@@ -260,8 +187,7 @@ llm64_proxy/tools/sid_build.py --hvsc ~/Downloads/HVSC_85-all-of-them.7z
 ```
 
 `sid_build.py` runs the seven pipeline stages in order with progress and
-time estimates, and it is resumable — every stage is skipped when its
-output already exists, so an interrupted build picks up where it stopped:
+time estimates, and is resumable. 
 
 | stage | what happens | roughly |
 | --- | --- | --- |
@@ -288,13 +214,13 @@ If the proxy lives on another machine, finish with
 llm64_proxy/tools/sid_build.py --deploy user@proxyhost:/path/to/llm64_proxy
 ```
 
-which rsyncs only what the proxy reads — the database, the ranking and
-the relocated tunes, ~50 MB — and not the 457 MB HVSC tree.
+which rsyncs only what the proxy reads -- the database, the ranking and
+the relocated tunes, ~50 MB -- and not the 457 MB HVSC tree.
 
 #### Which tune is any good
 
 The tagger says what a tune is *for*; nothing in it says whether the tune
-is any *good*, and 10k tunes is ~100 hours of listening. So
+is any *good*, and 10k tunes is ~100 hours of music. So
 `tools/sid_rank.py` cross-references the library against the C64 scene's
 own published opinion, taken from the
 [DeepSID](https://deepsid.chordian.net) database dump (one 8 MB download,
@@ -302,7 +228,7 @@ no crawling):
 
 | signal | what it is |
 | --- | --- |
-| `compo` | party music-competition placings — an audience voted |
+| `compo` | party music-competition placings -- an audience voted |
 | `youtube` | tunes somebody thought worth filming |
 | `usage` | how many CSDb releases re-use the tune |
 | `composer` | DeepSID's register: the pros and the documented notables |
@@ -316,7 +242,7 @@ tools/sid_rank.py --missing 40               # best HVSC tunes NOT in the librar
 
 `ranking.json` publishes a percentile per tune ("better regarded than
 this fraction of your library") plus the reason in words. `MusicLibrary`
-loads it beside `moods.json` and weights selection by it —
+loads it beside `moods.json` and weights selection by it --
 `FLOOR + (1-FLOOR)·rank²` in `src/sid_ranking.py`, which measured on the
 real library lifts the mean regard of what actually plays from 0.52 to
 0.69 while still drawing one pick in nine from the bottom third. It is
@@ -327,26 +253,16 @@ jukebox favourites outrank all of it.
 #### What this repo does and does not carry
 
 No SID in this repository belongs to anyone else. The shareware intro's
-tune is `c64_client/intro/tune/llm64_theme.s` — a three-voice player and
-score written for this project, rebuilt with `make -C c64_client/intro
+tune is `c64_client/intro/tune/llm64_theme.s` written for this project, rebuilt with `make -C c64_client/intro
 tune`. The built library, the relocated tunes and everything else under
 `data/` stay out of git deliberately: HVSC's
 `DOCUMENTS/Disclaimer.txt` limits those tunes to private enjoyment, which
-covers your own machine and your own C64 but not redistribution — so
+covers your own machine and your own C64 but not redistribution, so
 don't publish a built library or a disk image containing one.
-
-Two HVSC files remain as end-to-end test fixtures
-(`emu/fixtures/sids/`); swapping them for the intro's own tune is a small
-change if that matters to you.
 
 #### Fixing what the tagger got wrong
 
-The tagger works from filenames and STIL notes, so it is often wrong -
-an upbeat chiptune tagged `eerie` because the game was a horror game -
-and some tunes are simply bad or relocate badly. `tools/sid_review.py`
-is the ears in that loop: it deals random tunes, plays them through
-VICE's `vsid` at the volume the C64 will use, and lets you retag, block,
-or confirm them.
+The tagger works from filenames and STIL notes, so it is often wrong, and some tunes are simply bad or relocate badly. You can use `tools/sid_review.py` to manually peruse the SIDs and rank them yourself.
 
 ```
 tools/sid_review.py                       # unheard tunes, best-regarded first
@@ -364,27 +280,10 @@ guessed at is `source: auto` at runtime; one a person heard is
 
 ### Music for the Windows client (MIDI)
 
-The Windows 3.11 client has no SID chip, and a relocated 6502 memory
-image means nothing to a 486. What that machine would actually have
-played in 1993 is a `.MID` file through the MIDI Mapper, so it gets its
-own library, built the same way from a different corpus. The moods are
-the same words - `tools/midi_mood.py` imports its vocabulary from
-`sid_mood.py` rather than copying it - so one narrator can score a
-C64 and a PC in the same adventure and neither is offered a mood it
-cannot play.
+As the Windows 3.11 client has no SID chip, MIDIs are used instead.
 
-Same licence position as the SIDs, for the same reason: every file in
-the corpus is copyrighted by whoever sequenced it, so you build your own
-from your own copy and nothing lands in git.
-
-The corpus is [VGMusic](https://www.vgmusic.com/), which is worth the
-crawl for one specific reason. HVSC gives the tagger a path; a VGMusic
-index page gives it the **game**, a **human-written song title** and the
-**sequencer's name** for every file. "Undertale / An Ending" is evidence;
-`AN_END.MID` is not.
-
-There is no single `midi_build.py` yet - four steps, run from the repo
-root:
+To get MIDIs you'll again need to process it yourself due to copyright. 
+Run these from the repo root:
 
 ```
 # 1. Fetch. ~10k files, 300 MB, roughly an hour of polite crawling.
@@ -406,15 +305,13 @@ llm64_proxy/tools/midi_makedb.py llm64_proxy/data/midi/scan.json \
     llm64_proxy/data/midi/tags.json -o llm64_proxy/data/midi/midi.json
 ```
 
-Step 3 is the long pole, exactly as the mood stage is for SIDs: budget
-several hours for a full 10k corpus. `--pilot 48` tags a small batch
+Step 3 will take a while, just like the mood stage for SIDs.
+`--pilot 48` tags a small batch
 first so you can read the results before committing to the run.
 
 #### Listening to it before you trust it
 
-The tags say what a tune is *for*. Nothing in them says whether the
-result is pleasant, which is what `tools/sid_review.py` exists for on the
-SID side. The MIDI equivalent renders the library to audio:
+You can use `tools/sid_review.py` to review and recategorize/score MIDIs:
 
 ```
 llm64_proxy/tools/midi_audition.py --per-mood 3
@@ -431,28 +328,6 @@ Rendering needs FluidSynth and a General MIDI SoundFont. Any will do;
 on Arch, `soundfont-fluid` puts `FluidR3_GM.sf2` in
 `/usr/share/soundfonts/`. Point the tool at it with `--sf2` if it is not
 under `data/midi/soundfonts/`.
-
-#### Which tune is any good, without a DeepSID
-
-The SID library weights selection by the C64 scene's own published
-opinion (above). Nothing publishes a ranking of game-music MIDI
-sequences, so `midi_makedb.py` computes a `quality` percentile from the
-file itself: velocity spread first (a human performs dynamics, a
-converter emits 100, 100, 100), then how many parts are playing, length,
-and drum balance. Like the SID ranking it is a weighting and never a
-filter. It is a weaker signal than an audience voting at a demoparty,
-and it is honest about being a proxy.
-
-#### Status
-
-Done end to end: the library and its pipeline are tested
-(`tests/test_midi_library.py`), `MIDI_BEGIN/DATA/END` carry the file to a
-`CAP_MIDI` client, and the Windows client spools it to a temp file and
-plays it through MCI's sequencer with its own transport and jukebox. What
-a win16 profile resolves to at runtime is therefore music — as long as
-`data/midi/midi.json` exists. `tools/midi_dualcheck.py` shows what both
-machines hear from one `[[MUSIC:]]` directive, against the two real
-libraries.
 
 ### Printing
 
@@ -482,41 +357,12 @@ cups_width = 0                       # 0 = share `width`; a roll is narrower
 cups_feed_lines = 0                  # blank lines to clear a tear bar
 ```
 
-**On a receipt/till roll** the defaults are wrong, because `width` is the
-C64 printer's line. An 80 mm head prints 576 dots at 203 dpi — 72 mm, about
-34 columns at 12 cpi — and a document wrapped at 78 is not re-wrapped by the
-driver, it is cropped. Give the paper leg its own layout:
-
-```toml
-cups_width = 34                                    # what actually fits
-cups_options = "cpi=12 lpi=8 PageSize=Custom.204x842"
-cups_feed_lines = 5                                # clears the tear bar
-```
-
-Env overrides: `LLM64_PRINTER_BACKEND`, `LLM64_PRINTER_QUEUE`. A `cups`
-or `both` backend with no `cups_queue`, or an unknown backend name, logs a
-warning and falls back to `c64`.
-
-**Maps and pictures.** `/print the map` prints the adventure map from
-stored state — text, so it goes to either printer, drawn to each one's
-width. `/print the picture` puts the conversation's last
-illustration on the CUPS printer — the C64's own 16-colour, 160x200
-rendering decoded from the blob it displayed, not the source image the
-model painted, ordered-halftoned to 1-bit dots (`cups_pic_scale` printer
-dots per C64 pixel, default 4). The C64 printer can't do this: the IEC
-path is a text stream, so `backend = "c64"` refuses it. Both understand
-the obvious phrasings (`/print the last image`, `/print what you drew`),
-and `/print picture 2` counts the way `/pics` lists.
-
 #### Getting CUPS going (Raspberry Pi print bridge, or the proxy host itself)
 
-The printer hangs off whichever machine runs `cupsd` — a Pi tucked behind
-the C64, or the proxy box. The network hop is IPP from the proxy to that
-machine, never to the printer.
+You can use a real printer (such as an N80 thermal printer) instead of an authentic Commodore 64 printer, and merely need to connect it to a machine capable of running CUPS (such as a Raspberry Pi near your real C64). If you wish to do so, run the following on the computer to serve as a print server: 
 
 **On the machine with the printer.** `tools/setup-printer-pi.sh` does the
-whole sequence — packages, driver, queue, sharing — with the printer
-plugged in and switched on. Copy it over (it needs only bash); `--dry-run`
+whole sequence for the N80. Copy it over (it needs only bash); `--dry-run`
 prints every command and runs none:
 
 ```bash
@@ -525,7 +371,7 @@ prints every command and runs none:
 ```
 
 `--driver` is an extracted vendor CUPS driver, needed only for printers
-that aren't driverless — e.g. the NDYIN/ZHJY N80 thermal, whose PPD +
+that aren't driverless -- e.g. the NDYIN/ZHJY N80 thermal, whose PPD +
 `rastertoN80` filter ship for armv7l/aarch64 too. For an ordinary
 network/USB laser or inkjet, leave `--driver` off and CUPS picks an
 `everywhere` profile. What the script does, if you'd rather do it by hand:
@@ -539,7 +385,7 @@ sudo cupsctl --share-printers           # skip if the proxy runs on this box
 sudo lpadmin -p n80 -o printer-is-shared=true
 ```
 
-**On the proxy host** (nothing but `lp` — no driver, no cupsd):
+**On the proxy host** (just `lp`):
 
 ```bash
 sudo apt install cups-client
@@ -550,33 +396,33 @@ Then set `backend`/`cups_queue`/`cups_server` as above and restart the
 proxy. `/print` from the C64 should produce a page (and, on `both`, the
 IEC one as well). When it doesn't:
 
-- **`lpinfo -v` lists nothing** — the printer has to be ON and awake
+- **`lpinfo -v` lists nothing** -- the printer has to be ON and awake
   (battery models enumerate as nothing when asleep), on a data USB-C cable
   rather than a charge-only one. `dmesg | tail` shows the enumeration.
-- **`printpi.local` doesn't resolve** — install `avahi-daemon` on the Pi,
+- **`printpi.local` doesn't resolve** -- install `avahi-daemon` on the Pi,
   or put the IP in `cups_server`. Different subnets also want
   `sudo cupsctl --remote-any`.
-- **The C64 says "Paper print failed: …"** — the short reason is on the
+- **The C64 says "Paper print failed: …"** -- the short reason is on the
   C64, the full `lp` error is in the proxy log. `lp not installed` = no
   cups-client on the proxy host; `no cups server` = wrong host/port, or
   cupsd isn't sharing; `no such queue` = `cups_queue` isn't the queue's
   name; `timed out` = cupsd took over 20 s to accept the job.
-- **The job says it printed but no page appeared** — a spooled job
+- **The job says it printed but no page appeared** -- a spooled job
   completes cleanly into a sleeping printer. Poke its power button, then
   check `lpstat -o` and `journalctl -u cups` on the print host.
-- **Bits of different documents dribble out minutes apart, out of order** —
+- **Bits of different documents dribble out minutes apart, out of order** --
   the printer is dropping off the USB bus and CUPS is retrying each failed
   job on a timer, so several jobs take turns printing fragments. Check
   `dmesg | grep -c over-current` and `dmesg | grep usblp` on the print
   host: a thermal head's peak draw browns out an unpowered port. Put the
   printer on a powered hub or its own supply, then `cancel -a <queue>` to
   clear the retry backlog. (A Pi 5 caps USB at 600 mA unless
-  `usb_max_current_enable=1` is set *and* the supply really offers 5 V/5 A —
+  `usb_max_current_enable=1` is set *and* the supply really offers 5 V/5 A --
   most 100 W USB-C bricks only do 100 W at 20 V.)
 
 ## Testing
 
-The unit tests are standalone scripts — no pytest, no fixtures directory:
+The unit tests are standalone scripts -- no pytest, no fixtures directory:
 
 ```bash
 .venv/bin/python tests/test_map.py          # one of them
@@ -652,4 +498,4 @@ Pillow missing from the venv.
 **Music never plays:** the library hasn't been built.
 `data/sids/moods.json` is what the C64 side waits for,
 `data/midi/midi.json` the Windows side; both are built by the tools in
-`tools/` — see [Optional features](#optional-features).
+`tools/` -- see [Optional features](#optional-features).

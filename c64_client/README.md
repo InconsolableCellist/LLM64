@@ -74,20 +74,17 @@ half the screen.
 ### In VICE (quickest)
 
 ```bash
-./run.sh emu-80                  # build, make the boot disk, launch x64sc
-./run.sh emu-80 10.0.0.5:6400    # against a proxy elsewhere, this run only
-./run.sh config                  # only if the proxy is not on this machine
+./run.sh config          # writes run.conf: PROXY_HOST / PROXY_PORT
+./run.sh emu-80          # build, make the boot disk, launch x64sc
+./run.sh emu-80 10.0.0.5:6400    # somewhere else, for this run only
 ```
 
-Run `emu-80` and you get a working client: with no `run.conf` it aims at
-`127.0.0.1:6400` and starts a proxy itself if nothing is listening there.
-Set `PROXY_HOST` in `run.conf` (`./run.sh config` creates it) when the
-proxy lives on another machine, or pass `host:port` as above for one run.
-
 The emulator build is `CONNECT=direct`: **VICE itself** opens the TCP
-connection, so the client's own config editor cannot change where it
-connects and the address you see in there is ignored. `run.conf` — or the
-argument above — decides.
+connection to the proxy, so the address in the client's own config editor
+is unused and cannot be changed from inside the program. `run.conf` — or
+the argument above — is what decides where it connects. If the configured
+proxy is this machine and nothing is listening, `run.sh` starts one for
+you.
 
 `make run-live` from the repo root is the older, plainer version of the
 same idea: it starts a proxy on `127.0.0.1:6400` from `config.toml` and
@@ -106,9 +103,10 @@ accounts for this.
 ### On a C64 Ultimate / Ultimate 64
 
 The easiest hardware path, and the one this client is developed against.
-Enable the Ultimate's FTP server (F2 → Network), then use the canonical
-deploy — the whole disk, uploaded to `/Flash` and booted by driving the
-Ultimate's own menu over its telnet port:
+Enable the Ultimate's FTP server (F2 → Network), put its address in
+`run.conf` (`C64U_HOST`), and use the canonical deploy — the whole disk,
+uploaded to `/Flash` and booted by driving the Ultimate's own menu over
+its telnet port:
 
 ```bash
 make deploy-c64u-disk-80 C64U_IP=<ultimate-ip> \
@@ -120,30 +118,25 @@ fastloader applies, the overlay modules are where the F1 menu expects
 them, and `llm64.cfg` saves persist *inside the image*. It ships
 cfg-free, so the first boot is the config editor.
 
-Two shortcuts take the same addresses out of `run.conf` instead
-(`C64U_HOST` and `PROXY_HOST`, which `./run.sh config` sets up — the
-commands stop and tell you if `C64U_HOST` is empty):
+The shortcuts, which read `run.conf` instead of taking variables:
 
 ```bash
 ./run.sh c64-80     # build the bare PRG, upload to /Flash, run it
 ./run.sh install    # build and upload the PRG to /Flash, don't run it
 ```
 
-Both deploy the PRG *alone*: quick for a code change, but with no disk
-beside it the F1 menu falls back to its compact built-in form and the
-overlay-backed items (config editor, conversation manager, jukebox, disk
-copier) report a module load failure. Deploy the disk when you want the
-whole program.
+Both of those deploy the PRG *alone*: quick for a code change, but with
+no disk beside it the F1 menu falls back to its compact built-in form and
+the overlay-backed items (config editor, conversation manager, jukebox,
+disk copier) report a module load failure. Deploy the disk when you want
+the whole program.
 
 Any other route works too — FTP the D64 to `/Flash` by hand, or carry it
 on a USB stick and mount it from the Ultimate's own menu.
 
-**The C64 dials the proxy itself**, so give it an address the *C64* can
-reach: your proxy machine's LAN address, never `127.0.0.1` (that is the
-C64) and never a VPN or tailnet address your workstation happens to
-resolve. Get it wrong from the disk image and you retype it in the config
-editor; get it wrong from a bare-PRG deploy and there is no config editor
-to load, so fix the address and deploy again.
+**Hardware dials for itself**, so unlike the emulator the proxy address
+has to be reachable *by the C64*: a VPN address that works on your
+workstation will not do.
 
 **ACIA settings** (Cartridge/IO): SwiftLink-compatible 6551 at **$DE00**,
 modem emulation on, interrupt on **NMI** — the client's NMI handler keeps
