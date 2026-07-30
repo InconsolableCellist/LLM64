@@ -2835,6 +2835,15 @@ class ProtocolHandler:
             # Adventure state block: persist the newest one in meta
             # (normalized if it parses; kept raw otherwise - still
             # useful as context next turn)
+            #
+            # Bound before the guard, and not inside it: the dispatch
+            # below reads `state` on BOTH of its paths, including the
+            # turns where no block arrived - which is every turn outside
+            # adventure mode. Leaving it unbound raises UnboundLocalError
+            # after the reply has already streamed, so the client shows a
+            # complete answer followed by a red error and "Error." in the
+            # status strip.
+            state = None
             if mfilter and mfilter.states:
                 state = mfilter.states[-1].strip()
                 try:
