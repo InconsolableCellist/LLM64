@@ -75,20 +75,9 @@ static int  g_maxed = 0;
 /* A 3.1 bevel: highlight on top and left, shadow on bottom and right.
    `out` raises the surface, !out sinks it, which is all a pressed button
    is. */
-static void bevel(HDC hdc, const RECT *r, int out)
-{
-    HBRUSH hi = CreateSolidBrush(out ? C_HILIGHT : C_SHADOW);
-    HBRUSH lo = CreateSolidBrush(out ? C_SHADOW : C_HILIGHT);
-    RECT e;
-
-    e = *r; e.bottom = e.top + 1;      FillRect(hdc, &e, hi);
-    e = *r; e.right  = e.left + 1;     FillRect(hdc, &e, hi);
-    e = *r; e.top    = e.bottom - 1;   FillRect(hdc, &e, lo);
-    e = *r; e.left   = e.right - 1;    FillRect(hdc, &e, lo);
-
-    DeleteObject(hi);
-    DeleteObject(lo);
-}
+/* Drawing primitives. Each one reproduces a structure read straight off
+   the reference capture with a pixel differ, not from memory. Every
+   offset below is measured. */
 
 static void fill(HDC hdc, const RECT *r, COLORREF c)
 {
@@ -98,100 +87,147 @@ static void fill(HDC hdc, const RECT *r, COLORREF c)
     DeleteObject(b);
 }
 
-/* A solid triangle, point up or down. 3.1's arrows are filled, not
-   outlined, and they are wider than they are tall. */
-static void triangle(HDC hdc, int cx, int cy, int up)
+/* Inclusive on both ends, because that is how the measured maps read. */
+static void hline(HDC hdc, int x0, int x1, int y, COLORREF c)
 {
-    POINT p[3];
-    HBRUSH b = CreateSolidBrush(C_FRAME);
-    HBRUSH ob;
-    HPEN op;
+    RECT r;
 
-    p[0].x = cx - 4; p[0].y = up ? cy + 2 : cy - 2;
-    p[1].x = cx + 4; p[1].y = p[0].y;
-    p[2].x = cx;     p[2].y = up ? cy - 3 : cy + 3;
-
-    ob = SelectObject(hdc, b);
-    op = SelectObject(hdc, GetStockObject(NULL_PEN));
-    Polygon(hdc, p, 3);
-    SelectObject(hdc, ob);
-    SelectObject(hdc, op);
-    DeleteObject(b);
+    r.left = x0; r.right = x1 + 1; r.top = y; r.bottom = y + 1;
+    fill(hdc, &r, c);
 }
 
-/* Where the three buttons sit. One place, so paint and hit-test can
-   never disagree - which is the usual way hand-drawn chrome goes subtly
-   wrong. */
+static void vline(HDC hdc, int x, int y0, int y1, COLORREF c)
+{
+    RECT r;
+
+    r.left = x; r.right = x + 1; r.top = y0; r.bottom = y1 + 1;
+    fill(hdc, &r, c);
+}
+
+/* A 3.1 caption button: flat face, a ONE px highlight along the top and
+   left, and a TWO px shadow along the right and bottom.
+ *
+ * The shadow is drawn after the highlight on purpose. That ordering is
+ * what produces the diagonal corners the reference has - highlight wins
+ * at (left, bottom-1) while shadow wins at (right, top) - and doing it
+ * the other way round is a difference you can measure but never see.
+ */
+static void raised_box(HDC hdc, const RECT *bx, int pressed)
+{
+    int l = bx->left, t = bx->top, r = bx->right - 1, bo = bx->bottom - 1;
+    COLORREF hi = pressed ? C_SHADOW : C_HILIGHT;
+    COLORREF lo = pressed ? C_HILIGHT : C_SHADOW;
+
+    fill(hdc, bx, C_FACE);
+    hline(hdc, l, r, t, hi);
+    vline(hdc, l, t, bo, hi);
+    hline(hdc, l, r, bo, lo);
+    vline(hdc, r, t, bo, lo);
+    hline(hdc, l + 1, r, bo - 1, lo);
+    vline(hdc, r - 1, t + 1, bo, lo);
+}
+
+/* The sysmenu box is NOT a button. It has no bevel at all - just the face
+   colour - and only the glyph inside is drawn: a 13x3 bar with a black
+   outline, a single white row inside it, and a drop shadow offset one
+   pixel down and right. Every retro mock-up draws a minus sign here. */
+static void sysmenu_box(HDC hdc, const RECT *bx)
+{
+    int l = bx->left, t = bx->top;
+
+    fill(hdc, bx, C_FACE);
+    /* shadow first, so the outline sits on top of it where they meet */
+    vline(hdc, l + 15, t + 8, t + 9, C_SHADOW);
+    hline(hdc, l + 3, l + 15, t + 10, C_SHADOW);
+    hline(hdc, l + 2, l + 14, t + 7, C_FRAME);
+    hline(hdc, l + 2, l + 14, t + 9, C_FRAME);
+    vline(hdc, l + 2, t + 7, t + 9, C_FRAME);
+    vline(hdc, l + 14, t + 7, t + 9, C_FRAME);
+    hline(hdc, l + 3, l + 13, t + 8, C_HILIGHT);
+}
+
+/* Four rows, 7-5-3-1 px wide, solid black. Deliberately not Polygon():
+   at this size the rasteriser's triangle is not the reference's shape,
+   and the difference is a third of the glyph. */
+static void arrow(HDC hdc, int apex_x, int top, int up)
+{
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        int w = up ? 1 + i * 2 : 7 - i * 2;
+
+        hline(hdc, apex_x - w / 2, apex_x + w / 2, top + i, C_FRAME);
+    }
+}
+
+/* Where the three boxes sit. Measured: each arrow button has a 1 px black
+   separator on its LEFT and nothing on its right, so the navy runs
+   straight up to the minimise button's highlight. */
 static void btn_rects(HWND hwnd, RECT *sys, RECT *mn, RECT *mx)
 {
     RECT rc;
-    int top = FRAME_W();
-    int bot = FRAME_W() + CAP_H;
+    int f = FRAME_W();
 
     GetClientRect(hwnd, &rc);
 
-    sys->left = FRAME_W();      sys->right = FRAME_W() + BTN_W;
-    mx->right = rc.right - FRAME_W();   mx->left  = mx->right - BTN_W;
-    mn->right = mx->left;           mn->left  = mn->right - BTN_W;
+    sys->left  = f;                 sys->right = f + BTN_W;
+    mx->right  = rc.right - f;      mx->left   = mx->right - BTN_W;
+    mn->right  = mx->left - 1;      mn->left   = mn->right - BTN_W;
 
-    sys->top = mn->top = mx->top = top;
-    sys->bottom = mn->bottom = mx->bottom = bot;
+    sys->top = mn->top = mx->top = f;
+    sys->bottom = mn->bottom = mx->bottom = f + CAP_H;
 }
 
 static void cap_paint(HWND hwnd, HDC hdc)
 {
     RECT rc, r, sys, mn, mx;
     int active = (GetActiveWindow() == hwnd);
+    int f = FRAME_W();
     char title[128];
     int n;
     HFONT of;
 
     GetClientRect(hwnd, &rc);
 
-    /* The sizing border: one black line outside, a raised bevel inside.
-       3.1's frame is thick because it is the resize grip. Skipped entirely
-       when maximised, where there is no border to grip. */
-    if (FRAME_W()) {
-        HBRUSH b = CreateSolidBrush(C_FRAME);
+    /* The sizing border: a black line outside, a raised bevel inside.
+       Skipped when maximised, where 3.1 has no border to grip - which is
+       also why the reference cannot verify this part at all. */
+    if (f) {
+        HBRUSH k = CreateSolidBrush(C_FRAME);
 
         r = rc;
         fill(hdc, &r, C_FACE);
-        FrameRect(hdc, &r, b);
-        DeleteObject(b);
+        FrameRect(hdc, &r, k);
+        DeleteObject(k);
         r = rc;
         InflateRect(&r, -1, -1);
-        bevel(hdc, &r, 1);
+        hline(hdc, r.left, r.right - 1, r.top, C_HILIGHT);
+        vline(hdc, r.left, r.top, r.bottom - 1, C_HILIGHT);
+        hline(hdc, r.left, r.right - 1, r.bottom - 1, C_SHADOW);
+        vline(hdc, r.right - 1, r.top, r.bottom - 1, C_SHADOW);
     }
-    (void)n;
 
-    /* Caption. */
-    r.left   = FRAME_W();
-    r.right  = rc.right - FRAME_W();
-    r.top    = FRAME_W();
-    r.bottom = FRAME_W() + CAP_H;
+    /* Caption: one flat colour, no gradient. */
+    r.left = f; r.right = rc.right - f;
+    r.top  = f; r.bottom = f + CAP_H;
     fill(hdc, &r, active ? C_ACTIVE : C_INACTIVE);
 
-    /* The 1 px black rule under it, full width inside the frame. */
-    r.top = FRAME_W() + CAP_H;
-    r.bottom = r.top + RULE;
-    fill(hdc, &r, C_FRAME);
+    hline(hdc, f, rc.right - f - 1, f + CAP_H, C_FRAME);
 
     btn_rects(hwnd, &sys, &mn, &mx);
 
-    /* Title, centred - the single most recognisable 3.1 tell. Windows 95
-       moved it left and every "retro" UI since has copied 95.
-
-       Centred across the WHOLE caption, not across the gap between the
-       button clusters. The gap is asymmetric - one button on the left,
-       two on the right - so centring in it lands the title about 10 px
-       right of where 3.1 puts it. That was visible the moment the two
-       captions were stacked, and invisible before. */
+    /* Title. Centred in the GAP between the two button clusters, which is
+       NOT centred on the caption: the clusters are asymmetric - one box
+       left, two right - so the gap's centre sits about 10 px left of the
+       window's. Measured, after getting this backwards once. The
+       reference's text starts at x=481 on a 1024-wide screen and only the
+       gap puts it there. */
     n = GetWindowText(hwnd, title, sizeof(title) - 1);
     title[n < 0 ? 0 : n] = '\0';
-    r.left   = FRAME_W();
-    r.right  = rc.right - FRAME_W();
-    r.top    = FRAME_W();
-    r.bottom = FRAME_W() + CAP_H;
+    r.left   = sys.right + 1;
+    r.right  = mn.left - 1;
+    r.top    = f;
+    r.bottom = f + CAP_H;
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, active ? C_ACTTEXT : C_INACTTEXT);
     of = SelectObject(hdc, GetStockObject(SYSTEM_FONT));
@@ -199,84 +235,48 @@ static void cap_paint(HWND hwnd, HDC hdc)
              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     SelectObject(hdc, of);
 
-    /* The buttons. Each is a raised C0C0C0 face with a black line facing
-       the navy, so the cluster reads as separated from the caption. */
-    {
-        RECT *all[3];
-        int i;
+    sysmenu_box(hdc, &sys);
+    if (g_down == HIT_SYS) {
+        RECT p = sys;
 
-        all[0] = &sys; all[1] = &mn; all[2] = &mx;
-        for (i = 0; i < 3; i++) {
-            RECT b = *all[i];
-            int pressed = (g_down == (i == 0 ? HIT_SYS
-                                             : i == 1 ? HIT_MIN : HIT_MAX));
+        InflateRect(&p, -1, -1);
+        FrameRect(hdc, &p, GetStockObject(GRAY_BRUSH));
+    }
+    raised_box(hdc, &mn, g_down == HIT_MIN);
+    raised_box(hdc, &mx, g_down == HIT_MAX);
 
-            fill(hdc, &b, C_FACE);
-            bevel(hdc, &b, !pressed);
-            if (pressed)
-                OffsetRect(&b, 1, 1);
-
-            if (i == 0) {
-                /* Sysmenu: a white bar with a black outline. Not a minus
-                   sign, and not the 95 icon that replaced it. */
-                RECT g;
-                int cx = (b.left + b.right) / 2;
-                int cy = (b.top + b.bottom) / 2;
-                HBRUSH k = CreateSolidBrush(C_FRAME);
-
-                g.left = cx - 6; g.right = cx + 6;
-                g.top  = cy - 3; g.bottom = cy + 3;
-                fill(hdc, &g, C_HILIGHT);
-                FrameRect(hdc, &g, k);
-                DeleteObject(k);
-            } else if (i == 1) {
-                triangle(hdc, (b.left + b.right) / 2,
-                         (b.top + b.bottom) / 2, 0);
-            } else if (g_maxed) {
-                /* Maximised: BOTH arrows. This is 3.1's restore glyph and
-                   it is what the reference capture shows, because that
-                   window was maximised. */
-                triangle(hdc, (b.left + b.right) / 2,
-                         (b.top + b.bottom) / 2 - 4, 1);
-                triangle(hdc, (b.left + b.right) / 2,
-                         (b.top + b.bottom) / 2 + 4, 0);
-            } else {
-                triangle(hdc, (b.left + b.right) / 2,
-                         (b.top + b.bottom) / 2, 1);
-            }
-        }
-        /* Separators, measured off the reference: one black column to the
-           right of the sysmenu box, one between the two arrows, and none
-           to the LEFT of the minimise button - there the navy runs
-           straight into the button's white highlight. */
-        r = sys; r.left = r.right; r.right = r.left + 1;
-        fill(hdc, &r, C_FRAME);
-        r = mx; r.right = r.left; r.left = r.right - 1;
-        fill(hdc, &r, C_FRAME);
+    arrow(hdc, mn.left + 8, mn.top + 7, 0);
+    if (g_maxed) {
+        arrow(hdc, mx.left + 8, mx.top + 4, 1);
+        arrow(hdc, mx.left + 8, mx.top + 10, 0);
+    } else {
+        arrow(hdc, mx.left + 8, mx.top + 7, 1);
     }
 
+    vline(hdc, sys.right, sys.top, sys.bottom - 1, C_FRAME);
+    vline(hdc, mn.left - 1, mn.top, mn.bottom - 1, C_FRAME);
+    vline(hdc, mx.left - 1, mx.top, mx.bottom - 1, C_FRAME);
+
     /* Client area, with a note so the screenshot explains itself. */
-    r.left   = FRAME_W();
-    r.right  = rc.right - FRAME_W();
-    r.top    = FRAME_W() + CAP_H + RULE;
-    r.bottom = rc.bottom - FRAME_W();
+    r.left   = f;
+    r.right  = rc.right - f;
+    r.top    = f + CAP_H + RULE;
+    r.bottom = rc.bottom - f;
     fill(hdc, &r, C_CLIENT);
     SetTextColor(hdc, RGB(0, 0, 0));
     of = SelectObject(hdc, GetStockObject(SYSTEM_FIXED_FONT));
     InflateRect(&r, -8, -8);
     DrawText(hdc,
              "Tier 2 spike.\r\n\r\n"
-             "This caption is drawn by the program, not by Windows:\r\n"
-             "centred System-font title, sysmenu bar glyph, a down\r\n"
-             "arrow and an up arrow, flat #000080, and no close\r\n"
-             "button - because Windows 3.1 does not have one.\r\n\r\n"
+             "This caption is drawn by the program, not by Windows, and\r\n"
+             "every metric in it was measured off a real 3.11 capture\r\n"
+             "with a pixel differ rather than remembered.\r\n\r\n"
              "Drag the caption. Drag any edge or corner to resize.\r\n"
              "The buttons work. The corners are square on Windows 11.",
              -1, &r, DT_LEFT | DT_TOP | DT_NOPREFIX);
     SelectObject(hdc, of);
 }
 
-/* Which of our own buttons is under a CLIENT-space point. */
 static int cap_button_at(HWND hwnd, POINT pt)
 {
     RECT sys, mn, mx;
@@ -361,6 +361,31 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam,
         if (wParam)
             return 0;
         break;
+
+    /* A maximised WS_THICKFRAME window is sized LARGER than the work area
+       on purpose - the sizing frame is meant to hang off the screen edges.
+       We removed that frame in WM_NCCALCSIZE, so without this the whole
+       caption slides right by the frame width and the maximise button ends
+       up past the right edge of the monitor. Pinning the maximised rect to
+       the work area is exact and needs no frame metrics.
+
+       Measured as 6 px on this machine - precisely the kind of thing that
+       is invisible by eye and obvious to a pixel differ. */
+    case WM_GETMINMAXINFO: {
+        MINMAXINFO *mmi = (MINMAXINFO *)lParam;
+        MONITORINFO mi;
+
+        mi.cbSize = sizeof(mi);
+        if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                           &mi)) {
+            mmi->ptMaxPosition.x = mi.rcWork.left - mi.rcMonitor.left;
+            mmi->ptMaxPosition.y = mi.rcWork.top - mi.rcMonitor.top;
+            mmi->ptMaxSize.x = mi.rcWork.right - mi.rcWork.left;
+            mmi->ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top;
+            mmi->ptMaxTrackSize = mmi->ptMaxSize;
+        }
+        return 0;
+    }
 
     case WM_NCHITTEST:
         return cap_hittest(hwnd, lParam);
