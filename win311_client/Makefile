@@ -75,7 +75,7 @@ PORT ?= 6400
 VMHOST ?= 10.0.2.2
 VMPORT ?= 6410
 
-.PHONY: all both run run32 devproxy test floppy vm-in vm-out clean
+.PHONY: all both run run32 spike run-spike devproxy test floppy vm-in vm-out clean
 
 all: $(EXE)
 
@@ -100,6 +100,18 @@ $(EXE32): $(W32OBJ) $(RC) | build/w32
 
 run32: $(EXE32)
 	WINEPREFIX=$(WINEPREFIX) WINEDEBUG=-all wine $(EXE32) $(HOST) $(PORT)
+
+# Tier 2 spike: the 3.1 frame, drawn by us. Standalone on purpose - see
+# the header of spike/caption.c. Win32 only; there is nothing to prove on
+# the 16-bit target, where the OS already draws this correctly.
+spike: build/CAPSPIKE.EXE
+
+build/CAPSPIKE.EXE: spike/caption.c | build/w32
+	$(W32CC) $(W32CFLAGS) -o $@ $< -lgdi32 -luser32
+	@echo "-> $@"
+
+run-spike: build/CAPSPIKE.EXE
+	WINEPREFIX=$(WINEPREFIX) WINEDEBUG=-all wine build/CAPSPIKE.EXE
 
 build/%.obj: src/%.c | build
 	$(OWBIN)/wcc $(CFLAGS) -fo=$@ $<
