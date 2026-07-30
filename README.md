@@ -1,12 +1,14 @@
 # LLM64
 
-LLM64 is a Commodore 64 program that allows you to play an infinite D&D style
-text adventure with a local (or remote) Large Language Model like Gemma 4, ChatGPT, 
-Claude, Grok, etc.
+LLM64 lets a 1982 Commodore 64 — or a 1993 Windows 3.11 PC — play an
+infinite D&D-style text adventure with a local (or remote) Large Language
+Model like Gemma 4, ChatGPT, Claude or Grok.
 
 ![Status](https://img.shields.io/badge/status-working-brightgreen)
-![Platform](https://img.shields.io/badge/platform-C64%20%2F%20VICE%20%2F%20C64%20Ultimate-red)
+![Platform](https://img.shields.io/badge/clients-C64%20%2F%20C64%20Ultimate%20%2F%20VICE-red)
+![Platform](https://img.shields.io/badge/clients-Windows%203.1%20%2F%203.11%20%2F%2095-blue)
 ![Language](https://img.shields.io/badge/c64-C%2FASM%20(cc65)-orange)
+![Language](https://img.shields.io/badge/win16-C%20(Open%20Watcom)-orange)
 ![Language](https://img.shields.io/badge/proxy-Python%203.10%2B-green)
 
 It has the following main features:
@@ -14,40 +16,66 @@ It has the following main features:
 1. Chat with an AI Assistant personality, the raw model, or with SillyTavern-compatible
    character cards
 2. Play a fully interactive, custom, D&D style text adventure, with the narrator
-   streaming SID music, the occasional C64-style image, and keeping track of a map
+   streaming period-appropriate music, the occasional period-appropriate
+   image, and keeping track of a map and your character sheet
 3. Integrate with Claude Code and drive the session (even updating itself!)
 4. Intelligently print any content (e.g., "/print my character sheet" or 
    "/print please give me a summary of the story so far, with plot points and
    the result of combat" or "/print the complete recipe we just discussed")
 
-The program fits this all into RAM by breaking some features into modules, which 
-load from a real or emulated C64 disk drive. 
-
-The communication to the LLM happens, critically, through a proxy server that the C64
-must talk to via a SwiftLink-compatible userport MODEM (included in the C64U and Vice).
-
-Configuration settings are below, but set your MODEM to $DE00 with NMI. 9600, 19200, or 38400
-baud is supported (the proxy auto-detects your selected speed).
+Everything runs through one **proxy** — a small Python server on a modern
+machine that holds the conversations, talks to the model, converts the
+images, and streams the music. The clients are period programs that speak
+one binary protocol to it, and nothing else.
 
 ```
-┌─────────────────┐         ┌──────────────┐         ┌──────────────────┐
-│  C64 / VICE /   │  TCP    │ Linux proxy  │  HTTPS  │ OpenAI-compatible│
-│  C64 Ultimate   │ ◄─────► │  (Python,    │ ◄─────► │ API (llama.cpp,  │
-│                 │ 19200bd │   asyncio)   │   SSE   │ OpenAI, Ollama…) │
-└─────────────────┘         └──────────────┘         └──────────────────┘
+┌─────────────────┐  TCP over
+│  C64 / VICE /   │  a SwiftLink ACIA ┐
+│  C64 Ultimate   │  (9600-38400 bd)  │   ┌──────────────┐         ┌──────────────────┐
+└─────────────────┘                   ├──►│ Linux proxy  │  HTTPS  │ OpenAI-compatible│
+┌─────────────────┐                   │   │  (Python,    │ ◄─────► │ API (llama.cpp,  │
+│ Windows 3.1 /   │  TCP over         │   │   asyncio)   │   SSE   │ OpenAI, Ollama…) │
+│ 3.11 / 95 PC    │  Winsock 1.1     ─┘   └──────────────┘         └──────────────────┘
+└─────────────────┘
 ```
+
+## The two clients
+
+| | |
+|---|---|
+| ![The C64 client in an adventure](screenshots/c64_client.png) | ![The Windows 3.11 client](screenshots/win311_client.png) |
+| The C64, in 80 columns of soft-80 bitmap | the same adventure on a Windows 3.11 desk |
+
+| | [**C64** →](c64_client/README.md) | [**Windows 3.11** →](win311_client/README.md) |
+|---|---|---|
+| Runs on | a real C64/C128, a C64 Ultimate, or VICE | a real 386/486, a VM, or Wine |
+| Built with | cc65 (C + 6502 asm) | Open Watcom V2, cross-compiled from Linux |
+| Talks to the proxy through | a SwiftLink-compatible 6551 ACIA at `$DE00`, dialling Hayes AT | a TCP socket, Winsock 1.1 |
+| Screen | 80 columns of soft-80 bitmap on a 64 KB machine | MDI: a desk of windows you arrange |
+| Pictures | 160x200 multicolour, Pepto palette, dithered | 320x200 8-bit DIB, period palette, dithered |
+| Music | SIDs relocated to `$B000` and streamed into RAM | `.MID` files through the MIDI Mapper |
+| `/print` | a real printer on IEC device 4 (or the proxy's CUPS queue) | virtual paper in a Notebook window |
+| Install steps | [c64_client/README.md](c64_client/README.md) | [win311_client/README.md](win311_client/README.md) |
+
+Both are equal clients of the same proxy, at the same time, in the same
+adventure: `docs/16` §7 covers how the proxy serves each machine what it
+can actually eat. The C64 came first and is the reason any of this exists;
+the Windows client exists because once the modem was really a socket, the
+6510 was the only thing that had needed one.
 
 ## Using it
 
-Launch the program by mounting the disk image or real disk on your C64
-(`LOAD"*",8,1`), which then loads modules from that same disk. A fastloader or 
-JiffyDOS is of course highly recommended. On initial startup it'll initialize
-your Hayes-compatible MODEM and then ask you for the IP address and port of 
-the LLM64_Proxy running
-on your network (you can change this later with the F1 menu). After
-connecting, you can hit F1 to browse the various features, or press F5 to
-quickly get to a sortable list of your past conversations/roleplays/
-adventures.
+Start the proxy first ([install steps below](#installing-the-proxy)), then
+whichever machine you're using.
+
+**On the C64**, launch the program by mounting the disk image or real disk
+(`LOAD"*",8,1`), which then loads modules from that same disk. A
+fastloader or JiffyDOS is of course highly recommended. On initial startup
+it'll initialize your Hayes-compatible MODEM and then ask you for the IP
+address and port of the LLM64_Proxy running on your network (you can
+change this later with the F1 menu). After connecting, you can hit F1 to
+browse the various features, or press F5 to quickly get to a sortable list
+of your past conversations/roleplays/adventures.
 
 Use `/help` and press return to get more help. Press F4 and F6 to page
 up/down, and the cursor keys to scroll.
@@ -64,6 +92,15 @@ display a "!P" to indicate a picture is waiting for you in adventure mode
 It may also display "PIC:n" where `n` is the number of pics generated in that
 adventure (when no new picture is waiting for you to view it).
 
+**On the Windows 3.11 client**, run `LLM64.EXE` with `LLM64.INI` beside
+it; it connects on startup to the address in that file (Settings ▸
+Server… changes it from inside the program). The same slash commands work,
+and everything the C64 crowds onto one screen gets a window of its own —
+picture, music, character sheet, items, notebook, map — off a launcher
+strip, each window remembering where you last put it. The status strip
+carries the client's own state on the left and the proxy's chrome (place,
+now playing) on the right.
+
 ### Pictures
 
 Pictures are generated by configuring the LLM64_Proxy to hit an image
@@ -75,7 +112,13 @@ to indicate that the adventure-mode narrator should generate a picture for
 you now. Images are converted to C64 multicolor (160×200, Pepto palette,
 Floyd–Steinberg dither) with an LLM-written caption burned into the frame.
 
+One generation, two renderings: the Windows client gets the same picture
+as a 320×200 8-bit DIB (Mode 13h dimensions, a fixed period palette,
+Floyd–Steinberg against it) rather than the C64's 16-colour blob.
+
 You can browse past pictures associated with the current conversation using `/pics`
+
+![A generated scene on the C64: multicolour bitmap with the caption burned in](screenshots/c64_pic.png)
 
 ### Music
 
@@ -92,6 +135,11 @@ also preprocessed to reside at the proper address, and are volume normalized.
 I've automated the assignment of moods based on the game title, but some of them
 are mis-sorted, which I'm working through (hopefully).
 
+A 486 has no SID, so the Windows client gets `.MID` files through the MIDI
+Mapper from a separate, identically mood-tagged library — same vocabulary,
+so one narrator can score both machines in the same adventure. Building it
+is [below](#music-for-the-windows-client-midi).
+
 ### Conversations, Misc.
 
 All conversations are viewable on the LLM64_Proxy in the
@@ -101,6 +149,10 @@ The program also contains a small utility to copy itself to a blank disk in
 another drive, accessible in the F1 menu.
 
 ## Keys and commands
+
+![The F1 menu, fed by the proxy, over a list of past pictures](screenshots/c64_menu.png)
+
+On the C64:
 
 | Key | Action |
 |-----|--------|
@@ -121,100 +173,137 @@ another drive, accessible in the F1 menu.
 LLM64 implements its own keyboard scanning that generally allows for
 n-key rollover and typing speed of around 150 WPM.
 
-## Installation
+The Windows client takes the same slash commands, and puts the rest on
+menus: `Ctrl+1..7` toggle the desk's windows, F1 is the server-fed menu as
+a box of buttons, F5 the conversation browser.
 
-### 1. The proxy
+## Installing the proxy
 
-Requires Python 3.10+.
+Every client needs this and nothing else, so do it first. It wants
+Python 3.10+ on a machine the old hardware can reach; the base install is
+about two minutes, and each optional part below (images, music, printing)
+can be added later without touching the clients.
+
+### 1. Clone, venv, dependencies
 
 ```bash
-cd llm64_proxy
+git clone https://github.com/InconsolableCellist/c64_llm.git
+cd c64_llm/llm64_proxy
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt      # httpx, toml, Pillow
-cp config.toml.example config.toml             # then point it at your API
 ```
 
-Run it:
+Three packages, and that's the whole base install: `httpx` for the model,
+`toml` for the config, `Pillow` for the picture conversion. No database,
+no service, nothing system-wide.
+
+### 2. Write a config
 
 ```bash
-./run.sh proxy       # foreground, from the repo root
-./run.sh proxy-bg    # background, logs to llm64_proxy/proxy-live.log
-./run.sh stop        # stop the background proxy
+cp config.toml.example config.toml
+$EDITOR config.toml
 ```
 
-(or directly: `cd llm64_proxy && .venv/bin/python -m src.main --host 0.0.0.0
---port 6400`). The proxy listens on TCP port 6400 by default.
+The one section that must be right is `[api]`:
 
-Point `[api]` in `config.toml` at any OpenAI-compatible Chat Completions
-endpoint, such as llama.cpp's `llama-server`, LMStudio, Ollama (if you must),
-or OpenAI itself.
-Local servers need no API key. Claude is reached via `/code` mode instead,
-which drives the `claude` CLI on the proxy host (Claude Code must be
-installed and authenticated there). 
+```toml
+[api]
+base_url = "http://192.168.1.10:5000/v1"   # any OpenAI-compatible endpoint
+key = "none"                               # local servers need no key
+model = "gemma-3-27b-it"
+max_context_tokens = 8192
+```
 
-### 2. The C64 side
+Anything that serves OpenAI-compatible Chat Completions works: llama.cpp's
+`llama-server`, LMStudio, vLLM, Ollama (if you must), or OpenAI itself
+(then `base_url = "https://api.openai.com/v1"` and a real `key`, or the
+`OPENAI_API_KEY` environment variable — every setting has an env
+override). Claude is reached through `/code` mode instead, which drives
+the `claude` CLI on the proxy host, so Claude Code has to be installed and
+authenticated *there*.
 
-**Emulator (VICE):** 
-Nothing beats real hardware (which, arguably, a C64U still is), but VICE
-is a fine way to run this.
+Without a `config.toml` the proxy still starts and still accepts clients —
+and then every reply fails with an API error, which is the single most
+common "it's broken" report.
 
-You'll need `cc65`, `vice` (x64sc), `python3`, and
-`tcpser` for the Hayes-mode test. VICE can be a distro package or the
-`net.sf.VICE` flatpak
+The full option reference is [Configuration](#configuration-proxy) below.
+
+### 3. Name the proxy once, for the helper scripts
 
 ```bash
-make test-all       # run the automated suites (only needed for development)
-make run-live       # run
+cd ..            # repo root
+./run.sh config  # writes run.conf, then prints what it will use
 ```
 
-**C64 Ultimate:**
-This is certainly the easiest way to run the program while also being extremely
-authentic. The C64U comes with emulation/recreation of a SwiftLink userport
-MODEM. See **ACIA Setup** below for all settings.
+`run.conf` holds `PROXY_HOST` / `PROXY_PORT` (and `C64U_HOST`, if you have
+a C64 Ultimate). Everything in `run.sh` and both clients' deploy targets
+read it, so the address lives in one place.
 
-I also recommend enabling the FTP server on the C64U to make it easier to
-deploy the disk image, which you can do like so:
-
-1. Adjust your C64U IP in the Makefile, then
-2. Run:
+### 4. Start it
 
 ```bash
-make deploy-c64u-disk-80   # build, make the d64, mount + run on the U64
+./run.sh proxy       # foreground, Ctrl-C stops it
+./run.sh proxy-bg    # background; log in llm64_proxy/proxy-live.log
+./run.sh stop        # stop the background one
+./run.sh status      # what's up and what isn't
 ```
 
-Or use an FTP client to copy the included .d64 disk image to your C64U's
-/Flash storage (or use another method, like putting it on a USB drive).
+Or directly, if you'd rather not use the launcher:
 
-Everything ships as one disk image: `make -C c64_client disk` produces
-`build/llm64.d64` holding the client (`LOAD"*",8,1` boots it) and the
-overlay modules. On first boot the config editor asks for the
-proxy address and the wire speed, and saves `llm64.cfg` back onto the disk
-itself; from then on the disk carries its own settings (edit any time via
-F1 → E). The baked `SERVER_IP` is only the pre-filled default.
+```bash
+cd llm64_proxy && .venv/bin/python -m src.main --host 0.0.0.0 --port 6400
+```
 
-Note: the overlay modules are linked against their exact PRG — they always
-travel together on the disk, never mix builds.
+It listens on TCP **6400** by default, on all interfaces — the old machine
+dials in, so `0.0.0.0` (not loopback) is the point. Open the port if you
+run a firewall: `sudo ufw allow 6400/tcp`.
 
-**ACIA setup** (Ultimate Cartridge/IO settings): SwiftLink-compatible 6551
-at **$DE00**, MODEM emulation on, and interrupt set to **NMI** (recommended, 
-as the client's NMI handler keeps draining the ACIA through disk loads and
-SID playback, which is what makes the higher rates reliable; IRQ works too
-and is what VICE uses). Modem settings that matter: disable *drop connection
-on DTR low* and *RTS handshake RX*, enable *automatic RX pushback* — the
-emulated control lines are re-evaluated on ACIA command writes and the wrong
-settings drop data.
+### 5. Check it before involving a 40-year-old computer
 
-**Wire speed** (F1 → E → *Speed*): pick **9600 / 19200 / 38400** — these are
-the real hardware rates. SwiftLink's crystal doubles the 6551's baud table,
-and that doubling is already baked into the labels, so what you pick is what
-you get; there is nothing to halve or compute, and nothing to set on the
-Ultimate's modem side (it follows the ACIA) or on the proxy (the client
-reports its rate on connect and the proxy tunes its pacing to match). If a
-rate garbles or drops data on your cartridge/firmware, step it down and
-reboot. (On the VICE emulator there is no doubled crystal, so a setting runs
-at half its label; the development test harness accounts for that.)
+```bash
+ss -ltn | grep 6400          # listening?
+nc <proxy-host> 6400         # reachable from elsewhere on the LAN?
+```
 
-Full checklist: [docs/05-ultimate-setup.md](docs/05-ultimate-setup.md).
+A connection that opens and stays open is the proxy waiting for a framed
+message. That is all the confirmation you need — the client will do the
+talking.
+
+### 6. Optional, in the order most people want them
+
+| Want | Do this |
+|------|---------|
+| **Pictures** | A `[images]` backend and a key — one Gemini key is the shortest path. [Image generation](#image-generation) |
+| **Music on the C64** | Build a SID library from your own HVSC copy: one resumable command. [Building the SID music library](#building-the-sid-music-library-the-c64s-music) |
+| **Music on the PC client** | Build a MIDI library from VGMusic: four steps. [Music for the Windows client](#music-for-the-windows-client-midi) |
+| **Paper** | A printer on the C64's IEC bus needs nothing here; a modern printer needs `lp` and a CUPS queue. [Printing](#printing) |
+| **`/code`** | Claude Code installed and authenticated on this host, then `[claude]` |
+
+Conversations, images and libraries all land under
+`llm64_proxy/data/` (`[storage] data_dir`), which is deliberately outside
+git — see [what this repo does and does not carry](#what-this-repo-does-and-does-not-carry).
+
+Proxy-side reference and troubleshooting also live in
+[llm64_proxy/README.md](llm64_proxy/README.md).
+
+## Installing a client
+
+Each client has its own README, because the toolchain, the deploy route
+and the hardware settings have nothing in common. Both assume the proxy
+above is already running.
+
+- **[c64_client/README.md](c64_client/README.md)** — cc65 build, the
+  bootable D64, running in VICE, deploying to a C64 Ultimate over FTP, the
+  ACIA/`$DE00`/NMI settings, wire speed, and what a real breadbin needs.
+- **[win311_client/README.md](win311_client/README.md)** — the Open Watcom
+  cross-build, `make test`/`make run` under Wine, the floppy image for a
+  VM, and what to install on a real 386/486 (Winsock, MIDI, 256-colour
+  driver).
+
+The short version, if you just want to see it move: `./run.sh emu-80`
+builds the C64 client and launches VICE against your configured proxy;
+`cd win311_client && make test && make run` does the equivalent for the
+Windows client under Wine.
 
 ## Configuration (proxy)
 
@@ -281,7 +370,7 @@ Minimum to get pictures: install Pillow (it's in requirements.txt), set
 `mode = "ask"`, and supply a Gemini key. Then type `/pic a snake-like
 green dragon with one arm lover a burningi village` on the C64 to test.
 
-### Music
+### Building the SID music library (the C64's music)
 
 Music activates automatically when `data/sids/moods.json` exists. No
 library ships with this repo — every tune in HVSC is copyrighted by its
@@ -481,13 +570,14 @@ and it is honest about being a proxy.
 
 #### Status
 
-The library and the pipeline are built and tested
-(`tests/test_midi_library.py`). The wire side - `MIDI_BEGIN/DATA/END`
-and the client's MCI player - is phase 5 of
-[docs/16](docs/16-windows-311-client.md) and is not done, so the win16
-profile still resolves to no music at runtime. `tools/midi_dualcheck.py`
-shows what both machines *would* hear from one `[[MUSIC:]]` directive,
-against the two real libraries.
+Done end to end: the library and its pipeline are tested
+(`tests/test_midi_library.py`), `MIDI_BEGIN/DATA/END` carry the file to a
+`CAP_MIDI` client, and the Windows client spools it to a temp file and
+plays it through MCI's sequencer with its own transport and jukebox. What
+a win16 profile resolves to at runtime is therefore music — as long as
+`data/midi/midi.json` exists. `tools/midi_dualcheck.py` shows what both
+machines hear from one `[[MUSIC:]]` directive, against the two real
+libraries.
 
 ### Printing
 
@@ -636,22 +726,22 @@ Some prompts to test with once the proxy is up:
   config.toml can send the same document to a CUPS queue instead
   ("cups") or as well ("both") - a printer on the proxy host or shared
   by a Pi behind the C64, which also gives you /print with no C64
-  printer at all (docs/14-printer-hardcopy.md).
+  printer at all (docs/14-printer-hardcopy.md). On the Windows client the
+  same document arrives as virtual paper in the Notebook window, which
+  needs no printer of any kind.
 - **Claude Code:** `/code` (or `/code sonnet`) drives a coding-agent session
   from the C64, tool approvals answered at the prompt.
 - **Housekeeping:** `/save`, `/restore`, `/history`, `/find <text>`,
   `/findall <text>`, `/stats`.
 
-## Build modes
+## Build flags
 
-| Flag | Meaning |
-|------|---------|
-| `MODE80=1` | Soft-80 bitmap UI (the primary experience) |
-| `CONNECT=direct` | No modem handshake; ACIA pipe is the connection (VICE) |
-| `CONNECT=hayes` | AT-command dial (C64 Ultimate, or VICE+tcpser) |
-| `SERVER_IP=` / `SERVER_PORT=` | Default proxy address (overridden by `llm64.cfg` on disk) |
-| `BAUD38400=1` | Make **38400** the *boot default* wire rate. All three rates (9600/19200/38400) are selectable in F1 → E → Speed on every build — this flag only picks the default. 38400 wants the NMI-mode ACIA (see docs/05) |
-| `DEBUG_CLIENT=1` | Scripted diagnostic session instead of the TUI |
+Both clients build with plain `make` and take their options as variables.
+The full tables are in each client's README —
+[C64 build modes](c64_client/README.md#build-modes) (`MODE80`, `CONNECT`,
+`SERVER_IP`, `BAUD38400`, `DIAG`, `DEBUG_CLIENT`) and
+[the Windows build](win311_client/README.md#build) (`WATCOM`, `HOST`,
+`PORT`, `VMHOST`, `VMPORT`).
 
 ## Repository layout
 
@@ -659,22 +749,45 @@ Some prompts to test with once the proxy is up:
 c64_client/     cc65 client (main.c TUI + transfer state machines,
                 serial.s ACIA driver, soft80.s bitmap renderer,
                 music.s SID player, display/editor/protocol)
-llm64_proxy/   Python proxy (src/), SID pipeline tools (tools/):
+                -> c64_client/README.md
+win311_client/  Win16 client, Open Watcom, cross-built from Linux
+                (wire.c framing, scroll.c transcript, net.c Winsock,
+                main.c the MDI desk); tests/ run on the host
+                -> win311_client/README.md
+llm64_proxy/    Python proxy (src/), and tools/:
                 sid_scan, sid_reloc_batch, sid_mood (LLM tagger),
                 sid_loudness, sid_makedb, sid_rank (scene regard),
                 sid_review (listen and retag/block by hand),
-                sid_build (runs all of the above), img2c64
+                sid_build (runs all of the above), img2c64,
+                midi_fetch/scan/mood/makedb (the MIDI library),
+                midi_audition, midi_dualcheck
 emu/            VICE automation: e2e harness, mock LLM, watchdog suite,
                 binary-monitor client
+tools/          host-side asset builders and setup-printer-pi.sh
 docs/           design docs + setup guides
+run.sh          one-stop launcher: proxy, emulator, hardware deploys
 ```
 
 ## Documentation
+
+Install and run instructions live with each piece:
+[the proxy](#installing-the-proxy) here,
+[the C64 client](c64_client/README.md),
+[the Windows client](win311_client/README.md). The docs below are design
+and investigation records.
 
 - [01-system-architecture.md](docs/01-system-architecture.md),
   [02-c64-client-design.md](docs/02-c64-client-design.md),
   [03-linux-proxy-design.md](docs/03-linux-proxy-design.md) — original design
 - [05-ultimate-setup.md](docs/05-ultimate-setup.md) — real hardware setup
-- [16-windows-311-client.md](docs/16-windows-311-client.md) — a Windows
-  3.11 client for the same proxy, and the multi-client profile design it
-  wants ([win311_client/](win311_client/))
+- [13-adventure-image-fidelity.md](docs/13-adventure-image-fidelity.md) —
+  anchored, steerable illustration prompts
+- [14-printer-hardcopy.md](docs/14-printer-hardcopy.md) — `/print`, the IEC
+  path and the CUPS bridge
+- [15-bss-overflow-hayes-mode80.md](docs/15-bss-overflow-hayes-mode80.md) —
+  how tight the C64 memory map got, and how it was fixed
+- [16-windows-311-client.md](docs/16-windows-311-client.md) — the Windows
+  3.11 client, the multi-client profile design, and §13b for the desk as it
+  stands
+- [17-visual-canon.md](docs/17-visual-canon.md) — what the art is supposed
+  to look like

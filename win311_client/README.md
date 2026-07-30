@@ -1,57 +1,84 @@
 # LLM64 for Windows
 
 A Windows 3.1 / Windows for Workgroups 3.11 client for the LLM64 proxy —
-the same conversations, adventures, pictures and printing the C64 gets,
-in an authentic Win16 program.
+the same conversations, adventures, pictures, music and printing the C64
+gets, in an authentic Win16 program.
 
-![Phase](https://img.shields.io/badge/phase-1%20in%20progress-yellow)
 ![Target](https://img.shields.io/badge/target-Win16%20NE%20(3.1%2F3.11)-blue)
 ![Build](https://img.shields.io/badge/toolchain-Open%20Watcom%20V2-orange)
+![Runs](https://img.shields.io/badge/runs-real%20HW%20%2F%20VM%20%2F%20Wine-green)
+
+![The desk: conversation, picture with its shelf, and the MIDI transport](../screenshots/win311_client.png)
 
 It talks to the *unmodified* proxy over TCP with Winsock 1.1. There is no
 modem, no serial port and no C64 in the loop: the modem only ever existed
 because a 6510 has no TCP stack.
 
-See [docs/16-windows-311-client.md](../docs/16-windows-311-client.md) for
-the design and the phase plan.
+**This README is the Windows half only: what to install, how to build,
+and how to run it on real hardware, in a VM, or under Wine.** What the
+program *does* and every proxy-side setting live in the
+[top-level README](../README.md), and the proxy has to be running first —
+see [Installing the proxy](../README.md#installing-the-proxy). The design and the
+phase plan are
+[docs/16-windows-311-client.md](../docs/16-windows-311-client.md).
 
-## Status: Phase 1 (in progress)
+## What works
 
-Verified against a real proxy, running under Wine's 16-bit subsystem:
+All of it verified against a real proxy under Wine. The client also runs
+on Windows 95 OSR2 in a VM, which is where the accelerators Wine ignores
+were shown to work:
 
-- connects, PINGs, and gets its ACK
-- sends `CHAT_REQUEST`, renders streamed `CHAT_CHUNK` replies
-- renders the proxy's in-band colour markers, and bold in a real bold face
-- **MDI**: one frame window, documents inside it, a Window menu that
-  cascades, tiles and lists them
-- **The default layout**: a big text area with the server-fed menu as a
-  column of buttons down the right, which follows the mode — enter an
-  adventure and Map and Picture of this scene appear on it. F1 opens the
-  same menu as a modal box. Settings ▸ Menu Bar hides the column
-- **Status strip in two halves**: the client's own status on the left,
-  the proxy's `HINT` chrome (place, now playing) right-aligned
+- connects, PINGs, streams `CHAT_CHUNK` replies, renders the proxy's
+  in-band colour markers with bold in a real bold face
+- **MDI with a remembered desk** — one frame, documents inside it, and a
+  launcher strip: Menu, then Conversation, Picture, Music, Character,
+  Items, Notebook, Map on `Ctrl+1..7` and on the Window menu. Each window
+  comes back where you left it; the strip wraps to a second row rather
+  than fall off a 640x480 screen
+- **Pictures**, decoded from the proxy's 320x200 8-bit DIB — a real
+  period rendering (fixed palette, Floyd–Steinberg), not the C64's
+  16-colour blob, with the conversation's whole picture roster on a shelf
+- **Music is MIDI**, streamed as `MIDI_*` frames and played through MCI's
+  sequencer, with its own window: transport, mood, and the jukebox picker
+- **The character sheet and the map as structures**, not scraped text:
+  `CHAR_SHEET` and `MAP_DATA` frames, a full sheet with ability scores
+  and gauges, and a drawn map — ruled rooms on parchment, ink corridors,
+  dotted for one-way passages
 - **`/print` lands on virtual paper** — the proxy composes the document
-  and ships it as `PRINT_*` frames; instead of a printer, the client
-  catches it in a document window. Up to four sheets at once, and no new
-  wire messages were needed
-- **Two themes**: Paper (black on white, a 1993 business application) and
-  C64 Screen (the Pepto palette on black). Settings ▸, saved to the INI
-- menu bar, transcript pane with scroll bar, input box, status strip
-- reads `LLM64.INI`; the command line overrides it
-- **Settings ▸ Server…** retypes the host and port and reconnects,
-  saving both back to the INI — the only way to change the address on a
-  machine with no command line
-- **the transcript re-flows on a resize**, and lives outside the 64 KB
-  default data segment (see below)
+  and ships it as `PRINT_*` frames; the Notebook window indexes every
+  sheet printed this session. No printer required, no new wire messages
+- **A conversation browser** (F5) that loads, stars and lists what the
+  proxy has stored
+- **Two themes** — Paper (black on white, a 1993 business application)
+  and C64 Screen (the Pepto palette on black) — saved to `LLM64.INI`
+  along with the server address and the picture setting
+- **The transcript re-flows on a resize**, and lives outside the 64 KB
+  default data segment (see the notes at the bottom)
+- **Settings ▸ Server…** retypes host and port and reconnects, which on a
+  machine with no command line is the only way to change the address
 
-Still to do in Phase 1: the editor keys, the `HINT` chrome in its own half
-of the status strip, `MENU_LIST`, and help. After that: pictures, MIDI,
-printing, the conversation manager, settings and history dialogs.
+Not done: the input box's editor keys, `MENU_LIST` appended to the Mode
+menu at runtime, in-program help, and the `CLIENT_HELLO`/`ClientProfile`
+negotiation of §7 (widths and payload caps are still assumed rather than
+agreed). Accelerators are inert under Wine and work on real Windows —
+every one of them is also on a menu.
 
 ## Build
 
-Open Watcom V2 hosts on Linux and still targets Win16. It is not
-packaged on most distributions, so fetch the snapshot once:
+The build hosts on Linux and cross-compiles to a 16-bit NE binary; you
+never need a Windows machine to produce one.
+
+| For | Install |
+|-----|---------|
+| Building | Open Watcom V2 (below), GNU make |
+| `make floppy` | `mtools` — `pacman -S mtools`, `apt install mtools`, `dnf install mtools` |
+| `make run` | `wine` (its 16-bit subsystem) |
+| `make test` | nothing but a host C compiler |
+| `tools/wine_smoke.sh` | `wine`, `xdotool`, `imagemagick`, `Xvfb`, and a window manager (`openbox`) |
+| `tools/devproxy.sh` | the proxy's venv, for Pillow — see the [top-level README](../README.md#installing-the-proxy) |
+
+Open Watcom is not packaged on most distributions, so fetch the snapshot
+once (522 MB extracted):
 
 ```sh
 mkdir -p ~/Programs && cd ~/Programs
@@ -59,70 +86,152 @@ curl -LO https://github.com/open-watcom/open-watcom-v2/releases/download/Current
 mkdir open-watcom-v2 && tar -xf ow-snapshot.tar.xz -C open-watcom-v2
 ```
 
-Then:
+The Makefile defaults to `~/Programs/open-watcom-v2` (or `~/opt/`), puts
+`binl64` on `PATH` itself, and needs nothing symlinked. Then, from this
+directory:
 
 ```sh
-make                 # -> build/LLM64.EXE   (NE binary)
 make test            # wire + transcript unit tests, compiled for the host
+make                 # -> build/LLM64.EXE   (NE binary)
 make WATCOM=/elsewhere/open-watcom-v2
 ```
 
 `make test` first on a new machine: it is the one signal that needs no
 Watcom, no Wine and no proxy, so a green run means the checkout is good
-before any environment fight.
+before any environment fight. `Current-build` is a rolling tag — pin a
+dated build if two machines must produce identical output.
 
-## Run it
+## Which proxy, and the two ways to get one
+
+Everything below needs a proxy to talk to, and there are only two kinds:
+
+**The mock, for working on the client.** `./tools/devproxy.sh 6410` runs
+the repo's mock model (`emu/mock_llm.py`) against a *real* proxy on a
+scratch port with a scratch data directory: no API key, no GPU,
+deterministic replies, and `LONGTEST` / `PICTEST` / `MUSICTEST` on tap.
+It will never reach a real model, by design. Add a bind address for a
+bridged VM or a real machine: `./tools/devproxy.sh 6410 0.0.0.0`.
+
+**The real one**, which is the same proxy the C64 uses — usually on
+another box, and often already running. Don't start a second one here;
+point the client at it. `run.conf` at the repo root names it
+(`PROXY_HOST` / `PROXY_PORT`). Installing it from scratch — venv,
+requirements, `config.toml`, model endpoint, image and music backends —
+is the [top-level README](../README.md#installing-the-proxy).
+
+**`/print` needs the proxy's printer backend to be `c64`** — the shipped
+default, and the one that sends `PRINT_*` frames to the client. A proxy
+set to `cups` spools the document to a real print queue and the client
+never sees it; `both` does both. That is `[printer] backend` in
+`config.toml`, or `LLM64_PRINTER_BACKEND=c64` in the environment.
+
+## Run it: under Wine
+
+The development loop, and the fastest way to see a build:
 
 ```sh
 ./tools/devproxy.sh 6410      # mock LLM + real proxy, scratch data dir
 make run PORT=6410            # launch under Wine
-./tools/wine_smoke.sh 6410    # or: drive it and photograph the result
+make run HOST=192.168.1.21 PORT=6400        # or the real proxy
+./tools/wine_smoke.sh 6410    # drive it and photograph the result
 ```
 
-### The mock, and the real model
+`make run` passes host and port on the command line, which overrides the
+INI. `WINEPREFIX` defaults to `~/.wine-llm64` so the client gets a
+prefix of its own.
 
-`devproxy.sh` deliberately runs the repo's **mock** model
-(`emu/mock_llm.py`) against a real proxy on a scratch port with a scratch
-data directory. That is the loop for working on the client: no API key,
-no GPU, deterministic replies, and `LONGTEST` / `PICTEST` / `MUSICTEST`
-on tap. It will never talk to a real model, by design.
+Wine proves the protocol and the drawing; **it does not prove the
+shell.** Accelerators, menu behaviour and window management need a real
+machine (or a VM) before they can be called working — see the last
+section. Sound needs an ALSA sequencer client listening: see
+[Getting sound out of Wine](#getting-sound-out-of-wine).
 
-For the real thing, do not start a proxy here at all — point the client
-at the same one the C64 uses. `run.conf` at the repo root already names
-it (`PROXY_HOST` / `PROXY_PORT`), and it is often on another machine:
+## Run it: in a VM
+
+`make floppy` writes a 1.44 MB image holding the EXE and a matching INI,
+which is how the binary gets into a guest:
 
 ```sh
-make run HOST=<PROXY_HOST> PORT=<PROXY_PORT>
-make floppy VMHOST=<PROXY_HOST> VMPORT=<PROXY_PORT>   # for a VM
+make floppy                       # -> build/llm64.img, pointing at 10.0.2.2:6410
+make floppy VMHOST=10.0.2.2 VMPORT=6400
+make vm-in                        # rebuild and swap it into a *running* VM
+make vm-out                       # eject
 ```
 
-A QEMU guest on user-mode networking reaches an outside address through
-the host's stack, so a proxy over Tailscale or a LAN works from the VM
-as long as the host can reach it.
+Attach it with `-fda build/llm64.img` and run `A:\LLM64.EXE`. `vm-in`
+makes the edit/build/run loop bearable: the guest sees the new binary
+without rebooting Windows (`tools/vmfloppy.sh` explains why it ejects
+first).
 
-Running a proxy *locally* against a real model needs
-`llm64_proxy/config.toml` (copy `config.toml.example` and set the model
-endpoint and API key) and then `./run.sh proxy` from the repo root.
-Without that file the proxy starts, accepts the client, and fails every
-reply with an API 401.
+Under QEMU's user-mode networking the host is **10.0.2.2** from inside
+the guest, and a proxy bound to the host's loopback is reachable there —
+so `./tools/devproxy.sh 6410` on the host needs no extra plumbing. slirp
+NATs outward too, so a proxy on the LAN or over Tailscale works from the
+guest as long as the host can reach it; give `VMHOST` that address.
 
-**`/print` needs the proxy's printer backend to be `c64`** — the
-shipped default, and the one that sends `PRINT_*` frames to the client.
-A proxy configured for `cups` spools the document to a real print queue
-instead and the client never sees it; `both` does both. It is
-`[printer] backend` in `config.toml`, or `LLM64_PRINTER_BACKEND=c64` in
-the environment.
+The guest needs TCP/IP bound to its network card (Control Panel →
+Network); slirp runs a DHCP server, so "obtain an IP address
+automatically" is enough. Windows 95 and 98 run the NE binary natively
+and ship their own 16-bit `WINSOCK.DLL`, so nothing else is required
+there. Windows 3.1 needs Trumpet Winsock; WfW 3.11 wants Microsoft's
+TCP/IP-32.
 
-On a real machine there is no command line, so it reads `LLM64.INI` from
-its own directory — *beside the EXE*, which is not what an unqualified
-name means to `GetPrivateProfileString` (that resolves against the
-Windows directory), so the path is derived from `GetModuleFileName`:
+A **bridged** guest is not on the host's loopback, so the proxy has to
+bind wider: `./tools/devproxy.sh 6410 0.0.0.0`.
+
+## Run it: on real hardware
+
+A 386 or better running Windows 3.1, WfW 3.11, or 95/98. What the machine
+needs:
+
+1. **A Winsock 1.1 stack.** WfW 3.11: Microsoft's TCP/IP-32 (free, and
+   the period-correct answer). Plain 3.1: Trumpet Winsock over Ethernet
+   or SLIP/PPP. 95/98: already there, and it runs the NE binary
+   natively — nothing to install.
+2. **`LLM64.EXE` and `LLM64.INI` in the same directory.** Anywhere:
+   `C:\LLM64\`, or straight off the floppy.
+3. **A route to the proxy.** The client dials nothing and negotiates
+   nothing — it opens a TCP socket to the address in the INI, so that
+   address has to be reachable *from the old machine*. Its own LAN
+   address, not a VPN address that only your workstation can resolve.
+
+Build the floppy with the real proxy's address baked into the INI, then
+copy both files off it:
+
+```sh
+make floppy VMHOST=192.168.1.21 VMPORT=6400
+# write build/llm64.img to a diskette (dd, or a Greaseweazle/Kryoflux),
+# or serve it however you normally move files to a period machine:
+# a shared folder over SMB, a CF-card IDE adapter, LapLink, ...
+```
+
+Optional, and worth having:
+
+- **A sound card with a MIDI Mapper entry** — an AWE32/SB16 with its
+  synth, a Roland MT-32 or SCC-1, or the OPL3 FM voices. The client asks
+  MCI for the `sequencer` device and lets the Control Panel decide how it
+  is synthesised; with nothing configured it says so in the status strip
+  and carries on silently.
+- **A 256-colour display driver** for the pictures. They are 320x200
+  8-bit DIBs with their own realizable palette, so a 256-colour driver
+  shows them as intended; a 16-colour VGA driver still displays them,
+  dithered by GDI.
+
+On a real machine there is no command line, so the address comes from
+`LLM64.INI` in the EXE's own directory — *beside the EXE*, which is not
+what an unqualified name means to `GetPrivateProfileString` (that
+resolves against the Windows directory), so the path is derived from
+`GetModuleFileName`:
 
 ```ini
 [Server]
 Host=192.168.1.10
 Port=6400
 ```
+
+**Settings ▸ Server…** rewrites that file from inside the program, which
+is the whole point of the dialog: you never have to make another floppy
+to change the address.
 
 ## Music
 
@@ -135,12 +244,15 @@ library for exactly this client — building it is documented in the
 mood vocabulary is shared with the SID side, so one narrator can score
 both machines in the same adventure.
 
-**The client does not play it yet.** `MIDI_BEGIN/DATA/END` and the MCI
-player are phase 5 (§6.2 of
-[docs/16](../docs/16-windows-311-client.md)); until then the win16
-profile resolves to no music and the jukebox says so.
+The client plays it: `MIDI_BEGIN/DATA/END` arrive as a stream, land in a
+temp file, and go to MCI's `sequencer` device. The Music window has the
+transport, the current mood and the jukebox picker; the narrator scores
+the adventure the same way it does on the C64. **Nothing plays until the
+proxy has a MIDI library** — that build is four steps in the
+[main README](../README.md#music-for-the-windows-client-midi), and until
+it exists the jukebox says so.
 
-### What has been measured, so phase 5 does not have to rediscover it
+### What was measured before any of it was written
 
 A standalone Win16 probe (`mciSendString` against the `sequencer`
 device) was built with the same toolchain and run under Wine 11.6:
@@ -188,28 +300,7 @@ With no synth running, `midiOutGetNumDevs()` still returns the kernel's
 `Midi Through` port, so "no devices" is not a reliable no-op test; the
 notes simply go nowhere.
 
-## In a VM
-
-`make floppy` writes a 1.44 MB image holding the EXE and a matching INI:
-
-```sh
-make floppy                       # -> build/llm64.img, pointing at 10.0.2.2:6410
-make floppy VMHOST=10.0.2.2 VMPORT=6400
-```
-
-Attach it with `-fda build/llm64.img` and run `A:\LLM64.EXE`. Under
-QEMU's user-mode networking the host is **10.0.2.2** from inside the
-guest, and a proxy bound to the host's loopback is reachable there — so
-`./tools/devproxy.sh 6410` on the host needs no extra plumbing.
-
-The guest needs TCP/IP bound to its network card (Control Panel →
-Network); slirp runs a DHCP server, so "obtain an IP address
-automatically" is enough. Windows 95 and 98 run the NE binary natively
-and ship their own 16-bit `WINSOCK.DLL`, so nothing else is required
-there. Windows 3.1 needs Trumpet Winsock; WfW 3.11 wants Microsoft's
-TCP/IP-32.
-
-### When it does not connect
+## When it does not connect
 
 **Read the status strip.** It names the address it dialled while
 connecting, and the failure afterwards — `Connection refused or
@@ -244,15 +335,18 @@ include/net.h    src/net.c     Winsock 1.1, asynchronous. Windows 3.x is
                                cooperatively multitasked, so a blocking
                                recv() would freeze the whole system;
                                everything is WSAAsyncSelect + messages.
-                 src/main.c    MDI frame, conversation document, menu,
-                               transcript pane, input, status strip,
-                               frame dispatch.
-                 src/llm64.rc  menu resource.
+                 src/main.c    MDI frame and every window on the desk -
+                               conversation, picture, music, character,
+                               items, notebook, map - plus the launcher,
+                               input, status strip and frame dispatch.
+                 src/llm64.rc  menus and dialogs.
 tests/           test_wire.c   framing tests, including the +0x20 length
                                bias and its 8-bit wrap.
                  test_scroll.c re-flow, marker-aware wrapping, eviction.
 tools/           devproxy.sh   proxy + mock LLM for development
                  wine_smoke.sh launch under Wine, type, resize, screenshot
+                 vmfloppy.sh   swap the floppy image in a running VM
+build/           LLM64.EXE, llm64.img, and the smoke-test screenshots
 ```
 
 ## Notes for whoever picks this up

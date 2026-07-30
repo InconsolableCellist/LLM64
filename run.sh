@@ -26,10 +26,14 @@
 #   model endpoint and API key
 #
 # REAL HARDWARE - C64 Ultimate on the network (FTP turned on)
-#   ./run.sh c64         build 40-col client, upload it to /Temp, run it (deprecated)
+#   ./run.sh c64         build 40-col client, upload to /Flash, run it (deprecated)
 #   ./run.sh c64-80      same, 80-column build
-#   ./run.sh install     put the 80-col client in /Flash
-#                        (use /Temp builds to avoid rw wear)
+#   ./run.sh install     upload the 80-col client to /Flash without running it
+#
+#   Both deploy the bare PRG: no disk beside it, so the F1 menu falls back
+#   to its built-in form. For the whole program (overlay modules, config
+#   saved into the image) deploy the disk:
+#     make deploy-c64u-disk-80 C64U_IP=... C64_PROXY_IP=... C64_PROXY_PORT=...
 #
 # ./run.sh status
 
