@@ -661,6 +661,12 @@ void chrome_init(HWND hwnd, HMENU bar)
 {
     int i, n;
 
+    /* Windows 11 rounds every top-level window, including a WS_POPUP one,
+       and a rounded 1993 window looks like a mistake. This was called from
+       the spike's WM_CREATE before the extraction; the linker noticing it
+       had become unreferenced is the only reason it is not quietly missing
+       from the module. */
+    square_corners(hwnd);
     g_sysmenu = popup_from(SYSITEMS, NSYSITEMS);
     g_nmenus = 0;
     if (!bar)
@@ -676,7 +682,6 @@ void chrome_init(HWND hwnd, HMENU bar)
         g_pop[g_nmenus] = sub;
         g_nmenus++;
     }
-    (void)hwnd;
 }
 
 int chrome_edge(HWND hwnd)
