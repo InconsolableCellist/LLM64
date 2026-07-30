@@ -43,6 +43,19 @@
    reads as not-quite-right. */
 #define FRAME_W()   (g_maxed ? 0 : FRAME)
 #define RULE        1       /* the black line under the caption */
+#define MENU_H      18      /* measured: same height as the caption */
+
+/* 3.1's COLOR_MENU is WHITE. Windows 95 made it button-grey and every
+   later "classic" theme kept grey, so a grey menu bar is a 1995 tell as
+   loud as the caption buttons. Measured off the reference: rows y21..y38
+   are pure #FFFFFF with a black rule under them. */
+#define C_MENU      RGB(0xFF, 0xFF, 0xFF)
+#define MENU_PAD    8       /* per side, measured: "File" ink starts at x=9 */
+/* Zero, not 3, even though the ink does start 3 rows into the bar:
+   DT_TOP aligns the font's CELL to the rect, and the System font carries
+   3 rows of internal leading above the ink. Setting this to the measured
+   ink offset stacks the two and puts every menu title 3 rows too low. */
+#define MENU_TOP    0
 
 /* The 3.1 system palette. Hardcoded on purpose: GetSysColor() on a
    modern machine returns 2026 values (COLOR_BTNFACE is #F0F0F0, not
@@ -69,6 +82,17 @@
 
 static int  g_down = HIT_NONE;      /* button held, for the pressed bevel */
 static int  g_maxed = 0;
+
+/* The bar carries the same five titles main.c uses. The POPUPS are real
+   HMENUs, so TrackPopupMenu below runs them: keyboard navigation, the
+   mnemonics inside a popup, highlight tracking and dismissal are all still
+   the system's. We draw the bar; Windows still does the hard part. */
+static const char *MENUS[] = {
+    "&File", "&Link", "&Settings", "&Window", "&Help"
+};
+#define NMENUS  ((int)(sizeof(MENUS) / sizeof(MENUS[0])))
+static HMENU g_pop[NMENUS];
+static int   g_open = -1;       /* bar item with its popup showing */
 
 /* ------------------------------------------------------------------ */
 
@@ -178,6 +202,121 @@ static void btn_rects(HWND hwnd, RECT *sys, RECT *mn, RECT *mx)
     sys->bottom = mn->bottom = mx->bottom = f + CAP_H;
 }
 
+/* Item rects along the bar, laid end to end from x=1 with MENU_PAD each
+   side. Windows would normally compute these; owning the bar means owning
+   the arithmetic, and it is the one place a hand-drawn menu can drift out
+   of step with where the popup appears. */
+static int menu_layout(HWND hwnd, HDC hdc, RECT out[])
+{
+    RECT rc;
+    HFONT of;
+    int i, x, f = FRAME_W();
+
+    GetClientRect(hwnd, &rc);
+    of = SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+    x = f;
+    for (i = 0; i < NMENUS; i++) {
+        const char *lbl = MENUS[i];
+        char plain[32];
+        int n = 0;
+        SIZE sz;
+
+        /* Measure without the mnemonic marker - '&' is an instruction, not
+           a glyph, and counting it makes every item a character too wide. */
+        while (*lbl && n < (int)sizeof(plain) - 1) {
+            if (*lbl != '&')
+                plain[n++] = *lbl;
+            lbl++;
+        }
+        plain[n] = '\0';
+        GetTextExtentPoint32(hdc, plain, n, &sz);
+
+        out[i].left   = x;
+        out[i].right  = x + MENU_PAD * 2 + sz.cx;
+        out[i].top    = f + CAP_H + RULE;
+        out[i].bottom = out[i].top + MENU_H;
+        x = out[i].right;
+    }
+    SelectObject(hdc, of);
+    return NMENUS;
+}
+
+static void menu_paint(HWND hwnd, HDC hdc)
+{
+    RECT rc, bar, items[NMENUS];
+    HFONT of;
+    int i, f = FRAME_W();
+
+    GetClientRect(hwnd, &rc);
+    bar.left = f; bar.right = rc.right - f;
+    bar.top = f + CAP_H + RULE;
+    bar.bottom = bar.top + MENU_H;
+    fill(hdc, &bar, C_MENU);
+    hline(hdc, bar.left, bar.right - 1, bar.bottom, C_FRAME);
+
+    menu_layout(hwnd, hdc, items);
+    SetBkMode(hdc, TRANSPARENT);
+    of = SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+    for (i = 0; i < NMENUS; i++) {
+        RECT t = items[i];
+        int open = (i == g_open);
+
+        if (open) {
+            /* 3.1 inverts an open bar item rather than tinting it. */
+            fill(hdc, &t, C_FRAME);
+            SetTextColor(hdc, C_MENU);
+        } else {
+            SetTextColor(hdc, C_FRAME);
+        }
+        t.left += MENU_PAD;
+        t.top  += MENU_TOP;
+        /* No DT_NOPREFIX here, on purpose: the '&' has to become the
+           underline, which is the only reason it is in the string. */
+        DrawText(hdc, MENUS[i], -1, &t, DT_LEFT | DT_TOP | DT_SINGLELINE);
+    }
+    SelectObject(hdc, of);
+}
+
+/* Which bar item a client-space point is on, or -1. */
+static int menu_at(HWND hwnd, POINT pt)
+{
+    RECT items[NMENUS];
+    HDC hdc = GetDC(hwnd);
+    int i, hit = -1;
+
+    menu_layout(hwnd, hdc, items);
+    ReleaseDC(hwnd, hdc);
+    for (i = 0; i < NMENUS; i++)
+        if (PtInRect(&items[i], pt))
+            hit = i;
+    return hit;
+}
+
+/* Hand the popup to Windows. Everything inside it - arrow keys, mnemonics,
+   click-away, submenu timing - is the system's from here, which is the
+   whole argument for skinning rather than reimplementing. */
+static void menu_drop(HWND hwnd, int i)
+{
+    RECT items[NMENUS];
+    POINT p;
+    HDC hdc = GetDC(hwnd);
+
+    menu_layout(hwnd, hdc, items);
+    ReleaseDC(hwnd, hdc);
+    if (i < 0 || i >= NMENUS || !g_pop[i])
+        return;
+    g_open = i;
+    InvalidateRect(hwnd, NULL, FALSE);
+    UpdateWindow(hwnd);
+    p.x = items[i].left;
+    p.y = items[i].bottom + 1;
+    ClientToScreen(hwnd, &p);
+    TrackPopupMenu(g_pop[i], TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON,
+                   p.x, p.y, 0, hwnd, NULL);
+    g_open = -1;
+    InvalidateRect(hwnd, NULL, FALSE);
+}
+
 static void cap_paint(HWND hwnd, HDC hdc)
 {
     RECT rc, r, sys, mn, mx;
@@ -258,9 +397,11 @@ static void cap_paint(HWND hwnd, HDC hdc)
     vline(hdc, mx.left - 1, mx.top, mx.bottom - 1, C_FRAME);
 
     /* Client area, with a note so the screenshot explains itself. */
+    menu_paint(hwnd, hdc);
+
     r.left   = f;
     r.right  = rc.right - f;
-    r.top    = f + CAP_H + RULE;
+    r.top    = f + CAP_H + RULE + MENU_H + 1;
     r.bottom = rc.bottom - f;
     fill(hdc, &r, C_CLIENT);
     SetTextColor(hdc, RGB(0, 0, 0));
@@ -272,7 +413,10 @@ static void cap_paint(HWND hwnd, HDC hdc)
              "every metric in it was measured off a real 3.11 capture\r\n"
              "with a pixel differ rather than remembered.\r\n\r\n"
              "Drag the caption. Drag any edge or corner to resize.\r\n"
-             "The buttons work. The corners are square on Windows 11.",
+             "The buttons work. The corners are square on Windows 11.\r\n\r\n"
+             "The menu bar is ours too - white, as 3.1's is, not the grey\r\n"
+             "95 changed it to. The popups are real HMENUs handed to\r\n"
+             "TrackPopupMenu, so arrow keys and mnemonics still work.",
              -1, &r, DT_LEFT | DT_TOP | DT_NOPREFIX);
     SelectObject(hdc, of);
 }
@@ -319,9 +463,10 @@ static LRESULT cap_hittest(HWND hwnd, LPARAM lParam)
     }
     if (cap_button_at(hwnd, pt) != HIT_NONE)
         return HTCLIENT;            /* ours; we handle the click */
-    if (y < FRAME + CAP_H)
+    if (y < FRAME_W() + CAP_H)
         return HTCAPTION;           /* Windows drags it for us */
-    return HTCLIENT;
+    return HTCLIENT;                /* menu bar included - never HTCAPTION,
+                                       or the bar would drag the window */
 }
 
 /* Square the corners off. Windows 11 rounds every top-level window,
@@ -350,9 +495,22 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam,
     POINT pt;
 
     switch (msg) {
-    case WM_CREATE:
+    case WM_CREATE: {
+        int i;
+
         square_corners(hwnd);
+        /* Real HMENUs, so the popups behave natively. In main.c these come
+           straight from llm64.rc instead - the point of the spike is that
+           the bar is ours and the contents are not. */
+        for (i = 0; i < NMENUS; i++) {
+            g_pop[i] = CreatePopupMenu();
+            AppendMenu(g_pop[i], MF_STRING, 100 + i * 10 + 1, "&First item");
+            AppendMenu(g_pop[i], MF_STRING, 100 + i * 10 + 2, "Second &item");
+            AppendMenu(g_pop[i], MF_SEPARATOR, 0, NULL);
+            AppendMenu(g_pop[i], MF_STRING, 100 + i * 10 + 3, "A&nother");
+        }
         return 0;
+    }
 
     /* Claim the entire window as client area, which is what removes the
        OS caption and the OS border without giving up WS_THICKFRAME - so
@@ -409,6 +567,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam,
     case WM_LBUTTONDOWN:
         pt.x = GET_X_LPARAM(lParam);
         pt.y = GET_Y_LPARAM(lParam);
+        {
+            int m = menu_at(hwnd, pt);
+
+            if (m >= 0) {
+                menu_drop(hwnd, m);
+                return 0;
+            }
+        }
         g_down = cap_button_at(hwnd, pt);
         if (g_down != HIT_NONE) {
             SetCapture(hwnd);
