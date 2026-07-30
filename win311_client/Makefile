@@ -106,8 +106,8 @@ run32: $(EXE32)
 # the 16-bit target, where the OS already draws this correctly.
 spike: build/CAPSPIKE.EXE
 
-build/CAPSPIKE.EXE: spike/caption.c | build/w32
-	$(W32CC) $(W32CFLAGS) -o $@ $< -lgdi32 -luser32
+build/CAPSPIKE.EXE: spike/caption.c src/chrome.c | build/w32
+	$(W32CC) $(W32CFLAGS) -o $@ spike/caption.c src/chrome.c -lgdi32 -luser32
 	@echo "-> $@"
 
 run-spike: build/CAPSPIKE.EXE
@@ -119,9 +119,9 @@ run-spike: build/CAPSPIKE.EXE
 # the app as 1995.
 spike16: build/CAPSPK16.EXE
 
-build/CAPSPK16.EXE: spike/caption.c | build
-	$(OWBIN)/wcl $(CFLAGS) $(LFLAGS) -fe=$@ $<
-	@rm -f __wcl_*.lnk caption.obj
+build/CAPSPK16.EXE: spike/caption.c src/chrome.c | build
+	$(OWBIN)/wcl $(CFLAGS) $(LFLAGS) -fe=$@ spike/caption.c src/chrome.c
+	@rm -f __wcl_*.lnk caption.obj chrome.obj
 	@echo "-> $@"
 
 # A floppy carrying the 16-bit spike into a real 3.11 or 95 guest - and
