@@ -222,10 +222,21 @@ static const MItem SYSITEMS[] = {
 #define NSYSITEMS ((int)(sizeof(SYSITEMS) / sizeof(SYSITEMS[0])))
 
 
-#define POPUP_GUTTER 14     /* the checkmark column 3.1 reserves */
-#define POPUP_ITEM_H 16
-#define POPUP_SEP_H  6
-#define POPUP_PADR   18     /* space past the accelerator */
+/* Measured off a real 3.11 popup (the client's own Window menu, open, with
+   a checkmark and accelerators in it) rather than guessed at, which is
+   what these were until now:
+     interior starts 1 px inside the black border, and the label starts
+     18 px further in - the checkmark sits in that gutter
+     an item is 18 rows tall, the same as the caption and the menu bar,
+     with its text ink 3 rows down
+     a separator is ONE BLACK ROW spanning the full interior width. It is
+     not etched; 3.1 has no shadow-and-highlight pair here.
+     no drop shadow anywhere - that arrived with Windows 95. */
+#define POPUP_GUTTER 18
+#define POPUP_ITEM_H 18
+#define POPUP_SEP_H  7
+#define POPUP_SEP_Y  3      /* the black row within the separator */
+#define POPUP_PADR   20     /* space past the accelerator */
 static HMENU g_sysmenu;
 
 /* Build a popup out of a table. MF_OWNERDRAW keeps every behaviour -
@@ -273,13 +284,10 @@ static void popup_draw(DRAWITEMSTRUCT FAR *dis)
     HFONT of;
 
     if (!it || !it->text) {
-        /* 3.1's separator is etched: a shadow line with a highlight under
-           it, not a single black rule. */
+        /* One black row, edge to edge. Measured - the etched shadow and
+           highlight this used to draw is a Windows 95 separator. */
         fill(dis->hDC, &r, C_MENU);
-        hline(dis->hDC, r.left + 2, r.right - 3,
-              (r.top + r.bottom) / 2 - 1, C_SHADOW);
-        hline(dis->hDC, r.left + 2, r.right - 3,
-              (r.top + r.bottom) / 2, C_HILIGHT);
+        hline(dis->hDC, r.left, r.right - 1, r.top + POPUP_SEP_Y, C_FRAME);
         return;
     }
 
