@@ -70,9 +70,31 @@ void chrome_paint(HWND hwnd, HDC hdc);
  * WM_GETMINMAXINFO, WM_NCACTIVATE, WM_SIZE tracking, the caption buttons,
  * the menu bar, and the owner-draw messages the popups generate.
  *
- * WM_COMMAND is deliberately NOT swallowed: the control menu posts SC_*
- * back as WM_SYSCOMMAND itself, and every other id is the application's.
+ * WM_COMMAND is swallowed ONLY for ids in the system-command range
+ * (0xF000 and up), which is what the control menu generates; an
+ * application's own ids are far below it and always fall through.
+ * WM_SYSCOMMAND is swallowed only for SC_KEYMENU, which is how Alt+Space
+ * and Alt+letter arrive.
  */
 int  chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result);
+
+/* ---- MDI child chrome -------------------------------------------- */
+
+/* The same treatment for an MDI child, so the children inside a 1993
+   frame are not wearing 2026 captions. Give the child class
+   CHROME_CLASS_STYLE, then from its window proc:
+ *
+ *     if (chrome_child_msg(hwnd, msg, wParam, lParam, &r)) return r;
+ *     ... WM_PAINT: chrome_child_paint(hwnd, hdc, is_the_active_child);
+ *     ... lay the content out inside chrome_child_top/edge
+ *
+ * Everything else stays DefMDIChildProc's, which is what keeps the Window
+ * menu, Ctrl+F4/F6, Cascade, Tile and maximise-into-frame working.
+ */
+int  chrome_child_top(HWND hwnd);
+int  chrome_child_edge(HWND hwnd);
+void chrome_child_paint(HWND hwnd, HDC hdc, int active);
+int  chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
+                      LONG *result);
 
 #endif /* CHROME_H */

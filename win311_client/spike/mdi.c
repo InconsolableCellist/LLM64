@@ -33,8 +33,6 @@
 #include "llmport.h"
 #include "chrome.h"
 
-#define CHILD_CAP   18      /* the child caption, same height as the frame's */
-#define CHILD_EDGE  4
 #define IDM_FIRSTCHILD  100
 #define IDM_TILE        50
 #define IDM_CASCADE     51
@@ -47,105 +45,47 @@ static HWND  g_last;
 
 /* ------------------------------------------------------------------ */
 
-static void bar(HDC hdc, const RECT *r, COLORREF c)
-{
-    HBRUSH b = CreateSolidBrush(c);
-
-    FillRect(hdc, r, b);
-    DeleteObject(b);
-}
-
-/* A rough 3.1 child caption. Rough on purpose - see the header. */
+/* The child's own content, laid out inside the chrome. Everything above
+   this - caption, border, buttons, hit-testing - is chrome.c's now. */
 static void child_paint(HWND hwnd, HDC hdc)
 {
     RECT rc, r;
-    int active = (GetActiveWindow() == g_frame
-                  && LLM_HWND(SendMessage(g_mdi, WM_MDIGETACTIVE, 0, 0L))
-                     == hwnd);
-    char title[64];
     HFONT of;
-    int n, maxed = IsZoomed(hwnd);
-    int e = maxed ? 0 : CHILD_EDGE;
+    int active = (LLM_HWND(SendMessage(g_mdi, WM_MDIGETACTIVE, 0, 0L))
+                  == hwnd);
+    HBRUSH w;
+
+    chrome_child_paint(hwnd, hdc, active);
 
     GetClientRect(hwnd, &rc);
-    bar(hdc, &rc, RGB(0xC0, 0xC0, 0xC0));
-    if (!maxed) {
-        HBRUSH k = CreateSolidBrush(RGB(0, 0, 0));
+    r.left   = chrome_child_edge(hwnd);
+    r.right  = rc.right - r.left;
+    r.top    = chrome_child_top(hwnd);
+    r.bottom = rc.bottom - chrome_child_edge(hwnd);
+    w = CreateSolidBrush(RGB(0xFF, 0xFF, 0xFF));
+    FillRect(hdc, &r, w);
+    DeleteObject(w);
 
-        r = rc;
-        FrameRect(hdc, &r, k);
-        InflateRect(&r, -(CHILD_EDGE - 1), -(CHILD_EDGE - 1));
-        FrameRect(hdc, &r, k);
-        DeleteObject(k);
-    }
-
-    /* The caption. A maximised MDI child has none: MDI is supposed to
-       have hidden it and moved its buttons onto the frame's menu bar. */
-    if (!maxed) {
-        r.left = e; r.right = rc.right - e;
-        r.top = e;  r.bottom = e + CHILD_CAP;
-        bar(hdc, &r, active ? RGB(0, 0, 0x80) : RGB(0xFF, 0xFF, 0xFF));
-        n = GetWindowText(hwnd, title, sizeof(title) - 1);
-        title[n < 0 ? 0 : n] = '\0';
-        SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, active ? RGB(0xFF, 0xFF, 0xFF) : RGB(0, 0, 0));
-        of = SelectObject(hdc, GetStockObject(SYSTEM_FONT));
-        DrawText(hdc, title, -1, &r,
-                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        SelectObject(hdc, of);
-    }
-
-    /* Client area, with the state written into it so a screenshot says
-       what happened without anyone having to remember. */
-    r.left = e; r.right = rc.right - e;
-    r.top = e + (maxed ? 0 : CHILD_CAP + 1);
-    r.bottom = rc.bottom - e;
-    bar(hdc, &r, RGB(0xFF, 0xFF, 0xFF));
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, RGB(0, 0, 0));
     of = SelectObject(hdc, GetStockObject(SYSTEM_FIXED_FONT));
     InflateRect(&r, -6, -6);
-    wsprintf(title, maxed ? "MAXIMISED - no caption drawn"
-                          : (active ? "active" : "inactive"));
-    DrawText(hdc, title, -1, &r, DT_LEFT | DT_TOP | DT_NOPREFIX);
+    DrawText(hdc, IsZoomed(hwnd) ? "maximised - caption is MDI's now"
+                                 : (active ? "active" : "inactive"),
+             -1, &r, DT_LEFT | DT_TOP | DT_NOPREFIX);
     SelectObject(hdc, of);
 }
 
 long FAR PASCAL _export ChildProc(HWND hwnd, UINT msg, UINT wParam,
-                                         LONG lParam)
+                                  LONG lParam)
 {
     PAINTSTRUCT ps;
-    POINT pt;
-    RECT rc;
+    LONG r;
+
+    if (chrome_child_msg(hwnd, msg, wParam, lParam, &r))
+        return r;
 
     switch (msg) {
-    /* The whole experiment in one case: claim the entire window as
-       client, so there is no NC area for MDI to draw into. */
-    case WM_NCCALCSIZE:
-        return 0;
-
-    case WM_NCHITTEST: {
-        int e = IsZoomed(hwnd) ? 0 : CHILD_EDGE;
-
-        pt.x = GET_X_LPARAM(lParam);
-        pt.y = GET_Y_LPARAM(lParam);
-        ScreenToClient(hwnd, &pt);
-        GetClientRect(hwnd, &rc);
-        if (e) {
-            if (pt.x < e && pt.y < e) return HTTOPLEFT;
-            if (pt.x >= rc.right - e && pt.y < e) return HTTOPRIGHT;
-            if (pt.x < e && pt.y >= rc.bottom - e) return HTBOTTOMLEFT;
-            if (pt.x >= rc.right - e && pt.y >= rc.bottom - e)
-                return HTBOTTOMRIGHT;
-            if (pt.x < e) return HTLEFT;
-            if (pt.x >= rc.right - e) return HTRIGHT;
-            if (pt.y < e) return HTTOP;
-            if (pt.y >= rc.bottom - e) return HTBOTTOM;
-            if (pt.y < e + CHILD_CAP) return HTCAPTION;
-        }
-        return HTCLIENT;
-    }
-
     case WM_NCACTIVATE:
     case WM_MDIACTIVATE:
         InvalidateRect(hwnd, NULL, TRUE);

@@ -91,6 +91,13 @@ static int   g_open = -1;       /* bar item with its popup showing */
    never had the bug because caption buttons always acted on the UP. */
 static int   g_bar_down = -1;
 
+/* Set from WM_NCACTIVATE rather than asked of GetActiveWindow at paint
+   time. GetActiveWindow answers for the calling thread's queue, which is
+   not the same question, and the two disagree exactly when another
+   application has the focus - so the caption paints active while a real
+   3.1 window beside it paints inactive. */
+static int   g_active = 1;
+
 /* ------------------------------------------------------------------ */
 
 /* A 3.1 bevel: highlight on top and left, shadow on bottom and right.
@@ -152,20 +159,27 @@ static void raised_box(HDC hdc, const RECT *bx, int pressed)
    colour - and only the glyph inside is drawn: a 13x3 bar with a black
    outline, a single white row inside it, and a drop shadow offset one
    pixel down and right. Every retro mock-up draws a minus sign here. */
-static void sysmenu_box(HDC hdc, const RECT *bx)
+static void sysmenu_box(HDC hdc, const RECT *bx, int barw)
 {
-    int l = bx->left, t = bx->top;
+    int t = bx->top;
+    int a = bx->left + (BTN_W - barw) / 2;   /* centred in the box */
+    int b = a + barw - 1;
 
     fill(hdc, bx, C_FACE);
     /* shadow first, so the outline sits on top of it where they meet */
-    vline(hdc, l + 15, t + 8, t + 9, C_SHADOW);
-    hline(hdc, l + 3, l + 15, t + 10, C_SHADOW);
-    hline(hdc, l + 2, l + 14, t + 7, C_FRAME);
-    hline(hdc, l + 2, l + 14, t + 9, C_FRAME);
-    vline(hdc, l + 2, t + 7, t + 9, C_FRAME);
-    vline(hdc, l + 14, t + 7, t + 9, C_FRAME);
-    hline(hdc, l + 3, l + 13, t + 8, C_HILIGHT);
+    vline(hdc, b + 1, t + 8, t + 9, C_SHADOW);
+    hline(hdc, a + 1, b + 1, t + 10, C_SHADOW);
+    hline(hdc, a, b, t + 7, C_FRAME);
+    hline(hdc, a, b, t + 9, C_FRAME);
+    vline(hdc, a, t + 7, t + 9, C_FRAME);
+    vline(hdc, b, t + 7, t + 9, C_FRAME);
+    hline(hdc, a + 1, b - 1, t + 8, C_HILIGHT);
 }
+
+/* The frame's bar glyph is 13 px wide; an MDI child's is 7, and so is the
+   one a maximised child puts in the menu bar. Measured off both. */
+#define BAR_FRAME  13
+#define BAR_CHILD  7
 
 /* Four rows, 7-5-3-1 px wide, solid black. Deliberately not Polygon():
    at this size the rasteriser's triangle is not the reference's shape,
@@ -473,7 +487,7 @@ static void menu_drop(HWND hwnd, int i)
 static void cap_paint(HWND hwnd, HDC hdc)
 {
     RECT rc, r, sys, mn, mx;
-    int active = (GetActiveWindow() == hwnd);
+    int active = g_active;
     int f = FRAME_W();
     char title[128];
     int n;
@@ -536,7 +550,7 @@ static void cap_paint(HWND hwnd, HDC hdc)
              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     SelectObject(hdc, of);
 
-    sysmenu_box(hdc, &sys);
+    sysmenu_box(hdc, &sys, BAR_FRAME);
     if (g_down == HIT_SYS) {
         RECT p = sys;
 
@@ -711,6 +725,161 @@ void chrome_paint(HWND hwnd, HDC hdc)
         menu_paint(hwnd, hdc);
 }
 
+/* ------------------------------------------------ MDI child chrome --- */
+
+/* A child's caption is the frame's, with two differences measured off a
+   real 3.11 client: the bar glyph is 7 px wide instead of 13, and an
+   INACTIVE child caption is white rather than button grey. Its border is
+   the same 1-2-1 the frame has, and it has no corner grips. */
+static void child_btns(HWND hwnd, RECT *sys, RECT *mn, RECT *mx)
+{
+    RECT rc;
+    int f = IsZoomed(hwnd) ? 0 : FRAME;
+
+    GetClientRect(hwnd, &rc);
+    sys->left  = f;                 sys->right = f + BTN_W;
+    mx->right  = rc.right - f;      mx->left   = mx->right - BTN_W;
+    mn->right  = mx->left - 1;      mn->left   = mn->right - BTN_W;
+    sys->top = mn->top = mx->top = f;
+    sys->bottom = mn->bottom = mx->bottom = f + CAP_H;
+}
+
+int chrome_child_edge(HWND hwnd)
+{
+    return IsZoomed(hwnd) ? 0 : FRAME;
+}
+
+int chrome_child_top(HWND hwnd)
+{
+    /* A maximised child has no caption at all - MDI hides it and the
+       glyphs move to the frame's menu bar. */
+    return IsZoomed(hwnd) ? 0 : FRAME + CAP_H + RULE;
+}
+
+void chrome_child_paint(HWND hwnd, HDC hdc, int active)
+{
+    RECT rc, r, sys, mn, mx;
+    int f = chrome_child_edge(hwnd);
+    char title[128];
+    int n;
+    HFONT of;
+
+    GetClientRect(hwnd, &rc);
+    if (IsZoomed(hwnd))
+        return;                     /* nothing of ours to draw */
+
+    r = rc;
+    fill(hdc, &r, C_FACE);
+    {
+        HBRUSH k = CreateSolidBrush(C_FRAME);
+
+        FrameRect(hdc, &r, k);
+        InflateRect(&r, -(FRAME - 1), -(FRAME - 1));
+        FrameRect(hdc, &r, k);
+        DeleteObject(k);
+    }
+
+    r.left = f; r.right = rc.right - f;
+    r.top = f;  r.bottom = f + CAP_H;
+    fill(hdc, &r, active ? C_ACTIVE : C_MENU);
+    hline(hdc, f, rc.right - f - 1, f + CAP_H, C_FRAME);
+
+    child_btns(hwnd, &sys, &mn, &mx);
+
+    n = GetWindowText(hwnd, title, sizeof(title) - 1);
+    title[n < 0 ? 0 : n] = '\0';
+    r.left   = sys.right + 1;
+    r.right  = mn.left - 1;
+    r.top    = f;
+    r.bottom = f + CAP_H;
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, active ? C_ACTTEXT : C_INACTTEXT);
+    of = SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+    DrawText(hdc, title, -1, &r,
+             DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    SelectObject(hdc, of);
+
+    sysmenu_box(hdc, &sys, BAR_CHILD);
+    raised_box(hdc, &mn, 0);
+    raised_box(hdc, &mx, 0);
+    arrow(hdc, mn.left + 8, mn.top + 7, 0);
+    arrow(hdc, mx.left + 8, mx.top + 7, 1);
+    vline(hdc, sys.right, sys.top, sys.bottom - 1, C_FRAME);
+    vline(hdc, mn.left - 1, mn.top, mn.bottom - 1, C_FRAME);
+    vline(hdc, mx.left - 1, mx.top, mx.bottom - 1, C_FRAME);
+}
+
+int chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
+                     LONG *result)
+{
+    POINT pt;
+    RECT rc, sys, mn, mx;
+    int f;
+
+    *result = 0;
+    switch (msg) {
+    case WM_NCCALCSIZE:
+        return 1;                   /* the whole window is client */
+
+    case WM_NCHITTEST:
+        f = chrome_child_edge(hwnd);
+        pt.x = GET_X_LPARAM(lParam);
+        pt.y = GET_Y_LPARAM(lParam);
+        ScreenToClient(hwnd, &pt);
+        GetClientRect(hwnd, &rc);
+        if (f) {
+            if (pt.x < f && pt.y < f) { *result = HTTOPLEFT; return 1; }
+            if (pt.x >= rc.right - f && pt.y < f)
+                { *result = HTTOPRIGHT; return 1; }
+            if (pt.x < f && pt.y >= rc.bottom - f)
+                { *result = HTBOTTOMLEFT; return 1; }
+            if (pt.x >= rc.right - f && pt.y >= rc.bottom - f)
+                { *result = HTBOTTOMRIGHT; return 1; }
+            if (pt.x < f) { *result = HTLEFT; return 1; }
+            if (pt.x >= rc.right - f) { *result = HTRIGHT; return 1; }
+            if (pt.y < f) { *result = HTTOP; return 1; }
+            if (pt.y >= rc.bottom - f) { *result = HTBOTTOM; return 1; }
+            child_btns(hwnd, &sys, &mn, &mx);
+            if (PtInRect(&sys, pt) || PtInRect(&mn, pt) || PtInRect(&mx, pt))
+                { *result = HTCLIENT; return 1; }
+            if (pt.y < f + CAP_H) { *result = HTCAPTION; return 1; }
+        }
+        *result = HTCLIENT;
+        return 1;
+
+    case WM_LBUTTONUP:
+        pt.x = GET_X_LPARAM(lParam);
+        pt.y = GET_Y_LPARAM(lParam);
+        child_btns(hwnd, &sys, &mn, &mx);
+        if (PtInRect(&mn, pt)) {
+            ShowWindow(hwnd, SW_MINIMIZE);
+            return 1;
+        }
+        if (PtInRect(&mx, pt)) {
+            /* WM_MDIMAXIMIZE, not ShowWindow: MDI has to know, or the
+               frame caption never picks up " - [Title]". */
+            SendMessage(GetParent(hwnd), WM_MDIMAXIMIZE, (UINT)hwnd, 0L);
+            return 1;
+        }
+        if (PtInRect(&sys, pt)) {
+            SendMessage(hwnd, WM_SYSCOMMAND, SC_KEYMENU, (LONG)' ');
+            return 1;
+        }
+        return 0;
+
+    case WM_LBUTTONDBLCLK:
+        pt.x = GET_X_LPARAM(lParam);
+        pt.y = GET_Y_LPARAM(lParam);
+        child_btns(hwnd, &sys, &mn, &mx);
+        if (PtInRect(&sys, pt)) {
+            SendMessage(GetParent(hwnd), WM_MDIDESTROY, (UINT)hwnd, 0L);
+            return 1;
+        }
+        return 0;
+    }
+    return 0;
+}
+
 int chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result)
 {
     POINT pt;
@@ -799,6 +968,7 @@ int chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result)
     case WM_NCACTIVATE:
         /* Repaint for the caption colour, and return TRUE so Windows does
            not try to draw a caption we do not have. */
+        g_active = (wParam != 0);
         inval_bar(hwnd, 0);
         *result = TRUE;
         return 1;
