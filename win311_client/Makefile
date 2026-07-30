@@ -75,7 +75,7 @@ PORT ?= 6400
 VMHOST ?= 10.0.2.2
 VMPORT ?= 6410
 
-.PHONY: all both run run32 spike spike16 spike-floppy run-spike devproxy test floppy vm-in vm-out clean
+.PHONY: all both run run32 spike spike16 mdispike mdispike16 spike-floppy run-spike devproxy test floppy vm-in vm-out clean
 
 all: $(EXE)
 
@@ -122,6 +122,20 @@ spike16: build/CAPSPK16.EXE
 build/CAPSPK16.EXE: spike/caption.c src/chrome.c | build
 	$(OWBIN)/wcl $(CFLAGS) $(LFLAGS) -fe=$@ spike/caption.c src/chrome.c
 	@rm -f __wcl_*.lnk caption.obj chrome.obj
+	@echo "-> $@"
+
+# The MDI experiment: can a child give up its non-client area and keep
+# DefMDIChildProc? See the header of spike/mdi.c.
+mdispike: build/MDISPIKE.EXE
+mdispike16: build/MDISPK16.EXE
+
+build/MDISPIKE.EXE: spike/mdi.c src/chrome.c | build/w32
+	$(W32CC) $(W32CFLAGS) -o $@ spike/mdi.c src/chrome.c -lgdi32 -luser32
+	@echo "-> $@"
+
+build/MDISPK16.EXE: spike/mdi.c src/chrome.c | build
+	$(OWBIN)/wcl $(CFLAGS) $(LFLAGS) -fe=$@ spike/mdi.c src/chrome.c
+	@rm -f __wcl_*.lnk mdi.obj chrome.obj
 	@echo "-> $@"
 
 # A floppy carrying the 16-bit spike into a real 3.11 or 95 guest - and
