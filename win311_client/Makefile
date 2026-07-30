@@ -146,36 +146,48 @@ build/MDISPK16.EXE: spike/mdi.c src/chrome.c | build
 #   make spike-floppy
 #   ./tools/vmfloppy.sh in build/spike.img     (running guest)
 #   qemu ... -fda build/spike.img              (at boot)
-spike-floppy: build/CAPSPK16.EXE
+spike-floppy: build/CAPSPK16.EXE build/MDISPK16.EXE
 	rm -f build/spike.img
 	mformat -C -f 1440 -v SPIKE -i build/spike.img ::
 	mcopy -i build/spike.img build/CAPSPK16.EXE ::/CAPSPK16.EXE
+	mcopy -i build/spike.img build/MDISPK16.EXE ::/MDISPK16.EXE
 	printf '%s\r\n' \
-	  'CAPSPK16.EXE - the Windows 3.1 chrome, drawn by the program.' \
+	  'Two programs. Both draw their own Windows 3.1 chrome.' \
 	  '' \
-	  'Run it:        A:\CAPSPK16.EXE          (a normal window)' \
-	  '               A:\CAPSPK16.EXE max      (starts maximised)' \
+	  'CAPSPK16.EXE   the frame: caption, menu bar, control menu.' \
+	  '               A:\CAPSPK16.EXE        normal window' \
+	  '               A:\CAPSPK16.EXE max    starts maximised' \
 	  '' \
-	  'Captures wanted, in order of value:' \
+	  'MDISPK16.EXE   the same frame with MDI children inside it, each' \
+	  '               drawing its own caption too. This is the one that' \
+	  '               needs checking on real 3.11 - everything about it' \
+	  '               so far has only been proved under Wine, and Wine' \
+	  '               has already been wrong four times.' \
+	  '               A:\MDISPK16.EXE        two children' \
+	  '               A:\MDISPK16.EXE max    one child maximised' \
 	  '' \
-	  ' 1. UNMAXIMISED, beside a real 3.11 window (Notepad will do),' \
-	  '    both visible at once. The reference capture we have is' \
-	  '    maximised, and a maximised 3.1 window has no sizing border,' \
-	  '    so the border is the one thing that cannot be checked.' \
+	  'What to check in MDISPK16, in order of how much it matters:' \
 	  '' \
-	  ' 2. MENUS OPEN - Notepad Edit menu (it has greyed items) and' \
-	  '    this program File menu. Every popup metric here is guessed;' \
-	  '    none of it is measured.' \
+	  ' 1. MAXIMISE. Does the child fill the grey area with no caption,' \
+	  '    and does the FRAME caption become "LLM64 - [Picture]"?' \
+	  '    Expected gap: the maximised child sysmenu box and restore' \
+	  '    arrow should appear in the menu bar beside "Window" and will' \
+	  '    NOT - we draw that bar, so MDI cannot insert into it.' \
+	  ' 2. The Window menu should list the open children at the bottom.' \
+	  ' 3. Clicking between children: the active one navy, other white.' \
+	  ' 4. Drag a child by its caption; resize it by an edge or corner.' \
+	  ' 5. Ctrl+F4 closes a child, Ctrl+F6 moves to the next.' \
 	  '' \
-	  ' 3. MAXIMISED, to compare against what we already have.' \
+	  'Captures still wanted from a REAL 3.11 window, for measuring:' \
+	  ' - an open menu (Notepad Edit has greyed items). Every popup' \
+	  '   metric we use is guessed; none of it is measured.' \
+	  ' - an MDI app with a child maximised (Program Manager will do),' \
+	  '   to see exactly where 3.1 puts those two glyphs in the bar.' \
 	  '' \
-	  'How: PrintScreen grabs the screen, Alt+PrintScreen just the' \
-	  'active window. Then PBRUSH.EXE, and BEFORE pasting set' \
-	  'Options > Image Attributes to the screen size in pels, or the' \
-	  'paste is cropped to the default canvas. Edit > Paste, then' \
-	  'File > Save As to A: as PCX - a 1024x768 BMP is ~790 KB and' \
-	  'only one will fit; PCX is run-length coded and flat UI shrinks' \
-	  'to a fraction of that.' \
+	  'How: PrintScreen for the screen, Alt+PrintScreen for the active' \
+	  'window. Then PBRUSH.EXE, and BEFORE pasting set Options > Image' \
+	  'Attributes to the screen size in pels or the paste is cropped.' \
+	  'Save to A: as PCX - a 1024x768 BMP is ~790 KB and only one fits.' \
 	  > build/SPIKE.TXT
 	mcopy -i build/spike.img build/SPIKE.TXT ::/README.TXT
 	@echo
