@@ -17,6 +17,20 @@ You can:
    the result of combat" or "/print the complete recipe we just discussed")
 
 
+## Support
+
+LLM64 is released as donationware. If you enjoy it, please consider donating
+to support my work! The recommended donation is $10.
+
+- Donate on [Ko-fi](https://ko-fi.com/foxipso)
+- Or join my [Patreon](https://www.patreon.com/c/foxipso) for early access,
+  exclusives, and also to support my work!
+
+Join my Discord for support/updates, and/or my X/Twitter:
+
+- Discord, [Foxipso's Den](https://discord.gg/2jYw4swm3X)
+- Twitter/X, [@TheFoxipso](https://x.com/TheFoxipso)
+
 ## Quickstart
 
 1. [Install the proxy](llm64_proxy/README.md#installation). You'll setup Python in a venv on any modern machine
