@@ -728,6 +728,61 @@ int chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result)
         *result = cap_hittest(hwnd, lParam);
         return 1;
 
+    /* There is no non-client area to paint, but DefWindowProc does not
+       know that during a resize and briefly draws a default frame - which
+       shows up on Windows 11 as old chrome flashing between frames. */
+    case WM_NCPAINT:
+        *result = 0;
+        return 1;
+
+    /* We cover every pixel in WM_PAINT, so letting anything erase first
+       only produces a flash. */
+    case WM_ERASEBKGND:
+        *result = 1;
+        return 1;
+
+    /* The control menu's items ARE system commands, and something has to
+       turn the WM_COMMAND they generate into WM_SYSCOMMAND. The spike did
+       that before the chrome was extracted and nothing did it afterwards,
+       so Close stopped closing and Move and Size stopped working - the
+       menu opened and every item was inert. The 0xF000 test is the
+       documented range for system commands; an application's own menu ids
+       are far below it. */
+    case WM_COMMAND:
+        if ((wParam & 0xFFF0) >= 0xF000) {
+            PostMessage(hwnd, WM_SYSCOMMAND, wParam & 0xFFF0, 0L);
+            return 1;
+        }
+        return 0;
+
+    /* Alt+Space opens the control menu, and Alt+letter drops the matching
+       bar menu. Windows asks for both through SC_KEYMENU, and normally
+       DefWindowProc answers using the window's real system menu and real
+       menu bar. We have neither - both are ours - so both arrive here and
+       do nothing unless we answer them. */
+    case WM_SYSCOMMAND:
+        if ((wParam & 0xFFF0) == SC_KEYMENU) {
+            int i;
+            char c = (char)lParam;
+
+            if (c == ' ') {
+                sysmenu_drop(hwnd);
+                return 1;
+            }
+            for (i = 0; i < g_nmenus; i++) {
+                const char *l = g_label[i];
+
+                while (*l && *l != '&')
+                    l++;
+                if (*l == '&' && l[1]
+                    && (char)(l[1] | 0x20) == (char)(c | 0x20)) {
+                    menu_drop(hwnd, i);
+                    return 1;
+                }
+            }
+        }
+        return 0;
+
     case WM_GETMINMAXINFO: {
         MINMAXINFO FAR *mmi = (MINMAXINFO FAR *)lParam;
         RECT wa;
