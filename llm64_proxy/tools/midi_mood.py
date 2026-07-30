@@ -159,7 +159,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("candidates", type=Path, help="scan.json from midi_scan.py")
     ap.add_argument("--base-url", default="http://localhost:5000/v1")
-    ap.add_argument("--model", default="gemma4-26b-a4b-it-qat-q4-mlboy")
+    ap.add_argument("--model", default="local",
+                    help="model name to ask that endpoint for; llama.cpp "
+                         "ignores it, other servers do not")
     ap.add_argument("--pilot", type=int, metavar="N",
                     help="classify only the first N tunes")
     ap.add_argument("--batch-size", type=int, default=24)
