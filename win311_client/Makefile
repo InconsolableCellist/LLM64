@@ -38,6 +38,21 @@ OBJ     := $(patsubst src/%.c,build/%.obj,$(SRC))
 EXE     := build/LLM64.EXE
 RC      := src/llm64.rc
 
+# The 32-bit PE, for Windows 10/11 and for Wine without the 16-bit
+# subsystem. Same sources, same resources: include/llmport.h is the only
+# file that knows which target it is, and it decides on __WATCOMC__.
+#
+# 32-bit rather than 64-bit on purpose - see llmport.h. WoW64 is on every
+# x64 Windows and Windows 11 on ARM emulates x86-32, so this runs
+# everywhere a 64-bit build would, with a much smaller diff.
+W32CC   := i686-w64-mingw32-gcc
+W32RC   := i686-w64-mingw32-windres
+W32OBJ  := $(patsubst src/%.c,build/w32/%.o,$(SRC))
+EXE32   := build/LLM32.EXE
+# -mwindows picks the GUI subsystem, so no console appears behind it.
+W32CFLAGS := -std=gnu89 -O2 -Wall -Iinclude -mwindows
+W32LIBS   := -lcomdlg32 -lwinmm -lws2_32 -lgdi32 -luser32 -lkernel32
+
 # -bt=windows  16-bit Windows target      -ml  large model (far code+data)
 # -zW          Windows API prologue        -zu  DS != SS, as callbacks need
 # -s           no stack-overflow checks (no runtime to report them to)
@@ -60,12 +75,31 @@ PORT ?= 6400
 VMHOST ?= 10.0.2.2
 VMPORT ?= 6410
 
-.PHONY: all run devproxy test floppy vm-in vm-out clean
+.PHONY: all both run run32 devproxy test floppy vm-in vm-out clean
 
 all: $(EXE)
 
+# Both targets in one go. Use this rather than `make`: the whole point of
+# llmport.h is that the 16-bit build cannot be allowed to rot, and it
+# only stays green if you compile it every time.
+both: $(EXE) $(EXE32)
+
 build:
 	@mkdir -p build
+
+build/w32:
+	@mkdir -p build/w32
+
+build/w32/%.o: src/%.c | build/w32
+	$(W32CC) $(W32CFLAGS) -c -o $@ $<
+
+$(EXE32): $(W32OBJ) $(RC) | build/w32
+	$(W32RC) -i $(RC) -o build/w32/llm64_res.o --include-dir include
+	$(W32CC) $(W32CFLAGS) -o $@ $(W32OBJ) build/w32/llm64_res.o $(W32LIBS)
+	@echo "-> $@"
+
+run32: $(EXE32)
+	WINEPREFIX=$(WINEPREFIX) WINEDEBUG=-all wine $(EXE32) $(HOST) $(PORT)
 
 build/%.obj: src/%.c | build
 	$(OWBIN)/wcc $(CFLAGS) -fo=$@ $<

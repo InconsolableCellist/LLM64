@@ -43,7 +43,7 @@
 #include <mmsystem.h>   /* MCI: the sequencer plays our .MIDs */
 #include <string.h>
 #include <stdlib.h>
-#include <i86.h>        /* FP_OFF, for segment-boundary math */
+#include "llmport.h"    /* the 16-bit/32-bit seam; brings i86.h on Watcom */
 #include "wire.h"
 #include "net.h"
 #include "scroll.h"
@@ -104,7 +104,7 @@ static HWND     g_input;    /* the conversation's input box */
 static HFONT    g_fonts[FONT_VARIANTS];
 static HFONT    g_font;                 /* == g_fonts[0], read constantly */
 static int      g_cw = 8, g_ch = 16;    /* character cell */
-static FARPROC  g_old_edit_proc;
+static LlmOldProc g_old_edit_proc;
 static char     g_status[128] = "Not connected.";
 /* The proxy composes its own right-hand chrome - place, now playing,
    pictures waiting - and sends it in HINT. It gets its own half of the
@@ -716,7 +716,7 @@ static void launch_create(HWND frame)
     static const char *label[LAUNCH_N] =
         { "Menu", "Conversation", "Picture", "Music",
           "Character", "Items", "Notebook", "Map" };
-    HINSTANCE inst = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
+    HINSTANCE inst = LLM_INST(frame);
     int i;
 
     /* Owner-drawn so a button can show that its window is OPEN: 3.1 has
@@ -1142,7 +1142,7 @@ static void pic_open(void)
     }
     mcs.szClass = PIC_CLASS;
     mcs.szTitle = "Picture";
-    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.hOwner  = LLM_INST(g_frame);
     desk_place(DESK_PIC, &mcs, 24, 16, 336, 240);
     mcs.style   = 0;
     mcs.lParam  = 0;
@@ -2374,13 +2374,15 @@ long FAR PASCAL _export PaneProc(HWND hwnd, UINT msg, UINT wParam,
     switch (msg) {
     case WM_VSCROLL:
         rows = view_rows(v);
-        switch (wParam) {
+        switch (LLM_SCROLL_CODE(wParam, lParam)) {
         case SB_LINEUP:   v->top--; break;
         case SB_LINEDOWN: v->top++; break;
         case SB_PAGEUP:   v->top -= rows; break;
         case SB_PAGEDOWN: v->top += rows; break;
         case SB_THUMBPOSITION:
-        case SB_THUMBTRACK: v->top = LOWORD(lParam); break;
+        case SB_THUMBTRACK:
+            v->top = LLM_SCROLL_POS(wParam, lParam);
+            break;
         default: return 0;
         }
         view_sync_scroll(v);
@@ -2414,7 +2416,7 @@ static HWND pane_create(HWND parent, View *v)
     HWND p = CreateWindow(PANE_CLASS, NULL,
                           WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER,
                           0, 0, 10, 10, parent, (HMENU)ID_PANE,
-                          (HINSTANCE)GetWindowWord(parent, GWW_HINSTANCE),
+                          LLM_INST(parent),
                           NULL);
     if (!p)
         return NULL;
@@ -2759,13 +2761,13 @@ long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
 
     switch (msg) {
     case WM_CREATE:
-        inst = (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE);
+        inst = LLM_INST(hwnd);
         pane_create(hwnd, &g_conv_view);
         g_input = CreateWindow("EDIT", "",
                                WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
                                0, 0, 10, 10, hwnd, (HMENU)ID_INPUT, inst, NULL);
         SendMessage(g_input, WM_SETFONT, (WPARAM)g_font, 0L);
-        g_old_edit_proc = (FARPROC)GetWindowLong(g_input, GWL_WNDPROC);
+        g_old_edit_proc = (LlmOldProc)GetWindowLong(g_input, GWL_WNDPROC);
         SetWindowLong(g_input, GWL_WNDPROC, (LONG)EditProc);
         break;
 
@@ -2783,21 +2785,28 @@ long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
     case WM_MDIACTIVATE:
         /* Typing should land in the document you just clicked on, not
            wherever the focus happened to be. */
-        if (wParam)
+        if (LLM_MDI_ACTIVE(wParam, lParam, hwnd))
             SetFocus(g_input);
         break;
 
+    /* The input box has to follow the theme, or the Screen palette
+       leaves a white box glued under a black transcript. The brush is
+       returned, not copied, which is why it is a global that outlives
+       the message.
+
+       Win16 has one WM_CTLCOLOR for every control and says which kind
+       it is in HIWORD(lParam); Win32 split it into a message per class
+       and never sends the old one. */
+#ifdef __WATCOMC__
     case WM_CTLCOLOR:
-        /* The input box has to follow the theme, or the Screen palette
-           leaves a white box glued under a black transcript. WM_CTLCOLOR
-           is how 3.1 did this - the brush is returned, not copied, which
-           is why it is a global that outlives the message. */
-        if (HIWORD(lParam) == CTLCOLOR_EDIT) {
-            SetTextColor((HDC)wParam, g_pal[1]);
-            SetBkColor((HDC)wParam, g_bg);
-            return (LONG)g_bg_brush;
-        }
-        break;
+        if (HIWORD(lParam) != CTLCOLOR_EDIT)
+            break;
+#else
+    case WM_CTLCOLOREDIT:
+#endif
+        SetTextColor((HDC)wParam, g_pal[1]);
+        SetBkColor((HDC)wParam, g_bg);
+        return (LONG)g_bg_brush;
 
     case WM_SETFOCUS:
         if (g_input)
@@ -2986,8 +2995,7 @@ long FAR PASCAL _export NoteProc(HWND hwnd, UINT msg, UINT wParam,
                                  WS_CHILD | WS_VISIBLE | WS_BORDER
                                  | WS_VSCROLL | LBS_NOTIFY,
                                  0, 0, 10, 10, hwnd, (HMENU)ID_NOTELIST,
-                                 (HINSTANCE)GetWindowWord(hwnd,
-                                                          GWW_HINSTANCE),
+                                 LLM_INST(hwnd),
                                  NULL);
         SendMessage(g_note_lb, WM_SETFONT, (WPARAM)g_font, 0L);
         /* The sheets outlive this window, so reopening it finds them
@@ -3008,7 +3016,8 @@ long FAR PASCAL _export NoteProc(HWND hwnd, UINT msg, UINT wParam,
         return 0;
 
     case WM_COMMAND:
-        if (wParam == ID_NOTELIST && HIWORD(lParam) == LBN_SELCHANGE) {
+        if (LLM_CMD_ID(wParam, lParam) == ID_NOTELIST
+            && LLM_CMD_NOTIFY(wParam, lParam) == LBN_SELCHANGE) {
             int r = (int)SendMessage(g_note_lb, LB_GETCURSEL, 0, 0L);
             if (r >= 0)
                 note_show((int)SendMessage(g_note_lb, LB_GETITEMDATA,
@@ -3028,7 +3037,7 @@ long FAR PASCAL _export NoteProc(HWND hwnd, UINT msg, UINT wParam,
         /* Paper has nothing to type into, so activating the Notebook must
            not leave the keyboard on the conversation's input box - give
            the focus to the page, where PgUp and PgDn work. */
-        if (wParam && g_note_pane)
+        if (LLM_MDI_ACTIVE(wParam, lParam, hwnd) && g_note_pane)
             SetFocus(g_note_pane);
         break;
 
@@ -3529,8 +3538,7 @@ long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
                                 WS_CHILD | WS_BORDER | WS_VSCROLL
                                 | LBS_NOTIFY,
                                 0, 0, 10, 10, hwnd, (HMENU)ID_PICLIST,
-                                (HINSTANCE)GetWindowWord(hwnd,
-                                                         GWW_HINSTANCE),
+                                LLM_INST(hwnd),
                                 NULL);
         for (i = 0; i < g_shelf_count; i++)
             SendMessage(g_pic_lb, LB_ADDSTRING, 0,
@@ -3545,8 +3553,7 @@ long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
         g_pic_auto = CreateWindow("BUTTON", "Illustrate every room",
                                   WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
                                   0, 0, 10, 10, hwnd, (HMENU)ID_PICAUTO,
-                                  (HINSTANCE)GetWindowWord(hwnd,
-                                                           GWW_HINSTANCE),
+                                  LLM_INST(hwnd),
                                   NULL);
         SendMessage(g_pic_auto, WM_SETFONT, (WPARAM)g_font, 0L);
         pic_auto_sync();
@@ -3561,11 +3568,12 @@ long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
         return 1;
 
     case WM_COMMAND:
-        if (wParam == ID_PICLIST && HIWORD(lParam) == LBN_SELCHANGE) {
+        if (LLM_CMD_ID(wParam, lParam) == ID_PICLIST
+            && LLM_CMD_NOTIFY(wParam, lParam) == LBN_SELCHANGE) {
             shelf_show((int)SendMessage(g_pic_lb, LB_GETCURSEL, 0, 0L));
             return 0;
         }
-        if (wParam == ID_PICAUTO) {
+        if (LLM_CMD_ID(wParam, lParam) == ID_PICAUTO) {
             /* BS_AUTOCHECKBOX has already flipped its own state; read it
                rather than assuming, and persist immediately - a setting
                that needs OK is a setting people distrust. */
@@ -3718,7 +3726,7 @@ long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
     switch (msg) {
     case WM_CREATE:
         g_mus_wnd = hwnd;
-        inst = (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE);
+        inst = LLM_INST(hwnd);
         for (i = 0; i < 3; i++)
             g_mus_btn[i] = CreateWindow("BUTTON", label[i],
                                         WS_CHILD | WS_VISIBLE
@@ -3752,7 +3760,7 @@ long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
         break;
 
     case WM_COMMAND:
-        switch (wParam) {
+        switch (LLM_CMD_ID(wParam, lParam)) {
         case IDC_MUSBASE + 0:       /* Pause / Resume: purely local */
             if (g_mus_state == 1) {
                 mciSendString("pause llm64mid", NULL, 0, NULL);
@@ -4002,8 +4010,7 @@ long FAR PASCAL _export ChrProc(HWND hwnd, UINT msg, UINT wParam,
         g_chr_btn = CreateWindow("BUTTON", "Refresh",
                                  WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                                  0, 0, 10, 10, hwnd, (HMENU)ID_CHRREFRESH,
-                                 (HINSTANCE)GetWindowWord(hwnd,
-                                                          GWW_HINSTANCE),
+                                 LLM_INST(hwnd),
                                  NULL);
         SendMessage(g_chr_btn, WM_SETFONT, (WPARAM)g_font, 0L);
         break;
@@ -4011,7 +4018,7 @@ long FAR PASCAL _export ChrProc(HWND hwnd, UINT msg, UINT wParam,
         chr_paint(hwnd);
         return 0;
     case WM_COMMAND:
-        if (wParam == ID_CHRREFRESH) {
+        if (LLM_CMD_ID(wParam, lParam) == ID_CHRREFRESH) {
             /* '/sheet' is a real command, so the C64 can type it too. The
                proxy answers with its stored halves immediately and asks
                the model for a fresh state block. */
@@ -4082,8 +4089,7 @@ long FAR PASCAL _export InvProc(HWND hwnd, UINT msg, UINT wParam,
                                 WS_CHILD | WS_VISIBLE | WS_BORDER
                                 | WS_VSCROLL,
                                 0, 0, 10, 10, hwnd, (HMENU)ID_INVLIST,
-                                (HINSTANCE)GetWindowWord(hwnd,
-                                                         GWW_HINSTANCE),
+                                LLM_INST(hwnd),
                                 NULL);
         inv_fill();
         break;
@@ -4123,7 +4129,7 @@ static void sheet_open(const char *cls, HWND *slot, int which,
     }
     mcs.szClass = cls;
     mcs.szTitle = cls[5] == 'C' ? "Character" : "Inventory";
-    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.hOwner  = LLM_INST(g_frame);
     desk_place(which, &mcs, x, y, cx, cy);
     mcs.style = 0;
     /* Opening a sheet is a good moment to ask for the proxy's stored copy:
@@ -4148,7 +4154,7 @@ static void note_open(void)
     }
     mcs.szClass = NOTE_CLASS;
     mcs.szTitle = "Notebook";
-    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.hOwner  = LLM_INST(g_frame);
     /* Wide enough for the index and a whole 78-column printed page, which
        is what the proxy laid the sheet out to: the page half does not
        re-flow (it is already typeset), so a narrower window clips it. */
@@ -4182,7 +4188,7 @@ static void map_open(void)
     if (h > 420) h = 420;
     mcs.szClass = MAP_CLASS;
     mcs.szTitle = "Map";
-    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.hOwner  = LLM_INST(g_frame);
     /* Same free refresh the sheet windows ask for. */
     if (net_state() == NET_UP)
         send_frame(MSG_GET_SHEET, NULL, 0);
@@ -4217,7 +4223,7 @@ static void mus_open_wnd(void)
     }
     mcs.szClass = MUS_CLASS;
     mcs.szTitle = "Music";
-    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.hOwner  = LLM_INST(g_frame);
     desk_place(DESK_MUS, &mcs, 60, 40, 250, 140);
     mcs.style   = 0;
     mcs.lParam  = 0;
@@ -4364,7 +4370,7 @@ BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
     (void)lParam;
     switch (msg) {
     case WM_INITDIALOG:
-        inst = (HINSTANCE)GetWindowWord(dlg, GWW_HINSTANCE);
+        inst = LLM_INST(dlg);
         SetDlgItemText(dlg, IDC_MENUTITLE, g_menu_count
             ? "Choose an action:"
             : "The proxy has not sent its menu yet. Connect, then try F1.");
@@ -4404,12 +4410,13 @@ BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
         return TRUE;
 
     case WM_COMMAND:
-        if (wParam >= IDC_MENUBASE && wParam < IDC_MENUBASE + MAX_MENU) {
-            g_menu_choice = (int)(wParam - IDC_MENUBASE);
+        if (LLM_CMD_ID(wParam, lParam) >= IDC_MENUBASE
+            && LLM_CMD_ID(wParam, lParam) < IDC_MENUBASE + MAX_MENU) {
+            g_menu_choice = (int)(LLM_CMD_ID(wParam, lParam) - IDC_MENUBASE);
             EndDialog(dlg, 1);
             return TRUE;
         }
-        if (wParam == IDCANCEL) {
+        if (LLM_CMD_ID(wParam, lParam) == IDCANCEL) {
             EndDialog(dlg, 0);
             return TRUE;
         }
@@ -4431,7 +4438,7 @@ BOOL FAR PASCAL _export PicsDlgProc(HWND dlg, UINT msg, UINT wParam,
         return TRUE;
 
     case WM_COMMAND:
-        switch (wParam) {
+        switch (LLM_CMD_ID(wParam, lParam)) {
         case IDOK:
             g_room_pics = IsDlgButtonChecked(dlg, IDC_ROOMPICS) ? 1 : 0;
             save_ini();
@@ -4451,7 +4458,7 @@ BOOL FAR PASCAL _export PicsDlgProc(HWND dlg, UINT msg, UINT wParam,
    the link is up; a later connect re-sends it either way. */
 static void pics_dialog(HWND owner)
 {
-    HINSTANCE inst = (HINSTANCE)GetWindowWord(owner, GWW_HINSTANCE);
+    HINSTANCE inst = LLM_INST(owner);
     FARPROC fn = MakeProcInstance((FARPROC)PicsDlgProc, inst);
     int r = DialogBox(inst, "LLM64PICS", owner, (DLGPROC)fn);
 
@@ -4526,6 +4533,7 @@ BOOL FAR PASCAL _export ConvDlgProc(HWND dlg, UINT msg, UINT wParam,
 {
     int i;
     char q[96];
+    UINT cmd;
 
     switch (msg) {
     case WM_INITDIALOG:
@@ -4539,9 +4547,11 @@ BOOL FAR PASCAL _export ConvDlgProc(HWND dlg, UINT msg, UINT wParam,
 
     case WM_COMMAND:
         /* Double-clicking a row is Load - every 1993 file box agrees. */
-        if (wParam == IDC_CONVLIST && HIWORD(lParam) == LBN_DBLCLK)
-            wParam = IDC_CONVLOAD;
-        switch (wParam) {
+        cmd = LLM_CMD_ID(wParam, lParam);
+        if (cmd == IDC_CONVLIST
+            && LLM_CMD_NOTIFY(wParam, lParam) == LBN_DBLCLK)
+            cmd = IDC_CONVLOAD;
+        switch (cmd) {
         case IDC_CONVLOAD:
             i = conv_sel(dlg);
             if (i < 0)
@@ -4608,7 +4618,7 @@ BOOL FAR PASCAL _export ConvDlgProc(HWND dlg, UINT msg, UINT wParam,
    window's socket messages. */
 static int conv_dialog(HWND owner)
 {
-    HINSTANCE inst = (HINSTANCE)GetWindowWord(owner, GWW_HINSTANCE);
+    HINSTANCE inst = LLM_INST(owner);
     FARPROC fn;
     int r;
 
@@ -4639,7 +4649,7 @@ BOOL FAR PASCAL _export ServerDlgProc(HWND dlg, UINT msg, UINT wParam,
         return TRUE;
 
     case WM_COMMAND:
-        switch (wParam) {
+        switch (LLM_CMD_ID(wParam, lParam)) {
         case IDOK:
             GetDlgItemText(dlg, IDC_HOST, buf, sizeof(buf) - 1);
             port = GetDlgItemInt(dlg, IDC_PORT, NULL, FALSE);
@@ -4671,7 +4681,7 @@ BOOL FAR PASCAL _export ServerDlgProc(HWND dlg, UINT msg, UINT wParam,
    Settings menu and from the proxy's own "Server config" entry. */
 static void server_dialog(HWND owner)
 {
-    HINSTANCE inst = (HINSTANCE)GetWindowWord(owner, GWW_HINSTANCE);
+    HINSTANCE inst = LLM_INST(owner);
     /* MakeProcInstance is not optional in Win16: the dialog is called
        back through a thunk that reloads DS for this instance. */
     FARPROC fn = MakeProcInstance((FARPROC)ServerDlgProc, inst);
@@ -4761,7 +4771,7 @@ static HWND conv_create(HWND frame)
 
     mcs.szClass = CONV_CLASS;
     mcs.szTitle = "Conversation";
-    mcs.hOwner  = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
+    mcs.hOwner  = LLM_INST(frame);
     /* A real restored size, not CW_USEDEFAULT, and created *unmaximized*
        even though it is wanted maximized. Creating it maximized with
        CW_USEDEFAULT leaves the normal rect degenerate, so the first
@@ -4777,8 +4787,8 @@ static HWND conv_create(HWND frame)
     /* Same guard as pic_open: creation-time WM_SIZEs are not the user
        arranging the desk. */
     g_in_layout = 1;
-    w = (HWND)(WORD)SendMessage(g_mdi, WM_MDICREATE, 0,
-                                (LONG)(LPMDICREATESTRUCT)&mcs);
+    w = LLM_HWND(SendMessage(g_mdi, WM_MDICREATE, 0,
+                             (LONG)(LPMDICREATESTRUCT)&mcs));
     g_in_layout = 0;
     /* Not maximized any more: the desk holds two documents now, and
        layout_default puts this one beside the picture. Maximizing is
@@ -5001,7 +5011,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         g_mdi = CreateWindow("MDICLIENT", NULL,
                              WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
                              0, 0, 10, 10, hwnd, (HMENU)1,
-                             (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE),
+                             LLM_INST(hwnd),
                              (LPSTR)&ccs);
         if (!g_mdi)
             return -1;
@@ -5125,7 +5135,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         break;
 
     case WM_COMMAND:
-        switch (wParam) {
+        switch (LLM_CMD_ID(wParam, lParam)) {
         case IDM_CONNECT:    do_connect(); return 0;
         case IDM_DISCONNECT: net_disconnect();
                              set_status("Disconnected."); return 0;
@@ -5159,7 +5169,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
             return 0;
 
         case IDM_MENU: {
-            HINSTANCE inst = (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE);
+            HINSTANCE inst = LLM_INST(hwnd);
             FARPROC fn;
             int r;
 
