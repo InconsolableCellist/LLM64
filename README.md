@@ -34,6 +34,8 @@ Join my Discord for support/updates, and/or my X/Twitter:
 ## Quickstart
 
 1. [Install the proxy](llm64_proxy/README.md#installation). You'll setup Python in a venv on any modern machine
+   -- or skip Python entirely with the [standalone binary](llm64_proxy/README.md#standalone-binary-no-python),
+   one file with a launcher window (status, log, config editor) for Windows or Linux
 2. [Configure the proxy](llm64_proxy/README.md#configuration). Copy
    `config.toml.example` and point `[api]` at your model, then
    [start it](llm64_proxy/README.md#running-the-proxy)

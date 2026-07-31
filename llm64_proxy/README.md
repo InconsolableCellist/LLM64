@@ -7,7 +7,7 @@ ACIA and a Windows 3.x machine over Winsock (at the same time).
 
 | | |
 |---|---|
-| Install | [venv and requirements](#installation) |
+| Install | [venv and requirements](#installation), or a [standalone binary](#standalone-binary-no-python) |
 | Configure | [`config.toml`, starting with `[api]`](#configuration) |
 | Run | [`./run.sh proxy`, and how to check it](#running-the-proxy) |
 | Pictures, music, paper | [Optional features](#optional-features) |
@@ -32,6 +32,8 @@ ACIA and a Windows 3.x machine over Winsock (at the same time).
 
 ## Installation
 
+### From source
+
 Install Python 3.10+ on a machine the old/emulated hardware can reach.
 
 ```bash
@@ -41,9 +43,26 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt      # httpx, toml, Pillow, tomlkit
 ```
 
-No Python on the target machine? PACKAGING.md builds the proxy into a
-single Windows or Linux binary with a desktop launcher: start/stop
-buttons, live status, the log, and a config editor in one window.
+### Standalone binary (no Python)
+
+One file, and a launcher window instead of a terminal: Start/Stop
+buttons, live status (connections, LLM calls), the log, and a
+config.toml editor with validation.
+
+1. Build `llm64-proxy` (Linux) or `llm64-proxy.exe` (Windows) with
+   [PACKAGING.md](PACKAGING.md) -- four commands on the platform you
+   are targeting -- or take a build from the Releases page if one is
+   published for your platform.
+2. Put it in a folder of its own and run it. On Windows, allow the
+   firewall prompt so the clients can reach it.
+3. Press "Create config" in the Settings tab: it writes a `config.toml`
+   next to the binary from the built-in template. Point `[api]` at
+   your model (below), then "Save & Restart".
+
+The rest of this README applies unchanged; where it says
+`./run.sh proxy`, press Start instead. `llm64-proxy --headless` runs
+the plain CLI server from the same file, with the same flags as
+`python -m src`.
 
 ## Configuration
 
@@ -132,6 +151,10 @@ preset is used.
 
 It listens on TCP **6400** by default, on all interfaces. Open the port if you
 run a firewall: `sudo ufw allow 6400/tcp`.
+
+The [standalone binary](#standalone-binary-no-python) has no `run.sh`:
+the Start button in its window is the same thing, and `[server]`
+`host`/`port` in config.toml replace the CLI flags.
 
 ### Check it
 
