@@ -1,8 +1,9 @@
 # LLM64
 
-LLM64 lets a Commodore 64 (or a Windows 3.11/95/98 PC) play an
-infinite D&D-style text adventure with a local (or remote) Large Language
-Model like Gemma 4, ChatGPT, Claude, Grok, GLM, Kimi, etc.
+LLM64 lets a Commodore 64 (or a Windows PC, anything from 3.11 to
+Windows 11) play an infinite D&D-style text adventure with a local (or
+remote) Large Language Model like Gemma 4, ChatGPT, Claude, Grok, GLM,
+Kimi, etc.
 
 You can:
 
@@ -43,35 +44,35 @@ Join my Discord for support/updates, and/or my X/Twitter:
    [Windows](win311_client/README.md#build) client — pre-compiled binaries
    are on the Releases page
 4. Run the client — [on a C64, a C64 Ultimate or VICE](c64_client/README.md#running-it),
-   or [on a PC, a VM or Wine](win311_client/README.md#running-it)
+   or [on a modern or period PC, a VM or Wine](win311_client/README.md#running-it)
 5. Optionally, [enable more features in the proxy](llm64_proxy/README.md#optional-features)
    — pictures, SID music, MIDI music, real printing, `/code`
 
-## C64 and Win 3.11/95/98 Clients
+## The Clients: C64, Win 3.11/95/98, and modern Windows
 
-| | |
-|---|---|
-| ![The C64 client in an adventure](screenshots/c64_client.png) | ![The Windows 3.11 client](screenshots/win311_client.png) |
-| The C64 with soft-80 bitmap text and SID music | the same adventure on Windows 3.11 with MIDI music |
-
-| | [**C64**](c64_client/README.md) | [**Windows 3.11/95/98** ](win311_client/README.md) |
+| | | |
 |---|---|---|
-| Runs on | a real C64/C128, a C64 Ultimate, or VICE | a real 386/486, a VM, or Wine |
-| Built with | cc65 (C + 6502 asm) | Open Watcom V2, cross-compiled from Linux |
-| Talks to the proxy through | a SwiftLink-compatible 6551 ACIA at `$DE00`, dialling Hayes AT | a TCP socket, Winsock 1.1 |
-| Screen | 80 columns of soft-80 bitmap on a 64 KB machine | MDI: a desk of windows you arrange |
-| Pictures | 160x200 multicolour, Pepto palette, dithered | 320x200 8-bit DIB, period palette, dithered |
-| Music | SIDs relocated to `$B000` and streamed into RAM | `.MID` files through the MIDI Mapper |
-| `/print` | a real printer on IEC device 4 (or the proxy's CUPS queue) | virtual paper in a Notebook window (or real printer with CUPS) |
-| Install steps | [c64_client/README.md](c64_client/README.md) | [win311_client/README.md](win311_client/README.md) |
+| ![The C64 client in an adventure](screenshots/c64_client.png) | ![The Windows 3.11 client](screenshots/win311_client.png) | ![The same desk on Windows 11](screenshots/win11.png) |
+| The C64 with soft-80 bitmap text and SID music | the same adventure on Windows 3.11 with MIDI music | and on Windows 11, chrome and all |
+
+| | [**C64**](c64_client/README.md) | [**Windows 3.11/95/98** ](win311_client/README.md) | [**Windows 10/11**](win311_client/README.md#on-modern-windows-10-and-11) |
+|---|---|---|---|
+| Runs on | a real C64/C128, a C64 Ultimate, or VICE | a real 386/486, a VM, or Wine | any Windows 10/11, x64 or ARM |
+| Built with | cc65 (C + 6502 asm) | Open Watcom V2, cross-compiled from Linux | mingw-w64, from the same sources |
+| Talks to the proxy through | a SwiftLink-compatible 6551 ACIA at `$DE00`, dialling Hayes AT | a TCP socket, Winsock 1.1 | the same socket, Winsock 2 |
+| Screen | 80 columns of soft-80 bitmap on a 64 KB machine | MDI: a desk of windows you arrange | the same desk, its 3.1 chrome drawn by the client |
+| Pictures | 160x200 multicolour, Pepto palette, dithered | 320x200 8-bit DIB, period palette, dithered | the same DIBs |
+| Music | SIDs relocated to `$B000` and streamed into RAM | `.MID` files through the MIDI Mapper | `.MID` files through the built-in GS synth |
+| `/print` | a real printer on IEC device 4 (or the proxy's CUPS queue) | virtual paper in a Notebook window (or real printer with CUPS) | the same Notebook |
+| Install steps | [c64_client/README.md](c64_client/README.md) | [win311_client/README.md](win311_client/README.md) | [win311_client/README.md](win311_client/README.md#on-modern-windows-10-and-11) |
 ```
 ┌─────────────────┐  TCP over
 │  C64 / VICE /   │  a SwiftLink ACIA ┐
 │  C64 Ultimate   │  (9600-38400 bd)  │   ┌──────────────┐         ┌──────────────────┐
 └─────────────────┘                   ├──►│ Linux proxy  │  HTTPS  │ OpenAI-compatible│
 ┌─────────────────┐                   │   │  (Python,    │ ◄─────► │ API (llama.cpp,  │
-│ Windows 3.1 /   │  TCP over         │   │   asyncio)   │   SSE   │ OpenAI, Ollama…) │
-│ 3.11 / 95 PC    │  Winsock 1.1     ─┘   └──────────────┘         └──────────────────┘
+│ Windows 3.1-98, │  TCP over         │   │   asyncio)   │   SSE   │ OpenAI, Ollama…) │
+│ 10 or 11 PC     │  Winsock 1.1/2   ─┘   └──────────────┘         └──────────────────┘
 └─────────────────┘
 ```
 
@@ -105,8 +106,8 @@ display a "!P" to indicate a picture is waiting for you in adventure mode
 It may also display "PIC:n" where `n` is the number of pics generated in that
 adventure (when no new picture is waiting for you to view it).
 
-**On the Windows 3.11 client**, run `LLM64.EXE` with `LLM64.INI` beside
-it; it connects on startup to the address in that file (Settings->Server... changes it from inside the program). The same slash commands work, and most features have their own MDI windows: picture, MIDI, character sheet, items, notebook, map, selectable with the top menubar. The status strip
+**On the Windows client**, run `LLM64.EXE` (16-bit) or `LLM32.EXE` (on
+modern Windows) with `LLM64.INI` beside it; it connects on startup to the address in that file (Settings->Server... changes it from inside the program). The same slash commands work, and most features have their own MDI windows: picture, MIDI, character sheet, items, notebook, map, selectable with the top menubar. The status strip
 shows the client's state on the left and the proxy's state (room,
 now playing) on the right.
 
@@ -150,7 +151,8 @@ I've automated the assignment of moods based on the game title, but some of them
 are mis-sorted, which I'm working through (hopefully).
 
 On Windows the client plays `.MID` files through the MIDI
-Mapper from a separate mood-tagged library. See [Music for the Windows client](llm64_proxy/README.md#music-for-the-windows-client-midi)
+Mapper (on modern Windows, the built-in GS synth) from a separate
+mood-tagged library. See [Music for the Windows client](llm64_proxy/README.md#music-for-the-windows-client-midi)
 for how that library is built; the SID library for the C64 is
 [here](llm64_proxy/README.md#building-the-sid-music-library-the-c64s-music).
 
@@ -197,9 +199,11 @@ c64_client/     cc65 client (main.c TUI + transfer state machines,
                 serial.s ACIA driver, soft80.s bitmap renderer,
                 music.s SID player, display/editor/protocol)
                 -> c64_client/README.md
-win311_client/  Win16 client, Open Watcom, cross-built from Linux
-                (wire.c framing, scroll.c transcript, net.c Winsock,
-                main.c the MDI desk); tests/ run on the host
+win311_client/  the Windows client, cross-built from Linux twice from
+                one source tree: Win16 NE with Open Watcom, Win32 PE
+                with mingw-w64 (llmport.h is the seam; wire.c framing,
+                scroll.c transcript, net.c Winsock, main.c the MDI
+                desk); tests/ run on the host
                 -> win311_client/README.md
 llm64_proxy/    Python proxy (src/), and tools/:
                 sid_scan, sid_reloc_batch, sid_mood (LLM tagger),

@@ -6,6 +6,10 @@ Workgroups 3.11, Windows 95 and 98, in a VM, or under Wine, and gives you
 the same conversations, adventures, pictures, music and printing as the C64
 client. No modem or serial port is involved.
 
+The same source tree also builds `LLM32.EXE`, a 32-bit program for
+Windows 10 and 11 -- same windows, same wire protocol, same hand-drawn
+3.1 chrome. See [On modern Windows](#on-modern-windows-10-and-11).
+
 ![The Windows client in an adventure, with the picture and music windows open](../screenshots/win311_client.png)
 
 You need a running proxy first: see
@@ -33,7 +37,7 @@ You need a running proxy first: see
   `C-k`, `M-b`, `M-f`, `M-d`, Ctrl+Backspace) and history recall on `C-p`
   and `C-n`.
 - Two themes, Paper and C64 Screen, saved to `LLM64.INI` along with the
-  server address.
+  server address and the size and position of the main window.
 - The transcript re-flows when you resize the window.
 - Settings > Server... changes the host and port and reconnects.
 
@@ -54,6 +58,7 @@ The build runs on Linux and cross-compiles to a 16-bit NE binary.
 | For | Install |
 |-----|---------|
 | Building | Open Watcom V2 (below), GNU make |
+| `make both` (adds the Win32 build) | mingw-w64: `pacman -S mingw-w64-gcc`, `apt install gcc-mingw-w64-i686` |
 | `make floppy` | `mtools`: `pacman -S mtools`, `apt install mtools`, `dnf install mtools` |
 | `make run` | `wine` (its 16-bit subsystem) |
 | `make test` | a host C compiler, nothing else |
@@ -76,8 +81,13 @@ directory:
 ```sh
 make test            # wire + transcript unit tests, compiled for the host
 make                 # -> build/LLM64.EXE   (NE binary)
+make both            # -> LLM64.EXE + build/LLM32.EXE  (PE, for Windows 10/11)
 make WATCOM=/elsewhere/open-watcom-v2
 ```
+
+If you change the client, build with `make both` rather than `make`: the
+two targets share every source file, and the 16-bit build only stays
+green if you compile it every time.
 
 Run `make test` first on a new machine. It needs no Watcom, no Wine and no
 proxy, so a green run tells you the checkout is good before you start
@@ -190,6 +200,22 @@ Port=6400
 Settings > Server... rewrites that file from inside the program, so you
 never have to build another floppy to change the address.
 
+### On modern Windows (10 and 11)
+
+![The Windows 11 build: the same desk, the same chrome](../screenshots/win11.png)
+
+Run `LLM32.EXE` (from `make both`, or the Releases page) with `LLM64.INI`
+beside it, exactly like the 16-bit build. Nothing to install: Winsock and
+a MIDI synth are already part of Windows, so music plays out of the box
+through the built-in GS wavetable synth. The first tune takes a moment to
+start while Windows loads that synth.
+
+The binary is 32-bit x86 on purpose: WoW64 runs it on every x64 machine
+and Windows 11 on ARM emulates it, so one EXE covers everything. The
+window keeps its size and position across sessions (saved in the INI),
+and the 3.1 titlebars are drawn by the program itself, so the desk looks
+the same as it does on Windows for Workgroups.
+
 ## Music
 
 The Windows client plays MIDI files (the period-appropriate approach).
@@ -246,6 +272,11 @@ include/scroll.h src/scroll.c  the transcript: unwrapped logical lines in
                                free of Windows, and tested on the host.
 include/net.h    src/net.c     Winsock 1.1, asynchronous (WSAAsyncSelect
                                + messages).
+include/llmport.h              the Win16/Win32 seam: everything that
+                               differs between the two targets, so
+                               main.c never has to ask which one it is.
+include/chrome.h src/chrome.c  the 3.1 titlebars, borders and menubar,
+                               drawn by the client on both targets.
                  src/main.c    MDI frame and every window: conversation,
                                picture, music, character, items,
                                notebook, map, plus the launcher, input,
@@ -257,7 +288,8 @@ tests/           test_wire.c   framing tests, including the +0x20 length
 tools/           devproxy.sh   proxy + mock LLM for development
                  wine_smoke.sh launch under Wine, type, resize, screenshot
                  vmfloppy.sh   swap the floppy image in a running VM
-build/           LLM64.EXE, llm64.img, and the smoke-test screenshots
+build/           LLM64.EXE, LLM32.EXE, llm64.img, and the smoke-test
+                 screenshots
 ```
 
 ## Notes for developers
