@@ -18,7 +18,27 @@ with a control_response carrying behavior allow/deny.
 import asyncio
 import json
 import logging
+import os
 import shlex
+import shutil
+
+
+def _split_command(command: str) -> list:
+    """The configured command as argv, portably.
+
+    POSIX shlex eats backslashes, so a Windows path like C:\\bin\\claude
+    would come out mangled; split non-POSIX there and strip the quotes
+    ourselves. The bare name then goes through shutil.which because on
+    Windows npm installs the CLI as claude.cmd and CreateProcess wants
+    the real path with its extension, not the PATH-searched stem.
+    """
+    if os.name == 'nt':
+        argv = [a.strip('"') for a in shlex.split(command, posix=False)]
+    else:
+        argv = shlex.split(command)
+    if argv:
+        argv[0] = shutil.which(argv[0]) or argv[0]
+    return argv
 
 
 class ClaudeSession:
@@ -36,7 +56,7 @@ class ClaudeSession:
 
     async def start(self):
         # command may carry args (e.g. a mock "python3 mock_claude.py")
-        argv = shlex.split(self.command) + [
+        argv = _split_command(self.command) + [
                 '-p',
                 '--input-format', 'stream-json',
                 '--output-format', 'stream-json',
