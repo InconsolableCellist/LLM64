@@ -126,4 +126,48 @@ void chrome_dialog_paint(HWND dlg, HDC hdc, int active);
 int  chrome_dialog_msg(HWND dlg, UINT msg, UINT wParam, LONG lParam,
                        LONG *result);
 
+/* ---- controls ----------------------------------------------------- */
+
+/* Skin one BUTTON, or every BUTTON child of a window. Push buttons,
+   default push buttons and checkboxes; the control keeps its own state,
+   focus, mnemonic and click handling, and only its painting changes.
+   Dialogs get this for free - chrome_dialog_msg does it on
+   WM_INITDIALOG - so it is only worth calling by hand for buttons a
+   window creates itself.
+ *
+ * Call it as often as you like: a button already skinned is left alone. */
+void chrome_button(HWND btn);
+void chrome_buttons(HWND parent);
+
+/* The 3.1 button face on any DC, for code that owner-draws its own:
+   black outline with the corner pixels left to the parent, a two pixel
+   mitred bevel, and #C0C0C0 inside. `deflt` adds the heavy ring 3.1 puts
+   round the default button. */
+void chrome_button_face(HDC hdc, const RECT *bx, int pressed, int deflt);
+
+/* And 3.1's checkbox: a flat 13x13 black box on white with a black X
+   inside it. No bevel, no sunken well and no tick - the checkmark
+   arrived with Windows 95. `x`,`y` is its top left corner. */
+void chrome_checkbox_face(HDC hdc, int x, int y, int checked, int disabled);
+
+/* Answer a WM_CTLCOLOR (3.1) or WM_CTLCOLOR* (Win32) on the 3.1 palette.
+ * Without it a dialog is #F0F0F0 on Windows 11 inside #C0C0C0 chrome,
+ * which reads as a rendering fault rather than as a style.
+ *
+ * This one is NOT folded into chrome_dialog_msg, and the reason is worth
+ * knowing: the answer to WM_CTLCOLOR is a BRUSH, and a brush cannot come
+ * back through DWL_MSGRESULT - the dialog manager does not look there
+ * for these messages. It reads the dialog procedure's own return value.
+ * Routed the usual way the brush arrives as TRUE, the control falls back
+ * to a default, and the symptom is a label that erases white and then
+ * draws its text on grey. So it goes FIRST, ahead of chrome_dialog_msg,
+ * and returns directly:
+ *
+ *     LONG r;
+ *     if (LLM_IS_CTLCOLOR(msg) && chrome_ctlcolor(msg, wParam, lParam, &r))
+ *         return (BOOL)r;
+ *
+ * In a plain window procedure there is no such problem - return it. */
+int  chrome_ctlcolor(UINT msg, UINT wParam, LONG lParam, LONG *result);
+
 #endif /* CHROME_H */

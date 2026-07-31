@@ -3611,6 +3611,7 @@ long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
                                   LLM_INST(hwnd),
                                   NULL);
         SendMessage(g_pic_auto, WM_SETFONT, (WPARAM)g_font, 0L);
+        chrome_button(g_pic_auto);
         pic_auto_sync();
         break;
 
@@ -3806,6 +3807,7 @@ long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
                                   WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                                   0, 0, 10, 10, hwnd,
                                   (HMENU)(IDC_MUSBASE + 4), inst, NULL);
+        chrome_buttons(hwnd);
         mus_fill_moods();
         mus_update();
         break;
@@ -4084,6 +4086,7 @@ long FAR PASCAL _export ChrProc(HWND hwnd, UINT msg, UINT wParam,
                                  LLM_INST(hwnd),
                                  NULL);
         SendMessage(g_chr_btn, WM_SETFONT, (WPARAM)g_font, 0L);
+        chrome_button(g_chr_btn);
         break;
     case WM_PAINT:
         chr_paint(hwnd);
@@ -4456,6 +4459,11 @@ BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
     char text[52];
 
     (void)lParam;
+    /* The 3.1 palette for the controls. Ahead of chrome_dialog_msg and
+       returned directly, because the answer is a brush and DWL_MSGRESULT
+       is not where the dialog manager looks for one - see chrome.h. */
+    if (LLM_IS_CTLCOLOR(msg) && chrome_ctlcolor(msg, wParam, lParam, &cres))
+        return (BOOL)cres;
     /* The 3.1 dialog frame. A DialogProc cannot return an arbitrary
        value, so the result goes back through DWL_MSGRESULT. */
     if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
@@ -4502,6 +4510,10 @@ BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
         SetWindowPos(dlg, NULL, x, y, w, h, SWP_NOZORDER);
         MoveWindow(GetDlgItem(dlg, IDCANCEL),
                    (w - 70) / 2, mgy + rows * (bh + gap) + 4, 70, bh, TRUE);
+        /* Again, and by hand: the chrome skins a dialog's buttons when
+           WM_INITDIALOG reaches it, and this one's buttons did not exist
+           yet - they are built from the proxy's menu a few lines up. */
+        chrome_buttons(dlg);
         return TRUE;
 
     case WM_COMMAND:
@@ -4528,6 +4540,11 @@ BOOL FAR PASCAL _export PicsDlgProc(HWND dlg, UINT msg, UINT wParam,
 {
     LONG cres;
     (void)lParam;
+    /* The 3.1 palette for the controls. Ahead of chrome_dialog_msg and
+       returned directly, because the answer is a brush and DWL_MSGRESULT
+       is not where the dialog manager looks for one - see chrome.h. */
+    if (LLM_IS_CTLCOLOR(msg) && chrome_ctlcolor(msg, wParam, lParam, &cres))
+        return (BOOL)cres;
     /* The 3.1 dialog frame. A DialogProc cannot return an arbitrary
        value, so the result goes back through DWL_MSGRESULT. */
     if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
@@ -4639,6 +4656,11 @@ BOOL FAR PASCAL _export ConvDlgProc(HWND dlg, UINT msg, UINT wParam,
     char q[96];
     UINT cmd;
 
+    /* The 3.1 palette for the controls. Ahead of chrome_dialog_msg and
+       returned directly, because the answer is a brush and DWL_MSGRESULT
+       is not where the dialog manager looks for one - see chrome.h. */
+    if (LLM_IS_CTLCOLOR(msg) && chrome_ctlcolor(msg, wParam, lParam, &cres))
+        return (BOOL)cres;
     /* The 3.1 dialog frame. A DialogProc cannot return an arbitrary
        value, so the result goes back through DWL_MSGRESULT. */
     if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
@@ -4753,6 +4775,11 @@ BOOL FAR PASCAL _export ServerDlgProc(HWND dlg, UINT msg, UINT wParam,
     unsigned port;
 
     (void)lParam;
+    /* The 3.1 palette for the controls. Ahead of chrome_dialog_msg and
+       returned directly, because the answer is a brush and DWL_MSGRESULT
+       is not where the dialog manager looks for one - see chrome.h. */
+    if (LLM_IS_CTLCOLOR(msg) && chrome_ctlcolor(msg, wParam, lParam, &cres))
+        return (BOOL)cres;
     /* The 3.1 dialog frame. A DialogProc cannot return an arbitrary
        value, so the result goes back through DWL_MSGRESULT. */
     if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
@@ -4956,19 +4983,6 @@ static void launch_sync(void)
 #define ID_LAUNCHTIMER  1
 #define LAUNCH_TICK_MS  400
 
-/* One edge of a bevel: a thin filled rectangle, which is easier to get
-   right than a pen and a cursor. */
-static void bevel(HDC hdc, int x, int y, int cx, int cy, HBRUSH b)
-{
-    RECT r;
-
-    r.left = x;
-    r.top = y;
-    r.right = x + cx;
-    r.bottom = y + cy;
-    FillRect(hdc, &r, b);
-}
-
 /* The 50% stipple a 3.1 toolbar used for a latched button - Word 2 and
    Excel 4 both did this, and it is what makes "held down" read as a state
    rather than as a mouse still being held. A monochrome pattern brush
@@ -4993,18 +5007,18 @@ static HBRUSH stipple_brush(void)
     return g_stipple;
 }
 
-/* A button in the default Windows 3.1 style, drawn by hand because 3.1
-   has no push-like checkbox (BS_PUSHLIKE is Win32) and no
-   DrawFrameControl. That style is not one bevel line but four rings: a
-   black outer frame, a white highlight inside it on the top and left, and
-   TWO pixels of shadow on the bottom and right. Pressed, or latched
-   because its window is open, the whole arrangement inverts - which is
-   what makes it obvious across the room, and what a single-pixel toolbar
-   bevel never quite managed.
+/* A button in the Windows 3.1 style, drawn by hand because 3.1 has no
+   push-like checkbox (BS_PUSHLIKE is Win32) and no DrawFrameControl.
+   The face itself is the chrome's, so this strip and every real BUTTON
+   in the program are the same measured drawing - which they were not
+   before: this one had a one pixel highlight where a real 3.1 button has
+   two, and square corners where a real one has none.
 
-   Colours come from GetSysColor, so the strip still looks like the rest of
-   the desktop under whatever scheme is loaded (3.11 shipped a dozen, and
-   two of them are not grey at all). */
+   The 3.1 palette rather than GetSysColor, for the same reason the
+   chrome hardcodes it: COLOR_BTNFACE on a modern machine is #F0F0F0,
+   which put a 2026 grey button on a #C0C0C0 strip. The cost is that a
+   3.11 user's colour scheme no longer reaches the strip - and it never
+   reached the caption either, so the strip was the odd one out. */
 static void launch_draw(LPDRAWITEMSTRUCT di)
 {
     int idx = (int)di->CtlID - IDC_LAUNCHBASE;
@@ -5013,73 +5027,41 @@ static void launch_draw(LPDRAWITEMSTRUCT di)
     int on = idx > 0 && (launch_state() & (1u << idx)) != 0;
     int down = on || (di->itemState & ODS_SELECTED) != 0;
     RECT r = di->rcItem;
-    RECT in;
-    HBRUSH face, hi, sh, frm;
-    COLORREF facec = GetSysColor(COLOR_BTNFACE);
-    COLORREF hic = GetSysColor(COLOR_BTNHIGHLIGHT);
-    COLORREF shc = GetSysColor(COLOR_BTNSHADOW);
-    int w, h, n;
+    int n;
     char text[28];
 
-    face = CreateSolidBrush(facec);
-    hi   = CreateSolidBrush(hic);
-    sh   = CreateSolidBrush(shc);
-    frm  = CreateSolidBrush(GetSysColor(COLOR_WINDOWFRAME));
+    chrome_button_face(di->hDC, &r, down, 0);
+    if (on && !(di->itemState & ODS_SELECTED)) {
+        HBRUSH st = stipple_brush();
 
-    FillRect(di->hDC, &r, face);
-    FrameRect(di->hDC, &r, frm);            /* the black outline */
-    in = r;
-    InflateRect(&in, -1, -1);
-    w = in.right - in.left;
-    h = in.bottom - in.top;
-    if (w > 4 && h > 4) {
-        if (!down) {
-            bevel(di->hDC, in.left, in.top, w, 1, hi);           /* top */
-            bevel(di->hDC, in.left, in.top, 1, h, hi);           /* left */
-            bevel(di->hDC, in.left, in.bottom - 2, w, 2, sh);    /* under */
-            bevel(di->hDC, in.right - 2, in.top, 2, h, sh);      /* right */
-        } else {
-            /* Sunken: the shadow moves to the top and left and doubles,
-               and the face carries the toolbar stipple when the button is
-               latched rather than merely held. */
-            bevel(di->hDC, in.left, in.top, w, 2, sh);
-            bevel(di->hDC, in.left, in.top, 2, h, sh);
-            bevel(di->hDC, in.left, in.bottom - 1, w, 1, hi);
-            bevel(di->hDC, in.right - 1, in.top, 1, h, hi);
-            if (on && !(di->itemState & ODS_SELECTED)) {
-                HBRUSH st = stipple_brush();
-                if (st) {
-                    RECT fr = in;
-                    /* Inset past the bevel on every side: the bevel is
-                       the signal, the stipple only says "and it stayed
-                       that way". Face against highlight rather than
-                       shadow against highlight - at 1:1 that is a faint
-                       dither, where grey-on-white was a checkerboard
-                       loud enough to bury the bevel it sits inside. */
-                    fr.left += 3;
-                    fr.top += 3;
-                    fr.right -= 2;
-                    fr.bottom -= 2;
-                    SetTextColor(di->hDC, facec);
-                    SetBkColor(di->hDC, hic);
-                    FillRect(di->hDC, &fr, st);
-                }
-            }
+        if (st) {
+            RECT fr = r;
+
+            /* The face carries the toolbar stipple when the button is
+               latched rather than merely held. Inset past the bevel on
+               every side: the bevel is the signal, the stipple only says
+               "and it stayed that way". Face against highlight rather
+               than shadow against highlight - at 1:1 that is a faint
+               dither, where grey-on-white was a checkerboard loud enough
+               to bury the bevel it sits inside. */
+            fr.left += 4;
+            fr.top += 4;
+            fr.right -= 3;
+            fr.bottom -= 3;
+            SetTextColor(di->hDC, RGB(0xC0, 0xC0, 0xC0));
+            SetBkColor(di->hDC, RGB(0xFF, 0xFF, 0xFF));
+            FillRect(di->hDC, &fr, st);
         }
     }
-    DeleteObject(face);
-    DeleteObject(hi);
-    DeleteObject(sh);
-    DeleteObject(frm);
 
     n = GetWindowText(di->hwndItem, text, sizeof(text) - 1);
     text[n < 0 ? 0 : n] = '\0';
     SetBkMode(di->hDC, TRANSPARENT);
     SelectObject(di->hDC, g_font ? g_font : GetStockObject(SYSTEM_FONT));
-    SetTextColor(di->hDC, GetSysColor(COLOR_BTNTEXT));
+    SetTextColor(di->hDC, RGB(0x00, 0x00, 0x00));
     if (down) {                 /* the label rides the bevel down */
-        r.left += 2;
-        r.top += 2;
+        r.left += 1;
+        r.top += 1;
     }
     DrawText(di->hDC, text, -1, &r,
              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);

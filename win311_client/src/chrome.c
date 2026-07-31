@@ -1391,6 +1391,316 @@ int chrome_dialog_msg(HWND dlg, UINT msg, UINT wParam, LONG lParam,
             return 1;
         }
         return 0;
+
+    /* Every dialog's buttons, skinned, with nothing to remember at the
+       call site: the four dialog procs already route WM_INITDIALOG
+       through here, and returning 0 lets their own handler run after. */
+    case WM_INITDIALOG:
+        chrome_buttons(dlg);
+        return 0;
+
+    case WM_ERASEBKGND:
+        {
+            RECT rc;
+
+            GetClientRect(dlg, &rc);
+            fill((HDC)wParam, &rc, C_FACE);
+        }
+        *result = 1;
+        return 1;
+    }
+    /* WM_CTLCOLOR is deliberately NOT handled here - see chrome_ctlcolor
+       and the note in chrome.h. Its answer is a brush, and a brush
+       cannot come back through DWL_MSGRESULT. */
+    return 0;
+}
+
+/* ---- controls -------------------------------------------------------
+ *
+ * The last surfaces the host still draws for us. A push button on
+ * Windows 11 is a 1995 button in 2026 grey - square corners, a one pixel
+ * bevel, and a #F0F0F0 face on our #C0C0C0 strip. A real 3.1 button is
+ * rounder and deeper than that, and the differences are all measurable:
+ *
+ *   - the four corner pixels are NOT drawn. The parent shows through,
+ *     which is what makes a 3.1 button look rounded.
+ *   - the bevel is TWO pixels, not one, on all four sides.
+ *   - highlight and shadow are mitred at 45 degrees where they meet, so
+ *     the top-right and bottom-left corners are diagonal.
+ *
+ * Measured off Play/Pause/Stop/Next in the Music window of the reference
+ * capture - the same picture the caption came from, so the same
+ * methodology and the same standard of proof.
+ */
+
+/* One pixel, spelled as the degenerate line the other primitives are. */
+static void dot(HDC hdc, int x, int y, COLORREF c)
+{
+    vline(hdc, x, y, y, c);
+}
+
+/* The four corner pixels, which is what rounds a 3.1 button off. White
+   on all four - bottom right included, where a bevel would put shadow.
+   Measured; guessing gave face grey, and those four pixels were the only
+   thing between this and the reference. */
+static void round_off(HDC hdc, const RECT *r)
+{
+    dot(hdc, r->left, r->top, C_HILIGHT);
+    dot(hdc, r->right - 1, r->top, C_HILIGHT);
+    dot(hdc, r->left, r->bottom - 1, C_HILIGHT);
+    dot(hdc, r->right - 1, r->bottom - 1, C_HILIGHT);
+}
+
+/* Drawing order is load-bearing. Highlight first and shadow second is
+   what produces the mitre: on the highlight's top row the shadow's own
+   right column overwrites the last pixel, and on the shadow's bottom row
+   the highlight's left column survives one pixel in. Swap the two loops
+   and the corners square off. */
+void chrome_button_face(HDC hdc, const RECT *bx, int pressed, int deflt)
+{
+    RECT r = *bx, in;
+    int l, t, ri, b, i;
+
+    /* A default button is the same button one pixel smaller inside a
+       black ring - which is why 3.1's OK button looks heavier rather
+       than merely outlined. */
+    if (deflt) {
+        l = r.left; t = r.top; ri = r.right - 1; b = r.bottom - 1;
+        hline(hdc, l + 1, ri - 1, t, C_FRAME);
+        hline(hdc, l + 1, ri - 1, b, C_FRAME);
+        vline(hdc, l, t + 1, b - 1, C_FRAME);
+        vline(hdc, ri, t + 1, b - 1, C_FRAME);
+        round_off(hdc, &r);
+        InflateRect(&r, -1, -1);
+    }
+
+    l = r.left; t = r.top; ri = r.right - 1; b = r.bottom - 1;
+    if (ri - l < 5 || b - t < 5)
+        return;
+
+    in = r;
+    InflateRect(&in, -1, -1);
+    fill(hdc, &in, C_FACE);
+
+    hline(hdc, l + 1, ri - 1, t, C_FRAME);
+    hline(hdc, l + 1, ri - 1, b, C_FRAME);
+    vline(hdc, l, t + 1, b - 1, C_FRAME);
+    vline(hdc, ri, t + 1, b - 1, C_FRAME);
+
+    for (i = 0; i < 2; i++) {
+        COLORREF c = pressed ? C_SHADOW : C_HILIGHT;
+
+        hline(hdc, l + 1 + i, ri - 1 - i, t + 1 + i, c);
+        vline(hdc, l + 1 + i, t + 1 + i, b - 1 - i, c);
+    }
+    if (!pressed)
+        for (i = 0; i < 2; i++) {
+            hline(hdc, l + 1 + i, ri - 1 - i, b - 1 - i, C_SHADOW);
+            vline(hdc, ri - 1 - i, t + 1 + i, b - 1 - i, C_SHADOW);
+        }
+    round_off(hdc, &r);
+}
+
+/* 3.1's checkbox is flat: a 13x13 black box on white with a black X
+   drawn corner to corner one pixel inside it. No bevel, no sunken well,
+   and emphatically no tick - the checkmark arrived with Windows 95, and
+   it is the single loudest wrong detail in a retro mock-up after the
+   caption. Measured off "Illustrate every room". */
+#define CHECK_BOX   13
+
+void chrome_checkbox_face(HDC hdc, int x, int y, int checked, int off)
+{
+    RECT box;
+    int i;
+
+    box.left = x; box.top = y;
+    box.right = x + CHECK_BOX; box.bottom = y + CHECK_BOX;
+    fill(hdc, &box, C_CLIENT);
+    hline(hdc, x, x + CHECK_BOX - 1, y, C_FRAME);
+    hline(hdc, x, x + CHECK_BOX - 1, y + CHECK_BOX - 1, C_FRAME);
+    vline(hdc, x, y, y + CHECK_BOX - 1, C_FRAME);
+    vline(hdc, x + CHECK_BOX - 1, y, y + CHECK_BOX - 1, C_FRAME);
+    if (!checked)
+        return;
+    for (i = 0; i < CHECK_BOX - 2; i++) {
+        COLORREF c = off ? C_SHADOW : C_FRAME;
+
+        vline(hdc, x + 1 + i, y + 1 + i, y + 1 + i, c);
+        vline(hdc, x + CHECK_BOX - 2 - i, y + 1 + i, y + 1 + i, c);
+    }
+}
+
+/* The label. Disabled text in 3.1 is embossed rather than merely pale:
+   the string is drawn twice, white one pixel down and right, then grey
+   on top of it. */
+static void btn_text(HDC hdc, HWND hwnd, RECT *tr, UINT fmt, int off)
+{
+    char text[80];
+    int n = GetWindowText(hwnd, text, sizeof(text) - 1);
+    HFONT f = (HFONT)SendMessage(hwnd, WM_GETFONT, 0, 0L);
+    HFONT of;
+
+    text[n < 0 ? 0 : n] = '\0';
+    of = SelectObject(hdc, f ? f : GetStockObject(SYSTEM_FONT));
+    SetBkMode(hdc, TRANSPARENT);
+    if (off) {
+        RECT sr = *tr;
+
+        OffsetRect(&sr, 1, 1);
+        SetTextColor(hdc, C_HILIGHT);
+        DrawText(hdc, text, -1, &sr, fmt);
+        SetTextColor(hdc, C_SHADOW);
+    } else {
+        SetTextColor(hdc, C_FRAME);
+    }
+    DrawText(hdc, text, -1, tr, fmt);
+    SelectObject(hdc, of);
+}
+
+static void btn_paint(HWND hwnd, HDC hdc)
+{
+    RECT rc, tr;
+    LONG style = GetWindowLong(hwnd, GWL_STYLE);
+    int kind = (int)(style & 0x0FL);
+    UINT st = (UINT)SendMessage(hwnd, BM_GETSTATE, 0, 0L);
+    int pressed = (st & BST_PUSHED) != 0;
+    int off = !IsWindowEnabled(hwnd);
+
+    GetClientRect(hwnd, &rc);
+    /* Face grey unconditionally, rather than asking the parent what
+       colour it is. Every button in this program sits on an LTGRAY_BRUSH
+       strip or on a dialog, and both of those are #C0C0C0 now; asking
+       WM_CTLCOLOR would route through DefWindowProc on the way and get
+       2026's answer back. */
+    fill(hdc, &rc, C_FACE);
+
+    if (kind == BS_CHECKBOX || kind == BS_AUTOCHECKBOX
+        || kind == BS_3STATE || kind == BS_AUTO3STATE) {
+        int y = rc.top + (rc.bottom - rc.top - CHECK_BOX) / 2;
+
+        chrome_checkbox_face(hdc, rc.left, y,
+                    (int)SendMessage(hwnd, BM_GETCHECK, 0, 0L) != 0, off);
+        tr = rc;
+        /* Measured: the box is 13 wide and the label's ink starts 6 px
+           past its right edge. */
+        tr.left += CHECK_BOX + 6;
+        btn_text(hdc, hwnd, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE, off);
+        if (st & BST_FOCUS) {
+            RECT fr = rc;
+
+            fr.left += CHECK_BOX + 4;
+            InflateRect(&fr, 0, -2);
+            DrawFocusRect(hdc, &fr);
+        }
+        return;
+    }
+
+    chrome_button_face(hdc, &rc, pressed,
+                       kind == BS_DEFPUSHBUTTON);
+    tr = rc;
+    if (pressed)                    /* the label rides the bevel down */
+        OffsetRect(&tr, 1, 1);
+    btn_text(hdc, hwnd, &tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE, off);
+    if (st & BST_FOCUS) {
+        RECT fr = rc;
+
+        InflateRect(&fr, -4, -4);
+        DrawFocusRect(hdc, &fr);
+    }
+}
+
+/* Painting a BUTTON rather than owner-drawing it. BS_OWNERDRAW is the
+   obvious route and it is a trap: the dialog manager moves the default
+   ring from button to button with BM_SETSTYLE as the focus travels, and
+   BS_OWNERDRAW lives in the same low nibble as BS_DEFPUSHBUTTON - so the
+   first Tab turns an owner-drawn button back into an ordinary one and it
+   never draws again. Subclassing touches no style bit. The class goes on
+   tracking pressed state, focus, mnemonics, the space bar and the click;
+   all we take from it is WM_PAINT.
+
+   One saved proc for all of them, because every BUTTON in the process
+   shares one class procedure - there is nothing per-window to remember,
+   and so nothing to leak when a window dies. */
+static LlmOldProc g_btnproc;
+
+LONG FAR PASCAL _export chrome_btnproc(HWND hwnd, UINT msg, UINT wParam,
+                                       LONG lParam)
+{
+    PAINTSTRUCT ps;
+
+    switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;               /* WM_PAINT covers every pixel we own */
+
+    case WM_PAINT:
+        BeginPaint(hwnd, &ps);
+        btn_paint(hwnd, ps.hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    return CallWindowProc(g_btnproc, hwnd, msg, wParam, lParam);
+}
+
+void chrome_button(HWND btn)
+{
+    LONG old;
+
+    if (!btn)
+        return;
+    old = SetWindowLong(btn, GWL_WNDPROC, (LONG)(LlmOldProc)chrome_btnproc);
+    if ((LlmOldProc)old == (LlmOldProc)chrome_btnproc)
+        return;                 /* already ours - put nothing in g_btnproc */
+    if (!g_btnproc)
+        g_btnproc = (LlmOldProc)old;
+}
+
+void chrome_buttons(HWND parent)
+{
+    HWND c;
+
+    for (c = GetWindow(parent, GW_CHILD); c;
+         c = GetWindow(c, GW_HWNDNEXT)) {
+        char cls[16];
+
+        if (GetClassName(c, cls, sizeof(cls)) > 0
+            && lstrcmpi(cls, "button") == 0)
+            chrome_button(c);
+    }
+}
+
+/* The 3.1 palette for whatever the host would otherwise colour itself:
+   static text and buttons on face grey, edits and lists on white, all of
+   it with black text. Without this a dialog on Windows 11 is #F0F0F0
+   with #C0C0C0 chrome around it, which reads as a rendering fault rather
+   than as a style. */
+int chrome_ctlcolor(UINT msg, UINT wParam, LONG lParam, LONG *result)
+{
+    HDC hdc = LLM_CTLCOLOR_DC(wParam);
+    int kind = LLM_CTLCOLOR_KIND(msg, lParam);
+    static HBRUSH face, paper;
+
+    (void)msg;      /* 3.1 has one message and says the kind in lParam */
+    (void)lParam;
+
+    switch (kind) {
+    case CTLCOLOR_EDIT:
+    case CTLCOLOR_LISTBOX:
+        if (!paper)
+            paper = CreateSolidBrush(C_CLIENT);
+        SetBkColor(hdc, C_CLIENT);
+        SetTextColor(hdc, C_FRAME);
+        *result = (LONG)paper;
+        return 1;
+    case CTLCOLOR_BTN:
+    case CTLCOLOR_STATIC:
+    case CTLCOLOR_DLG:
+    case CTLCOLOR_MSGBOX:
+        if (!face)
+            face = CreateSolidBrush(C_FACE);
+        SetBkColor(hdc, C_FACE);
+        SetTextColor(hdc, C_FRAME);
+        *result = (LONG)face;
+        return 1;
     }
     return 0;
 }

@@ -124,6 +124,29 @@ build/CAPSPK16.EXE: spike/caption.c src/chrome.c | build
 	@rm -f __wcl_*.lnk caption.obj chrome.obj
 	@echo "-> $@"
 
+# The controls, rendered to a BMP so they can be diffed against the real
+# 3.11 capture with no window manager or screen grabber in the way.
+#
+#   make ctlcheck
+#
+# Win32 only: chrome.c renders identically on both targets, so measuring
+# one measures both, and this one runs without a DOS emulator.
+ctlspike: build/CTLSPIKE.EXE
+
+build/CTLSPIKE.EXE: spike/ctl.c src/chrome.c | build/w32
+	$(W32CC) $(W32CFLAGS) -o $@ spike/ctl.c src/chrome.c -lgdi32 -luser32
+	@echo "-> $@"
+
+# Pillow lives in the proxy's virtualenv, which is the only one this
+# repo has; fall back to the system interpreter if it is not there.
+PY := $(shell [ -x ../llm64_proxy/.venv/bin/python ] \
+	  && echo ../llm64_proxy/.venv/bin/python || echo python3)
+
+ctlcheck: build/CTLSPIKE.EXE
+	@WINEPREFIX=$(WINEPREFIX) WINEDEBUG=-all wine build/CTLSPIKE.EXE \
+	    $$(pwd)/build/ctl.bmp
+	@$(PY) tools/ctldiff.py build/ctl.bmp
+
 # The MDI experiment: can a child give up its non-client area and keep
 # DefMDIChildProc? See the header of spike/mdi.c.
 mdispike: build/MDISPIKE.EXE

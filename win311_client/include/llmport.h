@@ -74,6 +74,12 @@
    Win16 handle IS a word. */
 #define LLM_HWND(r)     ((HWND)(WORD)(r))
 
+/* The control-colour messages. 3.1 has exactly one, WM_CTLCOLOR, and
+   says which kind of control is asking in the high word of lParam. */
+#define LLM_IS_CTLCOLOR(m)      ((m) == WM_CTLCOLOR)
+#define LLM_CTLCOLOR_KIND(m, l) ((int)HIWORD(l))
+#define LLM_CTLCOLOR_DC(w)      ((HDC)(w))
+
 /* Win32 added these TrackPopupMenu flags; 3.1 aligns a popup to the top
    of the given point anyway, so asking for it is a no-op. */
 #define TPM_TOPALIGN    0
@@ -125,6 +131,24 @@ typedef FARPROC LlmOldProc;
 #define LLM_SCROLL_CODE(w, l)   LOWORD(w)
 #define LLM_SCROLL_POS(w, l)    HIWORD(w)
 
+/* Win32 split WM_CTLCOLOR into six messages, one per kind of control,
+   and they are consecutive and in the same order as 3.1's CTLCOLOR_*
+   codes - so subtracting the first maps one onto the other exactly.
+   Those codes went out of the SDK headers with WINVER 4.0. */
+#ifndef CTLCOLOR_MSGBOX
+#define CTLCOLOR_MSGBOX     0
+#define CTLCOLOR_EDIT       1
+#define CTLCOLOR_LISTBOX    2
+#define CTLCOLOR_BTN        3
+#define CTLCOLOR_DLG        4
+#define CTLCOLOR_SCROLLBAR  5
+#define CTLCOLOR_STATIC     6
+#endif
+#define LLM_IS_CTLCOLOR(m)  ((m) >= WM_CTLCOLORMSGBOX && \
+                             (m) <= WM_CTLCOLORSTATIC)
+#define LLM_CTLCOLOR_KIND(m, l) ((int)((m) - WM_CTLCOLORMSGBOX))
+#define LLM_CTLCOLOR_DC(w)      ((HDC)(w))
+
 /* Win32 passes the two window handles instead of a flag: lParam is the
    child being activated, so compare it against ourselves. */
 #define LLM_MDI_ACTIVE(w, l, self)  ((HWND)(l) == (self))
@@ -170,5 +194,19 @@ static __inline DWORD llm_text_extent(HDC hdc, LPCSTR s, int n)
 #define GetTextExtent(hdc, s, n)    llm_text_extent((hdc), (s), (n))
 
 #endif /* __WATCOMC__ */
+
+/* ------------------------------------------------------------------ */
+
+/* What BM_GETSTATE answers with. Win32 gave the bits names; 3.1
+   documented them and left it there, so the 16-bit headers have the
+   message but not the vocabulary. Guarded rather than branched: on the
+   32-bit side these are already right and this whole block vanishes. */
+#ifndef BST_CHECKED
+#define BST_UNCHECKED       0x0000
+#define BST_CHECKED         0x0001
+#define BST_INDETERMINATE   0x0002
+#define BST_PUSHED          0x0004
+#define BST_FOCUS           0x0008
+#endif
 
 #endif /* LLMPORT_H */
