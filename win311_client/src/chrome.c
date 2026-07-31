@@ -1092,6 +1092,22 @@ int chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
         PostMessage(hwnd, WM_NCPAINT, 1, 0L);
         return 0;
 
+    /* Maximising or restoring a child changes the FRAME: the child's
+       sysmenu box and restore button appear in or vanish from the menu
+       bar, and the menu titles shift to make room. Nothing tells the
+       frame that, so without this the bar keeps whatever it had - which
+       looks like a maximise glyph floating on its own over stale pixels
+       until something else happens to invalidate the window. */
+    case WM_SIZE:
+        if (wParam == SIZE_MAXIMIZED || wParam == SIZE_RESTORED) {
+            HWND mdi = GetParent(hwnd);
+            HWND frame = mdi ? GetParent(mdi) : NULL;
+
+            if (frame)
+                InvalidateRect(frame, NULL, TRUE);
+        }
+        return 0;
+
     /* Paint ours and CLAIM it. Returning 0 here lets DefMDIChildProc
        paint the standard caption straight afterwards, and wherever ours
        does not cover it the OS one shows through - which on Windows 11 is

@@ -95,7 +95,11 @@ LLM64ACTIONS DIALOG 20, 20, 260, 170
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Menu"
 BEGIN
-    LTEXT       "", IDC_MENUTITLE, 10, 6, 240, 9
+    /* Three lines, not one. The height was exactly one line of 3.1's
+       dialog font, and a static that cannot wrap simply truncates - so
+       on any host whose dialog font is wider (every modern Windows) the
+       message lost its tail: "The proxy has not sent its me". */
+    LTEXT       "", IDC_MENUTITLE, 10, 6, 240, 30
     PUSHBUTTON  "Close", IDCANCEL, 105, 150, 50, 14
 END
 
