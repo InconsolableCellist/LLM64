@@ -305,12 +305,74 @@ static HGLOBAL    g_convmem;
 static ConvArena FAR *g_conv;
 static int        g_convn, g_convt;
 
-/* Reset before a bar menu opens - safe there because nothing is on screen
-   yet, and it bounds the arena against MDI's changing window list. */
+/* Exactly one popup is converted at a time, and this is what it is.
+ *
+ * The arena has to be reset or MDI's changing window list would fill it,
+ * and a reset is only safe if nothing still points into it. It did:
+ * MF_OWNERDRAW replaces an item's string with a pointer, so every popup
+ * converted earlier still held pointers to slots the next popup then
+ * reused - open Help, open Window, open Help again, and About was
+ * drawing the Window menu's first item. Nothing recovers the original
+ * string from the menu at that point, because it is not in the menu any
+ * more; the pointer is.
+ *
+ * So the popup that is going away gets its strings back first, rebuilt
+ * from the arena while the arena still means what it says. That bounds
+ * the whole thing: no popup outlives its own conversion, and the arena
+ * never has to hold more than one menu.
+ *
+ * This assumes no cascading submenus, which is true here - popup_convert
+ * skips MF_POPUP and every menu in llm64.rc is one level deep. A
+ * submenu opening would restore its parent while the parent is still on
+ * screen. */
+static HMENU g_convmenu;
+static struct {
+    int pos;                    /* where in g_convmenu it sits */
+    const MItem FAR *it;        /* NULL for a separator */
+} g_convrec[CONV_MAX];
+static int g_convrecn;
+
 static void conv_reset(void)
 {
     g_convn = 0;
     g_convt = 0;
+    g_convrecn = 0;
+}
+
+/* Put the strings back, so the arena can be reused. */
+static void popup_restore(void)
+{
+    int k;
+
+    if (!g_convmenu)
+        return;
+    for (k = 0; k < g_convrecn; k++) {
+        int pos = g_convrec[k].pos;
+        const MItem FAR *it = g_convrec[k].it;
+        UINT st = GetMenuState(g_convmenu, pos, MF_BYPOSITION);
+        UINT id = GetMenuItemID(g_convmenu, pos);
+        char buf[96];
+
+        /* Gone, or rebuilt by the application since - either way it is
+           not ours to put back. */
+        if (st == (UINT)-1 || !(st & MF_OWNERDRAW))
+            continue;
+        if (!it) {
+            ModifyMenu(g_convmenu, pos, MF_BYPOSITION | MF_SEPARATOR, 0,
+                       (LPCSTR)NULL);
+            continue;
+        }
+        st &= (MF_CHECKED | MF_GRAYED | MF_DISABLED);
+        lstrcpy(buf, it->text);
+        if (it->accel) {
+            lstrcat(buf, "\t");
+            lstrcat(buf, it->accel);
+        }
+        ModifyMenu(g_convmenu, pos, MF_BYPOSITION | MF_STRING | st, id,
+                   (LPCSTR)buf);
+    }
+    g_convmenu = NULL;
+    conv_reset();
 }
 
 static const MItem FAR *conv_add(const char *label)
@@ -352,6 +414,11 @@ static void popup_convert(HMENU h)
 
     if (!g_conv)
         return;
+    /* Whatever was converted last gives its strings back, including this
+       popup itself if it is opening again - so a menu is always built
+       from scratch and the arena never has to grow. */
+    popup_restore();
+    g_convmenu = h;
     n = GetMenuItemCount(h);
     for (i = 0; i < n; i++) {
         UINT st = GetMenuState(h, i, MF_BYPOSITION);
@@ -361,9 +428,13 @@ static void popup_convert(HMENU h)
 
         if (st == (UINT)-1 || (st & (MF_OWNERDRAW | MF_POPUP)))
             continue;
+        if (g_convrecn >= CONV_MAX)
+            break;              /* full: the rest stay Windows' to draw */
         if (st & MF_SEPARATOR) {
             ModifyMenu(h, i, MF_BYPOSITION | MF_OWNERDRAW | MF_SEPARATOR,
                        0, (LPCSTR)NULL);
+            g_convrec[g_convrecn].pos = i;
+            g_convrec[g_convrecn++].it = NULL;
             continue;
         }
         if (!GetMenuString(h, i, buf, sizeof(buf) - 1, MF_BYPOSITION))
@@ -374,6 +445,10 @@ static void popup_convert(HMENU h)
         ModifyMenu(h, i, MF_BYPOSITION | MF_OWNERDRAW
                    | (st & (MF_CHECKED | MF_GRAYED | MF_DISABLED)),
                    id, (LPCSTR)it);
+        /* Recorded so it can be turned back into a string later - which
+           is the only way the arena can ever be reused. */
+        g_convrec[g_convrecn].pos = i;
+        g_convrec[g_convrecn++].it = it;
     }
 }
 
@@ -645,7 +720,6 @@ static void menu_drop(HWND hwnd, int i)
     ReleaseDC(hwnd, hdc);
     if (i < 0 || i >= NMENUS || !g_pop[i])
         return;
-    conv_reset();
     popup_convert(g_pop[i]);
     g_open = i;
     inval_bar(hwnd, 1);
