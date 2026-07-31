@@ -53,12 +53,18 @@
 /* How far back the seam looks for a space to break on. */
 #define SB_CARRY        80
 
+/* Who a line came from, for the painter's per-role background band.
+   Client-local: nothing about this reaches the wire. */
+#define SB_WHO_OTHER  0     /* the model, and everything else */
+#define SB_WHO_USER   1     /* the player's own line, echoed */
+
 typedef struct {
     unsigned      block;    /* arena block holding the text */
     unsigned      off;      /* byte offset within that block */
     unsigned      len;      /* bytes, markers included */
     unsigned      rows;     /* display rows at the current width */
     unsigned char color;    /* colour in force at the first cell */
+    unsigned char who;      /* SB_WHO_*, stamped at commit */
 } SbLine;
 
 typedef struct {
@@ -85,6 +91,7 @@ typedef struct {
     unsigned char open_tail_color;
 
     unsigned char color;        /* colour for text appended from now on */
+    unsigned char origin;       /* SB_WHO_* for lines committed from now on */
     unsigned      cols;         /* display width, in cells */
     unsigned long total_rows;   /* committed rows; the open line is extra */
 } Scrollback;
@@ -114,6 +121,8 @@ typedef struct {
     unsigned char color;    /* colour here */
     unsigned char base;     /* the logical line's colour, for MARK_CLOSE */
     unsigned char attr;     /* SB_ATTR_* in force at the first cell */
+    unsigned char who;      /* SB_WHO_* of the logical line (sb_view_next
+                               fills it; a bare sb_wrap_next does not) */
 } SbRow;
 
 /* Wrap iterator over one logical line. The single implementation of the
@@ -136,6 +145,7 @@ typedef struct {
     unsigned          slot;     /* ring slot of the current logical line */
     unsigned          left;     /* committed lines still ahead */
     SbWrap            w;
+    unsigned char     who;      /* SB_WHO_* of the current logical line */
     int               in_open;  /* the open line is the last one */
     int               done;
 } SbView;
@@ -148,6 +158,10 @@ void     sb_clear(Scrollback *sb);
    itself when nothing has been written to it yet - otherwise the first
    chunk of a reply inherits the colour of whatever preceded it. */
 void     sb_color(Scrollback *sb, unsigned char color);
+
+/* Who the lines committed from here on belong to (SB_WHO_*). The
+   painter draws the user's own lines on a faintly different ground. */
+void     sb_origin(Scrollback *sb, unsigned char who);
 
 void     sb_putc(Scrollback *sb, char c);   /* '\n' closes the line */
 void     sb_puts(Scrollback *sb, const char *s);

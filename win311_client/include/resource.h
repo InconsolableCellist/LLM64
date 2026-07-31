@@ -32,12 +32,17 @@
 #define IDM_SAVEPIC     120
 #define IDM_PICSET      121
 #define IDM_CONVS       122
+/* The Message menu: shorthand for the proxy's /redo, /retcon and /fork
+   commands - the C64 types the words, this clicks them. */
+#define IDM_REDO        123
+#define IDM_RETCON      124
+#define IDM_FORK        125
 
 #define IDM_FIRSTCHILD  200
 
 /* Position of the &Window popup in the menu bar:
-   File, Link, Settings, Window, Help. */
-#define WINDOW_MENU_POS 3
+   File, Link, Settings, Message, Window, Help. */
+#define WINDOW_MENU_POS 4
 
 /* Server dialog */
 #define IDC_HOST        1101
@@ -46,6 +51,10 @@
 
 /* Pictures dialog */
 #define IDC_ROOMPICS    1401
+
+/* The Notebook's sheet dialogs: Rename and Edit. */
+#define IDC_SHEETNAME   1901
+#define IDC_SHEETTEXT   1902
 
 /* Our own message box, which exists because MessageBox() draws the
    host's - see the template in llm64.rc. */
@@ -60,6 +69,11 @@
 #define ID_PICAUTO      1004
 /* The Notebook's index of printed sheets. */
 #define ID_NOTELIST     1005
+/* And its verbs, one button each down the index column. Consecutive on
+   purpose: they are created and laid out in a loop. */
+#define ID_NOTERENAME   1010
+#define ID_NOTEEDIT     1011
+#define ID_NOTEDEL      1012
 /* The Character window's Refresh button: asks the narrator for a state
    block against the schema rather than waiting for it to volunteer one. */
 #define ID_CHRREFRESH   1006

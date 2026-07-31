@@ -20,7 +20,7 @@ BEGIN
     POPUP "&Link"
     BEGIN
         MENUITEM "&Ping",                 IDM_PING
-        MENUITEM "&Cancel Reply\tF3",     IDM_CANCEL
+        MENUITEM "&Cancel Reply\tF3, Esc", IDM_CANCEL
     END
     POPUP "&Settings"
     BEGIN
@@ -37,6 +37,16 @@ BEGIN
         MENUITEM "&C64 Screen (light on black)", IDM_THEME_SCREEN
         MENUITEM SEPARATOR
         MENUITEM "P&ictures...",              IDM_PICSET
+    END
+    /* Shorthand for the proxy's history commands - each item just types
+       the command, so the C64 and this client stay one feature. Also on
+       a right-click over the transcript (PaneProc). */
+    POPUP "&Message"
+    BEGIN
+        MENUITEM "&Redo Reply",             IDM_REDO
+        MENUITEM "Ret&con Last Exchange",   IDM_RETCON
+        MENUITEM SEPARATOR
+        MENUITEM "&Fork Conversation",      IDM_FORK
     END
     /* The MDI window menu. It has to be a real popup that the frame can
        hand to the MDI client, which appends the child list to it. Its
@@ -76,6 +86,10 @@ BEGIN
     VK_F1, IDM_MENU,    VIRTKEY
     VK_F2, IDM_NEWCONV, VIRTKEY
     VK_F3, IDM_CANCEL,  VIRTKEY
+    /* Escape is F3's modern spelling: clear the selection if one is
+       lit, else cancel the reply in flight. Dialogs run their own
+       loop, so their Escape (close) is untouched by this. */
+    VK_ESCAPE, IDM_CANCEL, VIRTKEY
     VK_F5, IDM_CONVS,   VIRTKEY
     /* Ctrl+1..5: the launcher without the mouse. 0x31 is VK '1'. */
     0x31,  IDM_TOGCONV, VIRTKEY, CONTROL
@@ -181,6 +195,38 @@ BEGIN
                     BS_AUTOCHECKBOX | WS_TABSTOP, 40, 46, 100, 10
     DEFPUSHBUTTON   "OK",                IDOK,      74, 64,  50, 14
     PUSHBUTTON      "Cancel",            IDCANCEL, 128, 64,  50, 14
+END
+
+/* Renaming a printed sheet. The name is the Notebook's index row, not
+   the sheet's text - the title line printed on the paper stays as it
+   arrived. */
+LLM64RENAME DIALOG 24, 24, 190, 58
+/* WS_CAPTION stays, deliberately - see the note on LLM64ACTIONS. */
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Rename Sheet"
+BEGIN
+    LTEXT           "&Name:",  -1,        8, 10,  28,  8
+    EDITTEXT        IDC_SHEETNAME,       40,  8, 142, 12, ES_AUTOHSCROLL
+    DEFPUSHBUTTON   "OK",      IDOK,     78, 38,  50, 14
+    PUSHBUTTON      "Cancel",  IDCANCEL, 132, 38, 50, 14
+END
+
+/* Editing a sheet. The page itself is a Scrollback - committed lines in
+   far blocks - which is a fine thing to read and a terrible thing to
+   edit in place; so Edit is a round trip: the text comes out whole, a
+   multiline EDIT does what EDITs do, and OK rebuilds the sheet from the
+   result. WS_THICKFRAME because a document deserves a resizable window;
+   the proc re-lays the controls in WM_SIZE. ES_WANTRETURN, or Enter
+   would press OK instead of breaking a line - a trap in a text editor. */
+LLM64SHEET DIALOG 8, 8, 300, 200
+STYLE WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
+CAPTION "Edit Sheet"
+BEGIN
+    EDITTEXT        IDC_SHEETTEXT, 6, 6, 288, 168,
+                    ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL |
+                    ES_WANTRETURN | WS_VSCROLL | WS_HSCROLL
+    DEFPUSHBUTTON   "OK",      IDOK,     190, 180, 50, 14
+    PUSHBUTTON      "Cancel",  IDCANCEL, 244, 180, 50, 14
 END
 
 /* Help > About: what this program is, who wrote it, and what it costs.

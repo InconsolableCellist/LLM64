@@ -108,6 +108,14 @@
    it WNDPROC; each rejects the other's spelling outright. */
 typedef FARPROC LlmOldProc;
 
+/* GetTempFileName's first parameter is a drive BYTE here (0 = the
+   default drive) and a path STRING on Win32 - where 0 is NULL and the
+   call simply fails. The Win16 spelling compiled clean over there and
+   every temp file "failed" with a disk-full message on a machine with
+   200 GB free. Nonzero = buf holds a created temp file's name. */
+#define LLM_TEMP_NAME(prefix, buf) \
+    (GetTempFileName(0, (prefix), 0, (buf)) != 0)
+
 /* ShellExecute answers a fake HINSTANCE, and anything above 32 means it
    worked. A handle is a word here, so the compare is one cast wide. */
 #define LLM_SHELL_OK(h)     ((UINT)(h) > 32)
@@ -188,6 +196,29 @@ typedef FARPROC LlmOldProc;
     } while (0)
 
 typedef WNDPROC LlmOldProc;     /* see the Watcom branch above */
+
+/* See the Watcom branch: Win32 wants a directory string, and its own
+   buffer must be MAX_PATH - the caller's 144-byte arrays are sized for
+   Win16 paths, so the name is built in a full-size buffer and copied
+   only if it fits. The created file is removed on the doesn't-fit
+   path, or it would leak one zero-byte temp file per long TEMP dir. */
+static __inline int llm_temp_name(LPCSTR prefix, LPSTR buf, UINT cap)
+{
+    char dir[MAX_PATH], full[MAX_PATH];
+
+    if (!GetTempPathA(sizeof(dir), dir))
+        lstrcpyA(dir, ".");
+    if (!GetTempFileNameA(dir, prefix, 0, full))
+        return 0;
+    if ((UINT)lstrlenA(full) + 1 > cap) {
+        DeleteFileA(full);
+        return 0;
+    }
+    lstrcpyA(buf, full);
+    return 1;
+}
+#define LLM_TEMP_NAME(prefix, buf) \
+    llm_temp_name((prefix), (buf), (UINT)sizeof(buf))
 
 /* The same fake HINSTANCE, 32 bits wide. Casting straight to UINT would
    warn about a pointer losing precision on the way, so it goes through

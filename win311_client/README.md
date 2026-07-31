@@ -30,12 +30,32 @@ You need a running proxy first: see
 - The character sheet and the map are drawn from data the proxy sends (rather than 
   scraped out of the reply text).
 - `/print` documents open in the Notebook window, which keeps every
-  document printed this session. (You don't need a printer configured for this).
+  document printed this session. (You don't need a printer configured for
+  this). Sheets can be renamed, edited in a dialog and deleted with the
+  buttons under the index, and the split between index and page drags -
+  it is saved to `LLM64.INI` like the window placements.
 - A conversation browser on F5: list, load and star what the proxy has
   stored.
 - Emacs editing keys in the input box (`C-a`, `C-e`, `C-b`, `C-f`, `C-d`,
   `C-k`, `M-b`, `M-f`, `M-d`, Ctrl+Backspace) and history recall on `C-p`
-  and `C-n`.
+  and `C-n` - or the Up and Down arrows.
+- Undo and redo in the input box: `Ctrl+Z` undoes (so does `Ctrl+_`, the
+  emacs spelling), `Ctrl+Shift+Z` and `Ctrl+Y` redo. Word-at-a-time for
+  typing; one step per paste, kill or recall.
+- Shift+Enter starts a new line in the input box without sending; the box
+  grows to four rows and the message goes out with its line breaks.
+- Select text in the transcript (or a Notebook page) with the mouse and
+  copy it with `Ctrl+C`. Escape clears the selection; `Ctrl+V` and
+  `Ctrl+X` paste and cut in the input box.
+- Escape also cancels the reply being generated, same as F3 and
+  Link > Cancel Reply (press twice if a selection is lit - the first
+  press only clears it).
+- Your own lines sit on a faint background band in the transcript, so
+  your last question is findable in a page of reply.
+- The Message menu (also a right-click on the transcript) types the
+  proxy's history commands for you: Redo Reply (`/redo`), Retcon Last
+  Exchange (`/retcon`), Fork Conversation (`/fork`). They are ordinary
+  commands, so a C64 player has the same powers by typing them.
 - Two themes, Paper and C64 Screen, saved to `LLM64.INI` along with the
   server address and the size and position of the main window.
 - The transcript re-flows when you resize the window.
@@ -129,6 +149,15 @@ Wine runs the protocol and the drawing correctly, but not the Windows
 shell: accelerators, menu behaviour and window management need a VM or a
 real machine before you can call them working. For sound, see
 [Getting sound out of Wine](#getting-sound-out-of-wine).
+
+If your terminal fills with
+`err:msg:process_hardware_message unknown message type 3` (or type 0),
+that is Wine's input plumbing complaining about events from your X
+input devices (high-resolution wheels and touchpads are the usual
+source), not this client - it appears with any program under the same
+Wine. `make run` already silences it with `WINEDEBUG=-all`; when
+launching `wine` by hand, prefix `WINEDEBUG=-all` (or just `-msg`)
+yourself.
 
 ### In a VM
 
@@ -227,6 +256,18 @@ First build that library by following the steps in the
 That will build `data/midi/midi.json`.
 
 ### Getting sound out of Wine
+
+The tell-tale is this line in the terminal when a tune starts:
+
+```
+err:winediag:MIDIMAP_drvOpen No software synthesizer midi port found, Midi sound output probably won't work.
+```
+
+Wine then "plays" the tune into nothing - the client sees a working MCI
+device and shows the tune as playing, so the only symptom is silence
+(plus `fixme:mcimidi` chatter). This is a Wine/Linux-host situation
+only: real Windows has shipped the Microsoft GS Wavetable Synth since
+Win98, so a customer machine running LLM32.EXE always has a MIDI port.
 
 Wine routes MIDI to the ALSA sequencer, so something has to be listening
 there. FluidSynth with a General MIDI SoundFont is the easy option:

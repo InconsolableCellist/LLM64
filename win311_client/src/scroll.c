@@ -300,6 +300,7 @@ static void commit(Scrollback *sb)
     ln->off   = off;
     ln->len   = len;
     ln->color = sb->open_color;
+    ln->who   = sb->origin;
     ln->rows  = len ? wrap_rows(sb->blocks[block] + off, len, sb->cols,
                                 ln->color)
                     : 1;
@@ -365,6 +366,11 @@ void sb_color(Scrollback *sb, unsigned char color)
     sb->color = color;
     if (sb->open_len == 0)
         open_reset(sb);
+}
+
+void sb_origin(Scrollback *sb, unsigned char who)
+{
+    sb->origin = who;
 }
 
 void sb_putc(Scrollback *sb, char c)
@@ -469,6 +475,7 @@ static void view_open_line(SbView *v)
     const Scrollback *sb = v->sb;
 
     sb_wrap_begin(&v->w, sb->open, sb->open_len, sb->cols, sb->open_color);
+    v->who = sb->origin;
     v->in_open = 1;
 }
 
@@ -479,6 +486,7 @@ static void view_line(SbView *v, unsigned slot)
 
     sb_wrap_begin(&v->w, ln->len ? sb->blocks[ln->block] + ln->off : "",
                   ln->len, sb->cols, ln->color);
+    v->who = ln->who;
     v->slot = slot;
 }
 
@@ -534,8 +542,10 @@ int sb_view_next(SbView *v, SbRow *out)
        iterator, which is what makes blank lines space one turn from the
        next. So the only job here is stepping on to the following line. */
     for (;;) {
-        if (sb_wrap_next(&v->w, out))
+        if (sb_wrap_next(&v->w, out)) {
+            out->who = v->who;
             return 1;
+        }
         if (v->in_open) {
             v->done = 1;
             return 0;

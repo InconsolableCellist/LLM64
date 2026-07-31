@@ -206,6 +206,10 @@ static const COLORREF g_pal_paper[PAL_SLOTS] = {
 static int       g_theme = THEME_PAPER;
 static const COLORREF *g_pal = g_pal_paper;
 static COLORREF  g_bg = RGB(0xFF,0xFF,0xFF);
+/* The user's own lines sit on this, a shade off the page ground -
+   enough to find your last question in a page of reply, not enough to
+   read as a highlight. Set with the theme (theme_apply). */
+static COLORREF  g_bg_user = RGB(0xF0,0xF0,0xE8);
 
 /* Clamped, because the slot arrives off the wire. */
 static COLORREF pal_color(unsigned char slot)
@@ -298,9 +302,11 @@ static void theme_apply(int theme)
     if (theme == THEME_SCREEN) {
         g_pal = g_pal_screen;
         g_bg  = RGB(0x00,0x00,0x00);
+        g_bg_user = RGB(0x16,0x16,0x22);
     } else {
         g_pal = g_pal_paper;
         g_bg  = RGB(0xFF,0xFF,0xFF);
+        g_bg_user = RGB(0xF0,0xF0,0xE8);
     }
     if (g_bg_brush)
         DeleteObject(g_bg_brush);
@@ -413,6 +419,18 @@ static void say(unsigned char color, const char *s)
     view_touch(&g_conv_view);
 }
 
+/* The player's own line, echoed. Same as say(1, ...) but stamped as
+   the user's, so the painter can set it on its own faint band - which
+   is what separates question from answer at a glance in a transcript
+   where both may be pages long. */
+static void say_user(const char *s)
+{
+    sb_origin(&g_conv_view.sb, SB_WHO_USER);
+    sb_say(&g_conv_view.sb, 1, s);
+    sb_origin(&g_conv_view.sb, SB_WHO_OTHER);
+    view_touch(&g_conv_view);
+}
+
 /* The input box exists only while a conversation document is open, so
    every use of it has to tolerate its absence. */
 static void input_enable(int on)
@@ -435,6 +453,169 @@ static void set_status(const char *s)
 /* Painting                                                          */
 /* ---------------------------------------------------------------- */
 
+/* --- selection -----------------------------------------------------
+
+   Click and drag over any pane - the transcript or a Notebook page -
+   and Ctrl+C carries it to the clipboard. One selection in the whole
+   program, because that is what a selection means.
+
+   Anchor and end are held in ABSOLUTE display cells: (row, column)
+   where row counts from the top of the scrollback, so the selection
+   holds still while the pane scrolls under it. The one thing that can
+   move the text out from under it is the scrollback evicting its
+   oldest lines, which takes thousands of lines of streaming - lived
+   with, not defended against. */
+
+static struct {
+    View *v;            /* which document owns it; NULL = none */
+    long  ar; int  ac;  /* anchor: where the button went down */
+    long  br; int  bc;  /* end: where the mouse is, or was released */
+    int   on;           /* a nonempty selection exists */
+} g_sel;
+
+static void sel_clear(void)
+{
+    HWND p = (g_sel.v && g_sel.on) ? g_sel.v->pane : NULL;
+
+    g_sel.v = NULL;
+    g_sel.on = 0;
+    if (p)
+        InvalidateRect(p, NULL, FALSE);
+}
+
+/* The endpoints, in reading order. */
+static void sel_norm(long *r0, int *c0, long *r1, int *c1)
+{
+    if (g_sel.ar < g_sel.br
+        || (g_sel.ar == g_sel.br && g_sel.ac <= g_sel.bc)) {
+        *r0 = g_sel.ar; *c0 = g_sel.ac;
+        *r1 = g_sel.br; *c1 = g_sel.bc;
+    } else {
+        *r0 = g_sel.br; *c0 = g_sel.bc;
+        *r1 = g_sel.ar; *c1 = g_sel.ac;
+    }
+}
+
+/* The selected cell span [*s0, *s1) of one display row, empty if the
+   selection does not touch it. */
+static void sel_span(const View *v, long row, int *s0, int *s1)
+{
+    long r0, r1;
+    int  c0, c1;
+
+    *s0 = *s1 = 0;
+    if (!g_sel.on || g_sel.v != v)
+        return;
+    sel_norm(&r0, &c0, &r1, &c1);
+    if (row < r0 || row > r1)
+        return;
+    *s0 = (row == r0) ? c0 : 0;
+    *s1 = (row == r1) ? c1 : 32767;
+}
+
+/* Cells [c0, c1) of one wrapped row as plain text: the markers are
+   state, not glyphs, so they are stepped over the same way the painter
+   steps over them. Returns how many bytes landed in dst. */
+static int sel_row_text(const SbRow *r, int c0, int c1,
+                        char *dst, int cap)
+{
+    unsigned i, mlen;
+    int cell = 0, n = 0;
+
+    for (i = 0; i < r->len; ) {
+        mlen = sb_marker_len(r->text + i, r->len - i);
+        if (mlen) {
+            i += mlen;
+            continue;
+        }
+        if (cell >= c1)
+            break;
+        if (cell >= c0 && n < cap)
+            dst[n++] = r->text[i];
+        cell++;
+        i++;
+    }
+    return n;
+}
+
+/* 60000 and not 65536: the buffer has to live in one segment on the
+   16-bit build, and a selection past this is not a copy anyone makes
+   on purpose. */
+#define COPY_MAX 60000
+
+static void pane_copy(void)
+{
+    View  *v = g_sel.v;
+    long   r0, r1, row;
+    int    c0, c1;
+    SbView it;
+    SbRow  r, prev;
+    int    prev_done = 0, have_prev = 0;
+    HGLOBAL h;
+    LPSTR  dst;
+    long   n = 0;
+
+    if (!v || !g_sel.on || !v->live)
+        return;
+    sel_norm(&r0, &c0, &r1, &c1);
+    if (!sb_view(&v->sb, (unsigned long)r0, &it))
+        return;
+
+    h = GlobalAlloc(GMEM_MOVEABLE, COPY_MAX + 1);
+    if (!h)
+        return;
+    dst = (LPSTR)GlobalLock(h);
+    if (!dst) {
+        GlobalFree(h);
+        return;
+    }
+
+    for (row = r0; row <= r1 && sb_view_next(&it, &r); row++) {
+        if (have_prev) {
+            /* What goes between this row and the one before it. A row
+               that finished its logical line ends a real line; a
+               wrapped row rejoins it - with a space if the wrap
+               swallowed one (the byte gap says), flush if the break
+               cut a long token. */
+            if (prev_done) {
+                if (n + 2 <= COPY_MAX) {
+                    dst[n++] = '\r';
+                    dst[n++] = '\n';
+                }
+            } else if (r.text > prev.text + prev.len) {
+                if (n + 1 <= COPY_MAX)
+                    dst[n++] = ' ';
+            }
+        }
+        n += sel_row_text(&r, (row == r0) ? c0 : 0,
+                          (row == r1) ? c1 : 32767,
+                          dst + n, (int)(COPY_MAX - n));
+        prev = r;
+        prev_done = it.w.done;      /* did that row end its line? */
+        have_prev = 1;
+    }
+    dst[n] = '\0';
+    GlobalUnlock(h);
+    /* Shrink to what was written: the clipboard hands consumers the
+       WHOLE block, and Wine's X bridge was faithfully exporting 60 KB
+       of uninitialised heap after the NUL. */
+    {
+        HGLOBAL h2 = GlobalReAlloc(h, (DWORD)n + 1, GMEM_MOVEABLE);
+
+        if (h2)
+            h = h2;
+    }
+
+    if (v->pane && OpenClipboard(v->pane)) {
+        EmptyClipboard();
+        SetClipboardData(CF_TEXT, h);
+        CloseClipboard();
+        set_status("Copied.");
+    } else {
+        GlobalFree(h);
+    }
+}
+
 /* The markers are still in the text - they are what the runs are split
    on, and the row arrives already knowing the colour and weight in force
    at its first cell, which is what makes a span that survives a wrap
@@ -446,15 +627,24 @@ static void set_status(const char *s)
    filling the pane first and drawing text after means the eye catches
    the blank. Each run is drawn with ETO_OPAQUE, which lays down the
    background and the glyphs in one operation, and only the margins -
-   which never hold text - are filled separately. */
-static void paint_row(HDC hdc, int x0, int y, int right, const SbRow *r)
+   which never hold text - are filled separately.
+
+   sel0/sel1 are the row's selected cells [sel0, sel1), painted in the
+   system highlight colours: a run is split where the selection starts
+   or ends, exactly as it is split where a marker changes the colour. */
+static void paint_row(HDC hdc, int x0, int y, int right, const SbRow *r,
+                      int sel0, int sel1)
 {
     unsigned i, run_start = 0, mlen;
     int x = x0, n;
+    int cell = 0, run_cell = 0, in_sel;
     unsigned char color = r->color;
     unsigned char attr = r->attr;
+    /* The row's own ground: the user's lines sit on a faint band. */
+    COLORREF rowbg = (r->who == SB_WHO_USER) ? g_bg_user : g_bg;
     RECT rr;
 
+    SetBkColor(hdc, rowbg);
     if (x0 > 0) {
         rr.left = 0; rr.top = y; rr.right = x0; rr.bottom = y + g_ch;
         ExtTextOut(hdc, 0, y, ETO_OPAQUE, &rr, "", 0, NULL);
@@ -468,10 +658,16 @@ static void paint_row(HDC hdc, int x0, int y, int right, const SbRow *r)
     for (i = 0; i <= r->len; ) {
         mlen = (i < r->len) ? sb_marker_len(r->text + i, r->len - i) : 0;
 
-        if (i == r->len || mlen) {
+        if (i == r->len || mlen
+            || ((cell == sel0 || cell == sel1) && i > run_start)) {
             n = (int)(i - run_start);
             if (n > 0) {
-                SetTextColor(hdc, pal_color(color));
+                in_sel = (run_cell >= sel0 && run_cell < sel1);
+                SetTextColor(hdc, in_sel
+                             ? GetSysColor(COLOR_HIGHLIGHTTEXT)
+                             : pal_color(color));
+                SetBkColor(hdc, in_sel ? GetSysColor(COLOR_HIGHLIGHT)
+                                       : rowbg);
                 SelectObject(hdc, attr_font(attr));
                 rr.left = x; rr.top = y;
                 rr.right = x + n * g_cw; rr.bottom = y + g_ch;
@@ -481,16 +677,24 @@ static void paint_row(HDC hdc, int x0, int y, int right, const SbRow *r)
             }
             if (i == r->len)
                 break;
-            sb_mark_apply(r->text + i, mlen, r->base, &color, &attr);
-            i += mlen;
             run_start = i;
-        } else {
-            i++;
+            run_cell = cell;
+            if (mlen) {
+                sb_mark_apply(r->text + i, mlen, r->base, &color, &attr);
+                i += mlen;
+                run_start = i;
+                continue;
+            }
+            /* A selection edge with no marker: fall through and let the
+               byte join the new run. */
         }
+        cell++;
+        i++;
     }
 
     /* The rest of the row, past the end of the text. */
     if (x < right) {
+        SetBkColor(hdc, rowbg);
         rr.left = x; rr.top = y; rr.right = right; rr.bottom = y + g_ch;
         ExtTextOut(hdc, x, y, ETO_OPAQUE, &rr, "", 0, NULL);
     }
@@ -530,8 +734,12 @@ static void pane_paint(HWND hwnd)
     rows = view_rows(v);
     row = 0;
     if (sb_view(&v->sb, (unsigned long)v->top, &it)) {
-        for (; row < rows && sb_view_next(&it, &r); row++)
-            paint_row(hdc, v->margin, row * g_ch, rc.right, &r);
+        for (; row < rows && sb_view_next(&it, &r); row++) {
+            int s0, s1;
+
+            sel_span(v, v->top + row, &s0, &s1);
+            paint_row(hdc, v->margin, row * g_ch, rc.right, &r, s0, s1);
+        }
     }
     /* Only what is left below the last row, and only once. */
     if (row * g_ch < rc.bottom) {
@@ -1235,7 +1443,7 @@ static void shelf_add(void)
             break;
         }
     if (slot >= 0) {
-        if (GetTempFileName(0, "L64", 0, g_shelf[slot].path) == 0)
+        if (!LLM_TEMP_NAME("L64", g_shelf[slot].path))
             return;
         f = _lcreat(g_shelf[slot].path, 0);
         if (f == HFILE_ERROR)
@@ -1265,9 +1473,10 @@ static void shelf_add(void)
             SendMessage(g_pic_lb, LB_DELETESTRING, 0, 0L);
     }
     /* GetTempFileName with unique=0 creates the file as a side effect,
-       which is what reserves the name. */
-    if (GetTempFileName(0, "L64", 0,
-                        g_shelf[g_shelf_count].path) == 0)
+       which is what reserves the name. LLM_TEMP_NAME because the first
+       parameter means different things per target (llmport.h) - the
+       raw 0 made every Win32 temp file fail as "disk full". */
+    if (!LLM_TEMP_NAME("L64", g_shelf[g_shelf_count].path))
         return;
     f = _lcreat(g_shelf[g_shelf_count].path, 0);
     if (f == HFILE_ERROR)
@@ -1805,7 +2014,7 @@ static void mid_end(void)
     mus_mci_close();
     if (g_mus_file[0])
         OpenFile(g_mus_file, &of, OF_DELETE);
-    if (GetTempFileName(0, "MID", 0, g_mus_file) == 0)
+    if (!LLM_TEMP_NAME("MID", g_mus_file))
         g_mus_file[0] = '\0';
     f = g_mus_file[0] ? _lcreat(g_mus_file, 0) : HFILE_ERROR;
     if (f == HFILE_ERROR || !hfile_write(f, g_mid_mem, g_mid_size)) {
@@ -1849,6 +2058,8 @@ static struct {
     char appearance[200];
     char companions[160];
     char effects[120];          /* poisoned, blessed, on fire... */
+    char spells[120];           /* the story's CURRENT list; empty = the
+                                   static half (chargen) still stands */
     char inv[16][40];
     int  inv_n;
     int  inv_total;             /* what the narrator listed, before the cap */
@@ -2060,6 +2271,11 @@ static void sheet_parse(const char *j)
               g_sheet.companions, sizeof(g_sheet.companions));
     js_strarr(j, "effects", NULL, 0,
               g_sheet.effects, sizeof(g_sheet.effects));
+    /* Spells the story granted. Empty means "unchanged", and the sheet
+       falls back to the rolled list (g_static.spells) - the narrator
+       only writes this key when the list actually moved. */
+    js_strarr(j, "spells", NULL, 0,
+              g_sheet.spells, sizeof(g_sheet.spells));
     /* Every field counts towards "there is a sheet here". The old test
        named four, so a block carrying only gold and a level rendered the
        "no adventure state yet" placeholder over live data. */
@@ -2422,11 +2638,13 @@ static void do_connect(void)
 /* Input history lives with the editor keys (EditProc, further down);
    sending is what records a line into it. */
 static void hist_push(const char *text);
+static void undo_reset(void);
+static void conv_grow(void);
 
 static void send_input(void)
 {
     char text[512];
-    int n;
+    int n, i, o;
 
     if (!g_input)
         return;
@@ -2436,12 +2654,23 @@ static void send_input(void)
     text[n] = '\0';
     hist_push(text);                /* C-p brings it back (EditProc) */
     SetWindowText(g_input, "");
+    undo_reset();                   /* a sent line is not undoable */
+    conv_grow();                    /* the box shrinks back to one row */
+
+    /* A multiline edit hands back CRLF pairs. The transcript ignores
+       the CR on its own, but the proxy should get plain newlines - it
+       is a text protocol, not a Windows one. */
+    o = 0;
+    for (i = 0; text[i]; i++)
+        if (text[i] != '\r')
+            text[o++] = text[i];
+    text[o] = '\0';
 
     if (net_state() != NET_UP) {
         say(2, "Not connected. Use File > Connect.");
         return;
     }
-    say(1, text);
+    say_user(text);
     send_text_frame(MSG_CHAT_REQUEST, text);
     set_status("Waiting for the model...");
     if (g_input)
@@ -2508,6 +2737,102 @@ long FAR PASCAL _export PaneProc(HWND hwnd, UINT msg, UINT wParam,
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
     }
+
+    /* Click and drag selects; Ctrl+C copies (EditProc for the
+       transcript, this window's own WM_CHAR for a Notebook page). A
+       plain click only clears whatever was selected - the selection
+       becomes real the moment the mouse moves with the button down. */
+    case WM_LBUTTONDOWN: {
+        int col = (GET_X_LPARAM(lParam) - v->margin) / g_cw;
+
+        sel_clear();
+        if (col < 0)
+            col = 0;
+        g_sel.v = v;
+        g_sel.ar = g_sel.br = v->top + GET_Y_LPARAM(lParam) / g_ch;
+        g_sel.ac = g_sel.bc = col;
+        SetCapture(hwnd);
+        /* The transcript's keys live on the input line; a sheet has no
+           input line, so its pane takes the keyboard itself. */
+        if (v != &g_conv_view)
+            SetFocus(hwnd);
+        return 0;
+    }
+
+    case WM_MOUSEMOVE: {
+        int mx, my, col;
+        long row, maxrow;
+        RECT rc;
+
+        if (GetCapture() != hwnd || g_sel.v != v)
+            break;
+        mx = GET_X_LPARAM(lParam);
+        my = GET_Y_LPARAM(lParam);
+        GetClientRect(hwnd, &rc);
+        /* Dragging past an edge walks the view a row at a time - the
+           WM_MOUSEMOVE stream while the button is down is the timer. */
+        if (my < 0) {
+            v->top--;
+            view_sync_scroll(v);
+            v->follow = 0;
+            my = 0;
+        } else if (my > rc.bottom) {
+            v->top++;
+            view_sync_scroll(v);
+            v->follow = (v->top >= view_max_top(v));
+            my = (int)rc.bottom - 1;
+        }
+        row = v->top + my / g_ch;
+        maxrow = view_total(v) - 1;
+        if (row > maxrow) row = maxrow;
+        if (row < 0) row = 0;
+        col = (mx - v->margin) / g_cw;
+        if (col < 0) col = 0;
+        g_sel.br = row;
+        g_sel.bc = col;
+        g_sel.on = (g_sel.br != g_sel.ar || g_sel.bc != g_sel.ac);
+        InvalidateRect(hwnd, NULL, FALSE);
+        return 0;
+    }
+
+    case WM_LBUTTONUP:
+        if (GetCapture() == hwnd)
+            ReleaseCapture();
+        return 0;
+
+    /* The Message menu, where the mouse already is. Right-click menus
+       were a Windows 95 habit, but TrackPopupMenu is 3.0 API and real
+       3.1 applications shipped them - period-plausible, and the menu
+       bar carries the same items for the purist. Transcript only: a
+       paper sheet has no conversation to redo. The menu is owned by
+       the frame, whose WM_COMMAND already handles these ids. */
+    case WM_RBUTTONDOWN:
+        if (v == &g_conv_view && g_frame) {
+            POINT pt;
+            HMENU m = CreatePopupMenu();
+
+            if (!m)
+                return 0;
+            AppendMenu(m, MF_STRING, IDM_REDO,   "&Redo Reply");
+            AppendMenu(m, MF_STRING, IDM_RETCON, "Ret&con Last Exchange");
+            AppendMenu(m, MF_SEPARATOR, 0, NULL);
+            AppendMenu(m, MF_STRING, IDM_FORK,   "&Fork Conversation");
+            pt.x = GET_X_LPARAM(lParam);
+            pt.y = GET_Y_LPARAM(lParam);
+            ClientToScreen(hwnd, &pt);
+            TrackPopupMenu(m, TPM_LEFTALIGN, (int)pt.x, (int)pt.y, 0,
+                           g_frame, NULL);
+            DestroyMenu(m);
+            return 0;
+        }
+        break;
+
+    case WM_CHAR:
+        if (wParam == 3 && g_sel.on) {      /* C-c on a focused pane */
+            pane_copy();
+            return 0;
+        }
+        break;
 
     case WM_SIZE:
         /* The scrollbar first, so view_cols measures against the width
@@ -2600,15 +2925,145 @@ static int edit_pos(HWND e)
     return (int)HIWORD(SendMessage(e, EM_GETSEL, 0, 0L));
 }
 
+/* EM_SETSEL is packed differently per target: Win16 wants both ends in
+   lParam, Win32 one per parameter. The Win16 spelling COMPILES on
+   Win32 and then selects from zero to whatever the packed pair reads
+   as - so "caret to end" quietly became "select all", and the first
+   Shift+Enter replaced the line it was meant to extend. */
+static void edit_sel(HWND e, int from, int to)
+{
+#ifdef __WATCOMC__
+    SendMessage(e, EM_SETSEL, 0, MAKELONG(from, to));
+#else
+    SendMessage(e, EM_SETSEL, (UINT)from, (LONG)to);
+#endif
+}
+
 static void edit_setpos(HWND e, int pos)
 {
-    SendMessage(e, EM_SETSEL, 0, MAKELONG(pos, pos));
+    edit_sel(e, pos, pos);
 }
 
 static void edit_cut(HWND e, int from, int to)
 {
-    SendMessage(e, EM_SETSEL, 0, MAKELONG(from, to));
+    edit_sel(e, from, to);
     SendMessage(e, EM_REPLACESEL, 0, (LONG)(LPSTR)"");
+}
+
+/* --- undo and redo -------------------------------------------------
+
+   The stock EDIT owns one level of undo and toggles it, which in 2026
+   reads as broken. So the input line keeps its own two stacks of whole
+   snapshots - text and caret, taken BEFORE each edit lands. Snapshots
+   are honest at this size: the box caps at 500 characters, so the
+   worst case is 32 KB of far heap, not a diff engine. Runs of typing
+   coalesce into one entry per word, which is the granularity fingers
+   expect; deletes coalesce the same way; everything else - a paste, a
+   kill, a history recall - is its own step.
+
+   Keys: C-z undoes, C-S-z and C-y redo, and Ctrl+_ (the emacs
+   spelling) undoes too. The snapshots live in malloc'd blocks because
+   DGROUP is nearly spent on the 16-bit build; only the two pointer
+   tables live near. */
+
+#define UNDO_N   32
+
+typedef struct {
+    char *text;                 /* malloc'd copy, NUL-terminated */
+    int   caret;
+} UndoRec;
+
+static UndoRec g_undo[UNDO_N];
+static UndoRec g_redo[UNDO_N];
+static int     g_undo_n, g_redo_n;
+
+/* What the last recorded edit was, so a run of like edits makes ONE
+   entry: the first char of a word pushes, the rest ride along, and a
+   space (or any other kind of edit) closes the group. */
+#define UK_NONE  0
+#define UK_TYPE  1
+#define UK_DEL   2
+
+static int g_undo_kind = UK_NONE;
+
+static void u_free(UndoRec *r)
+{
+    if (r->text) {
+        free(r->text);
+        r->text = NULL;
+    }
+}
+
+static void undo_reset(void)
+{
+    int i;
+
+    for (i = 0; i < g_undo_n; i++) u_free(&g_undo[i]);
+    for (i = 0; i < g_redo_n; i++) u_free(&g_redo[i]);
+    g_undo_n = g_redo_n = 0;
+    g_undo_kind = UK_NONE;
+}
+
+static void u_capture(HWND e, UndoRec *r)
+{
+    int n = GetWindowTextLength(e);
+
+    r->text = (char *)malloc((unsigned)n + 1);
+    if (r->text)
+        GetWindowText(e, r->text, n + 1);
+    r->caret = edit_pos(e);
+}
+
+static void u_apply(HWND e, const UndoRec *r)
+{
+    SetWindowText(e, r->text ? r->text : "");
+    edit_setpos(e, r->caret);
+}
+
+/* Record the state about to be edited. kind coalesces: a push whose
+   kind matches the previous one is a continuation, not a step. */
+static void undo_push(HWND e, int kind)
+{
+    int i;
+
+    if (kind != UK_NONE && kind == g_undo_kind)
+        return;
+    for (i = 0; i < g_redo_n; i++)      /* a new edit orphans redo */
+        u_free(&g_redo[i]);
+    g_redo_n = 0;
+    if (g_undo_n == UNDO_N) {
+        u_free(&g_undo[0]);
+        for (i = 1; i < UNDO_N; i++)
+            g_undo[i - 1] = g_undo[i];
+        g_undo_n--;
+    }
+    u_capture(e, &g_undo[g_undo_n]);
+    g_undo_n++;
+    g_undo_kind = kind;
+}
+
+static void undo_do(HWND e)
+{
+    if (!g_undo_n)
+        return;
+    if (g_redo_n < UNDO_N)
+        u_capture(e, &g_redo[g_redo_n++]);
+    g_undo_n--;
+    u_apply(e, &g_undo[g_undo_n]);
+    u_free(&g_undo[g_undo_n]);
+    g_undo_kind = UK_NONE;
+}
+
+static void redo_do(HWND e)
+{
+    if (!g_redo_n)
+        return;
+    if (g_undo_n < UNDO_N)
+        u_capture(e, &g_undo[g_undo_n++]);
+    g_redo_n--;
+    u_apply(e, &g_redo[g_redo_n]);
+    u_free(&g_redo[g_redo_n]);
+    g_undo_kind = UK_NONE;
 }
 
 static int is_wordch(char c)
@@ -2650,10 +3105,19 @@ static void hist_recall(HWND e, int older)
             return;                 /* already on the fresh line */
         g_hist_browse--;
     }
+    undo_push(e, UK_NONE);          /* C-z steps back OUT of a recall */
     SetWindowText(e, g_hist_browse < 0 ? g_hist_stash
                                        : g_hist[g_hist_browse]);
     edit_setpos(e, GetWindowTextLength(e));
+    conv_grow();                    /* a recalled line may be taller */
 }
+
+/* Ctrl+_ (the emacs undo) reaches us twice on layouts that translate
+   it: once as the WM_KEYDOWN this flag is set by, once as WM_CHAR 31.
+   The flag makes the pair one undo, and a bare WM_CHAR 31 from a
+   layout we did not predict still works alone. */
+#define VK_OEM_MINUS_K  0xBD
+static int g_ctrl_minus_seen;
 
 long FAR PASCAL _export EditProc(HWND hwnd, UINT msg, UINT wParam,
                                  LONG lParam)
@@ -2665,34 +3129,80 @@ long FAR PASCAL _export EditProc(HWND hwnd, UINT msg, UINT wParam,
     case WM_CHAR:
         switch (wParam) {
         case VK_RETURN:
+            /* Shift+Enter: a new line in the box, not a send. The
+               stock multiline EDIT does the inserting. */
+            if (GetKeyState(VK_SHIFT) & 0x8000) {
+                undo_push(hwnd, UK_NONE);
+                break;
+            }
             send_input();
             return 0;
+        case 26:                    /* C-z / C-S-z: undo / redo */
+            if (GetKeyState(VK_SHIFT) & 0x8000)
+                redo_do(hwnd);
+            else
+                undo_do(hwnd);
+            return 0;
+        case 25:                    /* C-y: redo, the other spelling */
+            redo_do(hwnd);
+            return 0;
+        case 31:                    /* C-_: undo, the emacs spelling */
+            if (g_ctrl_minus_seen)
+                g_ctrl_minus_seen = 0;  /* its WM_KEYDOWN already did */
+            else
+                undo_do(hwnd);
+            return 0;
+        case 3: {                   /* C-c: the pane's selection if one
+                                       is lit, else the edit's own */
+            DWORD s = (DWORD)SendMessage(hwnd, EM_GETSEL, 0, 0L);
+
+            if (LOWORD(s) != HIWORD(s))
+                SendMessage(hwnd, WM_COPY, 0, 0L);
+            else if (g_sel.on)
+                pane_copy();
+            return 0;
+        }
+        case 22:                    /* C-v: paste. Spelled out because
+                                       the 3.1 EDIT never learned it. */
+            SendMessage(hwnd, WM_PASTE, 0, 0L);
+            return 0;
+        case 24:                    /* C-x: cut */
+            SendMessage(hwnd, WM_CUT, 0, 0L);
+            return 0;
         case 1:                     /* C-a: line start */
+            g_undo_kind = UK_NONE;
             edit_setpos(hwnd, 0);
             return 0;
         case 5:                     /* C-e: line end */
+            g_undo_kind = UK_NONE;
             edit_setpos(hwnd, GetWindowTextLength(hwnd));
             return 0;
         case 2:                     /* C-b: back a char */
+            g_undo_kind = UK_NONE;
             pos = edit_pos(hwnd);
             if (pos > 0)
                 edit_setpos(hwnd, pos - 1);
             return 0;
         case 6:                     /* C-f: forward a char */
+            g_undo_kind = UK_NONE;
             pos = edit_pos(hwnd);
             if (pos < GetWindowTextLength(hwnd))
                 edit_setpos(hwnd, pos + 1);
             return 0;
         case 4:                     /* C-d: delete right */
             pos = edit_pos(hwnd);
-            if (pos < GetWindowTextLength(hwnd))
+            if (pos < GetWindowTextLength(hwnd)) {
+                undo_push(hwnd, UK_DEL);
                 edit_cut(hwnd, pos, pos + 1);
+            }
             return 0;
         case 11:                    /* C-k: kill to end of line */
             pos = edit_pos(hwnd);
             n = GetWindowTextLength(hwnd);
-            if (pos < n)
+            if (pos < n) {
+                undo_push(hwnd, UK_NONE);
                 edit_cut(hwnd, pos, n);
+            }
             return 0;
         case 16:                    /* C-p: an older line */
             hist_recall(hwnd, 1);
@@ -2705,35 +3215,59 @@ long FAR PASCAL _export EditProc(HWND hwnd, UINT msg, UINT wParam,
                                        Some layers deliver Ctrl+BS as 8
                                        with the modifier, others as 127
                                        below; both mean the same. */
-            if (!(GetKeyState(VK_CONTROL) & 0x8000))
+            if (!(GetKeyState(VK_CONTROL) & 0x8000)) {
+                undo_push(hwnd, UK_DEL);
                 break;              /* plain: the EDIT's own backspace */
+            }
             /* fall through */
         case 127:                   /* Ctrl+Backspace, the other spelling
                                        - the stock EDIT inserts it as a
                                        box character, helping no one. */
             GetWindowText(hwnd, t, sizeof(t) - 1);
             pos = edit_pos(hwnd);
-            if (pos > 0)
+            if (pos > 0) {
+                undo_push(hwnd, UK_NONE);
                 edit_cut(hwnd, word_left(t, pos), pos);
+            }
             return 0;
+        default:
+            if (wParam >= 32) {     /* an ordinary keystroke */
+                undo_push(hwnd, UK_TYPE);
+                /* A space seals the word: the next one starts a fresh
+                   undo step rather than riding this one. */
+                if (wParam == ' ')
+                    g_undo_kind = UK_NONE;
+            }
+            break;
         }
+        break;
+
+    case WM_PASTE:                  /* Shift+Ins and the menu land here
+                                       too, not only C-v above */
+    case WM_CUT:
+    case WM_CLEAR:
+        undo_push(hwnd, UK_NONE);
         break;
 
     case WM_SYSCHAR:
         switch (wParam) {
         case 'b': case 'B':         /* M-b: back a word */
+            g_undo_kind = UK_NONE;
             GetWindowText(hwnd, t, sizeof(t) - 1);
             edit_setpos(hwnd, word_left(t, edit_pos(hwnd)));
             return 0;
         case 'f': case 'F':         /* M-f: forward a word */
+            g_undo_kind = UK_NONE;
             n = GetWindowText(hwnd, t, sizeof(t) - 1);
             edit_setpos(hwnd, word_right(t, n, edit_pos(hwnd)));
             return 0;
         case 'd': case 'D':         /* M-d: delete the word ahead */
             n = GetWindowText(hwnd, t, sizeof(t) - 1);
             pos = edit_pos(hwnd);
-            if (pos < n)
+            if (pos < n) {
+                undo_push(hwnd, UK_NONE);
                 edit_cut(hwnd, pos, word_right(t, n, pos));
+            }
             return 0;
         }
         break;
@@ -2746,6 +3280,41 @@ long FAR PASCAL _export EditProc(HWND hwnd, UINT msg, UINT wParam,
                         LLM_SCROLL_LP(0, 0));
             return 0;
         }
+        /* Up and Down walk the history from the box's edge rows; on an
+           inner row of a taller entry they stay what they always were,
+           caret movement. */
+        if (wParam == VK_UP || wParam == VK_DOWN) {
+            int line = (int)SendMessage(hwnd, EM_LINEFROMCHAR,
+                                        (UINT)-1, 0L);
+            int last = (int)SendMessage(hwnd, EM_GETLINECOUNT,
+                                        0, 0L) - 1;
+
+            if (wParam == VK_UP && line == 0) {
+                hist_recall(hwnd, 1);
+                return 0;
+            }
+            if (wParam == VK_DOWN && line >= last) {
+                hist_recall(hwnd, 0);
+                return 0;
+            }
+            g_undo_kind = UK_NONE;
+            break;
+        }
+        if (wParam == VK_DELETE) {  /* the Del key skips WM_CHAR */
+            undo_push(hwnd, UK_DEL);
+            break;
+        }
+        if (wParam == VK_LEFT || wParam == VK_RIGHT
+            || wParam == VK_HOME || wParam == VK_END) {
+            g_undo_kind = UK_NONE;
+            break;
+        }
+        if (wParam == VK_OEM_MINUS_K
+            && (GetKeyState(VK_CONTROL) & 0x8000)) {
+            g_ctrl_minus_seen = 1;  /* C-_: see the flag above */
+            undo_do(hwnd);
+            return 0;
+        }
         break;
     }
     return CallWindowProc(g_old_edit_proc, hwnd, msg, wParam, lParam);
@@ -2753,11 +3322,17 @@ long FAR PASCAL _export EditProc(HWND hwnd, UINT msg, UINT wParam,
 
 /* Inside a conversation document: transcript over input box. The status
    strip is not here - it belongs to the frame, because it reports on the
-   link, which is the application's and not any one document's. */
+   link, which is the application's and not any one document's.
+
+   The input box is one row until Shift+Enter (or a wrap) makes it more,
+   then it takes rows from the transcript - four at most, because past
+   that it is an editor, and the transcript is the document here. */
+static int g_input_rows = 1;
+
 static void conv_layout(HWND hwnd)
 {
     RECT rc;
-    int inputh = g_ch + 8;
+    int inputh = g_ch * g_input_rows + 8;
     int paneh;
 
     GetClientRect(hwnd, &rc);
@@ -2767,6 +3342,26 @@ static void conv_layout(HWND hwnd)
         MoveWindow(g_conv_view.pane, 0, 0, rc.right, paneh, TRUE);
     if (g_input)
         MoveWindow(g_input, 0, paneh, rc.right, inputh, TRUE);
+}
+
+/* Re-fit the box to its text. Cheap enough to run on every EN_CHANGE:
+   it moves windows only when the row count actually changed. */
+static void conv_grow(void)
+{
+    int rows;
+
+    if (!g_input || !g_conv)
+        return;
+    rows = (int)SendMessage(g_input, EM_GETLINECOUNT, 0, 0L);
+    if (rows < 1) rows = 1;
+    if (rows > 4) rows = 4;
+    if (rows != g_input_rows) {
+        g_input_rows = rows;
+        conv_layout(g_conv);
+        /* The transcript lost or gained a row; keep it pinned. */
+        if (g_conv_view.follow)
+            view_bottom(&g_conv_view);
+    }
 }
 
 /* The default desk: conversation on the left, picture beside it - the
@@ -2921,10 +3516,18 @@ long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
     case WM_CREATE:
         inst = LLM_INST(hwnd);
         pane_create(hwnd, &g_conv_view);
+        /* Multiline, and word-wrapped (no ES_AUTOHSCROLL): Shift+Enter
+           makes a second line, and the box grows under it (conv_layout).
+           Plain Enter still sends - EditProc owns that key. */
         g_input = CreateWindow("EDIT", "",
-                               WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+                               WS_CHILD | WS_VISIBLE | WS_BORDER
+                               | ES_MULTILINE | ES_AUTOVSCROLL
+                               | ES_WANTRETURN,
                                0, 0, 10, 10, hwnd, (HMENU)ID_INPUT, inst, NULL);
         SendMessage(g_input, WM_SETFONT, (WPARAM)g_font, 0L);
+        /* send_input reads into char[512]; past this the tail would be
+           silently dropped on Send, which is worse than a full box. */
+        SendMessage(g_input, EM_LIMITTEXT, 500, 0L);
         g_old_edit_proc = (LlmOldProc)GetWindowLong(g_input, GWL_WNDPROC);
         SetWindowLong(g_input, GWL_WNDPROC, (LONG)EditProc);
         break;
@@ -2938,6 +3541,14 @@ long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
     case WM_MOVE:
         if (g_layout_ready && !g_in_layout)
             g_user_arranged = 1;
+        break;
+
+    case WM_COMMAND:
+        /* The input box grew or shrank a line - Shift+Enter, a paste,
+           a wrap, an undo. Give or take the rows. */
+        if (LLM_CMD_ID(wParam, lParam) == ID_INPUT
+            && LLM_CMD_NOTIFY(wParam, lParam) == EN_CHANGE)
+            conv_grow();
         break;
 
     case WM_MDIACTIVATE:
@@ -3007,22 +3618,86 @@ static HWND g_note_wnd;
 static HWND g_note_lb;          /* the index */
 static HWND g_note_pane;        /* the page, re-made as the index moves */
 static int  g_note_cur = -1;    /* the sheet on show, or -1 for none */
+/* The verbs, under the index: Rename, Edit, Delete. Ids are consecutive
+   from ID_NOTERENAME, so creation and layout are one loop each. */
+#define NOTE_NBTN 3
+static HWND g_note_btn[NOTE_NBTN];
+/* The split between index and page, as the index's share of the width
+   in percent. 0 means "never dragged", which falls back to the fixed
+   default; a dragged value persists in LLM64.INI like the window
+   placements do. */
+static int  g_note_split_pct;
+static int  g_note_drag;        /* the splitter is being dragged */
 
 #define NOTE_INDEX_W  132
+#define NOTE_SPLIT_W  5         /* the draggable gap, in pixels */
+#define NOTE_MIN_SIDE 60        /* neither half goes under this */
 
-static void note_layout(HWND hwnd)
+static int note_btn_h(void)
+{
+    return g_ch + 6;
+}
+
+/* Where the split lands at this width: the dragged fraction if there is
+   one, the fixed default if not, clamped so both halves stay usable. */
+static int note_index_w(int width)
+{
+    long lw;
+
+    if (width <= 0)
+        return NOTE_INDEX_W;
+    lw = g_note_split_pct > 0 ? (long)width * g_note_split_pct / 100
+                              : NOTE_INDEX_W;
+    if (lw > width - NOTE_MIN_SIDE - NOTE_SPLIT_W)
+        lw = width - NOTE_MIN_SIDE - NOTE_SPLIT_W;
+    if (lw < NOTE_MIN_SIDE)
+        lw = NOTE_MIN_SIDE;
+    return (int)lw;
+}
+
+/* Is this x on the splitter? One test shared by the cursor, the click
+   and the drag, so they cannot disagree about where the handle is. The
+   slack pixel each side is Fitts's law at 1993 mouse resolution. */
+static int note_on_split(HWND hwnd, int x)
 {
     RECT rc;
     int lw;
 
     GetClientRect(hwnd, &rc);
-    lw = NOTE_INDEX_W;
-    if (lw > (int)rc.right / 2)
-        lw = (int)rc.right / 2;
+    lw = note_index_w((int)rc.right);
+    return x >= lw - 1 && x < lw + NOTE_SPLIT_W + 1;
+}
+
+static void note_layout(HWND hwnd)
+{
+    RECT rc;
+    int lw, bh, by, i;
+
+    GetClientRect(hwnd, &rc);
+    lw = note_index_w((int)rc.right);
+    bh = note_btn_h();
+    by = (int)rc.bottom - NOTE_NBTN * (bh + 2);
+    if (by < 0)
+        by = 0;
     if (g_note_lb)
-        MoveWindow(g_note_lb, 0, 0, lw, rc.bottom, TRUE);
+        MoveWindow(g_note_lb, 0, 0, lw, by > 2 ? by - 2 : 0, TRUE);
+    for (i = 0; i < NOTE_NBTN; i++)
+        if (g_note_btn[i])
+            MoveWindow(g_note_btn[i], 2, by + i * (bh + 2),
+                       lw - 4, bh, TRUE);
     if (g_note_pane)
-        MoveWindow(g_note_pane, lw, 0, (int)rc.right - lw, rc.bottom, TRUE);
+        MoveWindow(g_note_pane, lw + NOTE_SPLIT_W, 0,
+                   (int)rc.right - lw - NOTE_SPLIT_W, rc.bottom, TRUE);
+}
+
+/* The verbs only mean anything with a sheet selected. */
+static void note_btns(void)
+{
+    int i, on = g_note_cur >= 0;
+
+    for (i = 0; i < NOTE_NBTN; i++)
+        if (g_note_btn[i])
+            EnableWindow(g_note_btn[i], on);
 }
 
 /* Rebuild the index. Each row carries its slot in its item data, so the
@@ -3081,6 +3756,7 @@ static void note_show(int slot)
         g_paper[slot].top = 0;      /* a page opens at its top */
         g_note_pane = pane_create(g_note_wnd, &g_paper[slot]);
     }
+    note_btns();
     note_layout(g_note_wnd);
     InvalidateRect(g_note_wnd, NULL, TRUE);
 }
@@ -3117,15 +3793,20 @@ static void note_paint(HWND hwnd)
 {
     PAINTSTRUCT ps;
     HDC hdc = BeginPaint(hwnd, &ps);
-    RECT rc;
+    RECT rc, strip;
     int lw;
 
-    /* Only the part no child covers - which with no sheet selected is the
-       whole right-hand side, and is where the empty state goes. */
+    /* Only the parts no child covers: the right-hand side (whole, with
+       no sheet selected - the empty state goes there), the splitter gap
+       beside the index, and the margin around the buttons. */
     GetClientRect(hwnd, &rc);
-    lw = NOTE_INDEX_W;
-    if (lw > (int)rc.right / 2)
-        lw = (int)rc.right / 2;
+    lw = note_index_w((int)rc.right);
+    strip = rc;
+    strip.right = lw;
+    strip.top = (int)rc.bottom - NOTE_NBTN * (note_btn_h() + 2) - 2;
+    if (strip.top < 0)
+        strip.top = 0;
+    FillRect(hdc, &strip, GetStockObject(LTGRAY_BRUSH));
     rc.left = lw;
     FillRect(hdc, &rc, GetStockObject(LTGRAY_BRUSH));
     if (!g_note_pane) {
@@ -3139,6 +3820,274 @@ static void note_paint(HWND hwnd)
                  -1, &rc, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
     }
     EndPaint(hwnd, &ps);
+}
+
+/* --- Rename and Edit ---------------------------------------------
+
+   Rename changes the index row only; the sheet keeps its printed title
+   line. Edit is a round trip through a dialog: a Scrollback is built to
+   be appended to and painted, not edited in place, so the text comes
+   OUT (committed lines, markers dropped, CRLF joined - what an EDIT
+   control eats), gets edited like any text, and the sheet is rebuilt
+   from the result. */
+
+/* What the Win16 multiline EDIT will reliably hold - it gives out
+   around 30 KB - and several times any sheet the proxy prints. */
+#define NOTE_EDIT_MAX 24000U
+
+/* One committed line's text, straight out of the arena. */
+static const char *note_line(const Scrollback *sb, unsigned k,
+                             unsigned *len)
+{
+    const SbLine *ln = &sb->lines[(sb->head + k) % SB_MAX_LINES];
+
+    *len = ln->len;
+    return sb->blocks[ln->block] + ln->off;
+}
+
+/* Append one line to the extraction, markers skipped, or only count it
+   when out is NULL - the sizing pass and the copying pass have to walk
+   the same bytes or the malloc below is a guess. */
+static unsigned note_take(const char *t, unsigned len, char *out,
+                          unsigned at)
+{
+    unsigned i = 0, m;
+
+    while (i < len) {
+        m = sb_marker_len(t + i, len - i);
+        if (m) {
+            i += m;
+            continue;
+        }
+        if (out)
+            out[at] = t[i];
+        at++;
+        i++;
+    }
+    if (out) {
+        out[at]     = '\r';
+        out[at + 1] = '\n';
+    }
+    return at + 2;
+}
+
+/* The whole sheet as one malloc'd CRLF-joined string, or NULL with the
+   reason already on screen. The caller frees it. */
+static char *note_text(int slot)
+{
+    const Scrollback *sb = &g_paper[slot].sb;
+    unsigned long need = 0;
+    unsigned k, len, at;
+    const char *t;
+    char *buf;
+
+    for (k = 0; k < sb->count; k++) {
+        t = note_line(sb, k, &len);
+        need += note_take(t, len, NULL, 0);
+    }
+    if (sb->open_len > 0)
+        need += note_take(sb->open, sb->open_len, NULL, 0);
+    if (need > NOTE_EDIT_MAX) {
+        llm_message(g_note_wnd, "This sheet is too large to edit here.",
+                    "Notebook", MB_OK | MB_ICONEXCLAMATION);
+        return NULL;
+    }
+    buf = malloc((unsigned)need + 1);
+    if (!buf) {
+        llm_message(g_note_wnd, "Not enough memory to edit this sheet.",
+                    "Notebook", MB_OK | MB_ICONEXCLAMATION);
+        return NULL;
+    }
+    at = 0;
+    for (k = 0; k < sb->count; k++) {
+        t = note_line(sb, k, &len);
+        at = note_take(t, len, buf, at);
+    }
+    if (sb->open_len > 0)
+        at = note_take(sb->open, sb->open_len, buf, at);
+    buf[at] = '\0';
+    return buf;
+}
+
+/* The sheet again, from the edited text. sb_putc owns the details -
+   '\n' commits a line, over-long lines get broken at a space - so this
+   is a straight replay. */
+static void note_rebuild(int slot, const char *text)
+{
+    Scrollback *sb = &g_paper[slot].sb;
+
+    sb_clear(sb);
+    sb_color(sb, 1);            /* ink: black on paper, as printed */
+    while (*text) {
+        if (*text != '\r')
+            sb_putc(sb, *text);
+        text++;
+    }
+    if (sb->open_len > 0)
+        sb_newline(sb);
+}
+
+/* The dialogs' arguments, as file statics because DialogBox has nowhere
+   to put a parameter and DialogBoxParam is not in 3.1 - the same
+   arrangement llm_message uses, and modal for the same reason. */
+static int   g_sheet_slot;
+static char *g_sheet_text;      /* Edit: in and, on OK, out */
+
+BOOL FAR PASCAL _export SheetNameDlgProc(HWND dlg, UINT msg, UINT wParam,
+                                         LONG lParam)
+{
+    LONG cres;
+    char buf[40];
+
+    if (LLM_IS_CTLCOLOR(msg) && chrome_ctlcolor(msg, wParam, lParam, &cres))
+        return (BOOL)cres;
+    if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
+        SetWindowLong(dlg, DWL_MSGRESULT, cres);
+        return TRUE;
+    }
+
+    switch (msg) {
+    case WM_INITDIALOG:
+        SendDlgItemMessage(dlg, IDC_SHEETNAME, EM_LIMITTEXT,
+                           sizeof(g_paper_name[0]) - 1, 0L);
+        SetDlgItemText(dlg, IDC_SHEETNAME, g_paper_name[g_sheet_slot]);
+        return TRUE;
+
+    case WM_COMMAND:
+        switch (LLM_CMD_ID(wParam, lParam)) {
+        case IDOK:
+            GetDlgItemText(dlg, IDC_SHEETNAME, buf, sizeof(buf) - 1);
+            lstrcpy(g_paper_name[g_sheet_slot], buf);
+            /* A name given by hand outranks the title feed: a re-sent
+               sheet must not overwrite it. */
+            g_paper_named[g_sheet_slot] = 1;
+            EndDialog(dlg, 1);
+            return TRUE;
+        case IDCANCEL:
+            EndDialog(dlg, 0);
+            return TRUE;
+        }
+        break;
+    }
+    return FALSE;
+}
+
+BOOL FAR PASCAL _export SheetEditDlgProc(HWND dlg, UINT msg, UINT wParam,
+                                         LONG lParam)
+{
+    LONG cres;
+
+    if (LLM_IS_CTLCOLOR(msg) && chrome_ctlcolor(msg, wParam, lParam, &cres))
+        return (BOOL)cres;
+    if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
+        SetWindowLong(dlg, DWL_MSGRESULT, cres);
+        return TRUE;
+    }
+
+    switch (msg) {
+    case WM_INITDIALOG:
+        /* The sheet was typeset in a fixed face; edit it in the same
+           one, or the columns the proxy lined up fall apart on screen. */
+        SendDlgItemMessage(dlg, IDC_SHEETTEXT, WM_SETFONT,
+                           (WPARAM)g_font, 0L);
+        SendDlgItemMessage(dlg, IDC_SHEETTEXT, EM_LIMITTEXT,
+                           NOTE_EDIT_MAX, 0L);
+        SetDlgItemText(dlg, IDC_SHEETTEXT, g_sheet_text);
+        return TRUE;
+
+    case WM_SIZE: {
+        /* The template is a floor, not the layout: WS_THICKFRAME means
+           the box resizes, so the EDIT fills whatever the user gives it
+           and the buttons hold the bottom-right corner. */
+        HWND ed = GetDlgItem(dlg, IDC_SHEETTEXT);
+        HWND ok = GetDlgItem(dlg, IDOK);
+        HWND ca = GetDlgItem(dlg, IDCANCEL);
+        RECT rc, br;
+        int bw, bh;
+
+        GetClientRect(dlg, &rc);
+        GetWindowRect(ok, &br);
+        bw = (int)(br.right - br.left);
+        bh = (int)(br.bottom - br.top);
+        if (ed)
+            MoveWindow(ed, 6, 6, (int)rc.right - 12,
+                       (int)rc.bottom - bh - 22, TRUE);
+        if (ca)
+            MoveWindow(ca, (int)rc.right - bw - 8,
+                       (int)rc.bottom - bh - 8, bw, bh, TRUE);
+        if (ok)
+            MoveWindow(ok, (int)rc.right - 2 * bw - 14,
+                       (int)rc.bottom - bh - 8, bw, bh, TRUE);
+        /* Everything again, dialog included: without WS_CLIPCHILDREN
+           the dialog's own erase can land after the buttons painted
+           and wipe them - seen under Wine as OK and Cancel vanishing
+           on the first resize. One repaint pass in the normal order
+           puts the children back on top. */
+        InvalidateRect(dlg, NULL, TRUE);
+        return TRUE;
+    }
+
+    case WM_COMMAND:
+        switch (LLM_CMD_ID(wParam, lParam)) {
+        case IDOK: {
+            HWND ed = GetDlgItem(dlg, IDC_SHEETTEXT);
+            int len = GetWindowTextLength(ed);
+            char *p = malloc((unsigned)len + 2);
+
+            if (!p)
+                return TRUE;    /* stay up; nothing was lost */
+            GetWindowText(ed, p, len + 1);
+            free(g_sheet_text);
+            g_sheet_text = p;
+            EndDialog(dlg, 1);
+            return TRUE;
+        }
+        case IDCANCEL:
+            EndDialog(dlg, 0);
+            return TRUE;
+        }
+        break;
+    }
+    return FALSE;
+}
+
+static void note_rename(HWND owner)
+{
+    HINSTANCE inst = LLM_INST(owner);
+    FARPROC fn;
+    int r;
+
+    if (g_note_cur < 0)
+        return;
+    g_sheet_slot = g_note_cur;
+    fn = MakeProcInstance((FARPROC)SheetNameDlgProc, inst);
+    r = DialogBox(inst, "LLM64RENAME", owner, (DLGPROC)fn);
+    FreeProcInstance(fn);
+    if (r == 1)
+        note_fill();            /* the row re-renders with its new name */
+}
+
+static void note_edit(HWND owner)
+{
+    HINSTANCE inst = LLM_INST(owner);
+    FARPROC fn;
+    int slot = g_note_cur, r;
+
+    if (slot < 0)
+        return;
+    g_sheet_text = note_text(slot);
+    if (!g_sheet_text)
+        return;
+    g_sheet_slot = slot;
+    fn = MakeProcInstance((FARPROC)SheetEditDlgProc, inst);
+    r = DialogBox(inst, "LLM64SHEET", owner, (DLGPROC)fn);
+    FreeProcInstance(fn);
+    if (r == 1) {
+        note_rebuild(slot, g_sheet_text);
+        note_show(slot);        /* fresh pane: fresh top, fresh scrollbar */
+    }
+    free(g_sheet_text);
+    g_sheet_text = NULL;
 }
 
 long FAR PASCAL _export NoteProc(HWND hwnd, UINT msg, UINT wParam,
@@ -3164,6 +4113,22 @@ long FAR PASCAL _export NoteProc(HWND hwnd, UINT msg, UINT wParam,
                                  LLM_INST(hwnd),
                                  NULL);
         SendMessage(g_note_lb, WM_SETFONT, (WPARAM)g_font, 0L);
+        {
+            static const char *verb[NOTE_NBTN] =
+                { "Rename...", "Edit...", "Delete" };
+
+            for (i = 0; i < NOTE_NBTN; i++) {
+                g_note_btn[i] = CreateWindow("BUTTON", verb[i],
+                                     WS_CHILD | WS_VISIBLE
+                                     | WS_DISABLED | BS_PUSHBUTTON,
+                                     0, 0, 10, 10, hwnd,
+                                     (HMENU)(ID_NOTERENAME + i),
+                                     LLM_INST(hwnd),
+                                     NULL);
+                SendMessage(g_note_btn[i], WM_SETFONT, (WPARAM)g_font, 0L);
+                chrome_button(g_note_btn[i]);
+            }
+        }
         /* The sheets outlive this window, so reopening it finds them
            again - the picture shelf's rule, applied to paper. */
         note_fill();
@@ -3189,6 +4154,86 @@ long FAR PASCAL _export NoteProc(HWND hwnd, UINT msg, UINT wParam,
                 note_show((int)SendMessage(g_note_lb, LB_GETITEMDATA,
                                            r, 0L));
             return 0;
+        }
+        if (LLM_CMD_ID(wParam, lParam) == ID_NOTERENAME) {
+            note_rename(hwnd);
+            return 0;
+        }
+        if (LLM_CMD_ID(wParam, lParam) == ID_NOTEEDIT) {
+            note_edit(hwnd);
+            return 0;
+        }
+        if (LLM_CMD_ID(wParam, lParam) == ID_NOTEDEL) {
+            /* Through the same confirm every destructive verb here
+               uses; note_drop already knows how to give a sheet back.
+               Then show another sheet if one is left - an emptied
+               selection reads as an emptied Notebook, and it is not. */
+            if (g_note_cur >= 0
+                && llm_message(hwnd, "Throw this sheet away?",
+                               "Notebook", MB_YESNO | MB_ICONQUESTION)
+                   == IDYES) {
+                note_drop(g_note_cur);
+                for (i = MAX_PAPER - 1; i >= 0; i--)
+                    if (g_paper[i].live)
+                        break;
+                if (i >= 0) {
+                    note_show(i);
+                    note_fill();
+                }
+            }
+            return 0;
+        }
+        break;
+
+    /* The splitter. The gap between index and page belongs to this
+       window itself - both children stop short of it - so the drag is
+       three plain mouse messages and a capture. */
+    case WM_SETCURSOR:
+        if ((HWND)wParam == hwnd && LOWORD(lParam) == HTCLIENT) {
+            POINT pt;
+
+            GetCursorPos(&pt);
+            ScreenToClient(hwnd, &pt);
+            if (note_on_split(hwnd, (int)pt.x)) {
+                SetCursor(LoadCursor(NULL, IDC_SIZEWE));
+                return TRUE;
+            }
+        }
+        break;
+
+    case WM_LBUTTONDOWN:
+        if (note_on_split(hwnd, GET_X_LPARAM(lParam))) {
+            g_note_drag = 1;
+            SetCapture(hwnd);
+            SetCursor(LoadCursor(NULL, IDC_SIZEWE));
+        }
+        break;
+
+    case WM_MOUSEMOVE:
+        if (g_note_drag) {
+            RECT rc;
+            long x = GET_X_LPARAM(lParam);
+
+            GetClientRect(hwnd, &rc);
+            if ((int)rc.right > 2 * NOTE_MIN_SIDE + NOTE_SPLIT_W) {
+                if (x < NOTE_MIN_SIDE)
+                    x = NOTE_MIN_SIDE;
+                if (x > (long)rc.right - NOTE_MIN_SIDE - NOTE_SPLIT_W)
+                    x = (long)rc.right - NOTE_MIN_SIDE - NOTE_SPLIT_W;
+                g_note_split_pct = (int)(x * 100L / (long)rc.right);
+                if (g_note_split_pct < 1)
+                    g_note_split_pct = 1;
+                note_layout(hwnd);
+                InvalidateRect(hwnd, NULL, TRUE);
+            }
+        }
+        break;
+
+    case WM_LBUTTONUP:
+        if (g_note_drag) {
+            g_note_drag = 0;
+            ReleaseCapture();
+            save_ini();         /* the split comes back tomorrow */
         }
         break;
 
@@ -3216,6 +4261,9 @@ long FAR PASCAL _export NoteProc(HWND hwnd, UINT msg, UINT wParam,
             g_paper[g_note_cur].pane = NULL;
         g_note_pane = NULL;
         g_note_lb = NULL;
+        for (i = 0; i < NOTE_NBTN; i++)
+            g_note_btn[i] = NULL;
+        g_note_drag = 0;
         g_note_wnd = NULL;
         break;
     }
@@ -3366,17 +4414,30 @@ static void map_frame(const unsigned char *p, unsigned len)
         InvalidateRect(g_map_wnd, NULL, TRUE);
 }
 
+/* The grid's cell size and the inset a box keeps from its cell edge.
+   One place, because the edge router below needs the same numbers the
+   boxes were drawn with: the gutter between two boxes is exactly two
+   insets wide, and a route down the middle of it has to know that. */
+static void map_cell(const RECT *area, int *cw, int *chh, int *px, int *py)
+{
+    *cw = (int)(area->right - area->left)
+        / (g_map_cols > 0 ? g_map_cols : 1);
+    *chh = (int)(area->bottom - area->top)
+        / (g_map_rows > 0 ? g_map_rows : 1);
+    *px = 3;
+    *py = 3;
+    if (*cw < 12) *cw = 12;
+    if (*chh < 10) *chh = 10;
+    if (*cw < 30) *px = 1;
+    if (*chh < 24) *py = 1;
+}
+
 /* Where a room's box lands, in client pixels. */
 static void map_box(const RECT *area, int gx, int gy, RECT *out)
 {
-    int cw = (area->right - area->left) / (g_map_cols > 0 ? g_map_cols : 1);
-    int chh = (area->bottom - area->top) / (g_map_rows > 0 ? g_map_rows : 1);
-    int px = 3, py = 3;
+    int cw, chh, px, py;
 
-    if (cw < 12) cw = 12;
-    if (chh < 10) chh = 10;
-    if (cw < 30) px = 1;
-    if (chh < 24) py = 1;
+    map_cell(area, &cw, &chh, &px, &py);
     out->left   = area->left + gx * cw + px;
     out->top    = area->top + gy * chh + py;
     out->right  = area->left + (gx + 1) * cw - px;
@@ -3391,6 +4452,67 @@ static int map_find(int num)
         if (g_map_room[i].num == (unsigned char)num)
             return i;
     return -1;
+}
+
+/* The room's name into its box: up to two lines, broken at a space,
+   and the tail ellipsized by hand when the box is narrower than the
+   words - "The Drowned Flask Ta" clipped mid-letter says less than
+   "The Drowned..." does. By hand rather than with DrawText flags
+   because DT_END_ELLIPSIS is Windows 95 vocabulary - 3.1's DrawText
+   has no ellipsis flag at all - and one path both targets run beats
+   one that only the 32-bit build ever exercises. */
+static void map_label(HDC hdc, const char *name, const RECT *box)
+{
+    int w = (int)(box->right - box->left) - 5;  /* 3 in, 2 clear */
+    int y = (int)box->top + g_ch;
+    int len = lstrlen(name);
+    int pos = 0, lines, line;
+
+    lines = ((int)box->bottom - 1 - y) / g_ch;
+    if (lines > 2)
+        lines = 2;
+    for (line = 0; line < lines && pos < len; line++, y += g_ch) {
+        int left = len - pos, fit = left;
+
+        /* How much of the rest fits across the box. The names cap at
+           twenty characters, so walking down from the whole tail is a
+           handful of GetTextExtent calls, not a search problem. */
+        while (fit > 0
+               && (int)LOWORD(GetTextExtent(hdc, name + pos, fit)) > w)
+            fit--;
+        if (fit >= left) {
+            TextOut(hdc, (int)box->left + 3, y, name + pos, left);
+            pos = len;
+        } else if (line < lines - 1) {
+            /* Not the last line: break at the last space that fits,
+               or mid-word when one word is wider than the box. */
+            int brk = fit;
+
+            while (brk > 0 && name[pos + brk] != ' ')
+                brk--;
+            if (brk == 0)
+                brk = fit > 0 ? fit : 1;
+            TextOut(hdc, (int)box->left + 3, y, name + pos, brk);
+            pos += brk;
+            while (pos < len && name[pos] == ' ')
+                pos++;
+        } else {
+            /* The last line: truncate, and say so. */
+            char out[MAP_NAME + 3];
+            int k = fit;
+
+            while (k > 0) {
+                memcpy(out, name + pos, k);
+                out[k] = out[k + 1] = out[k + 2] = '.';
+                if ((int)LOWORD(GetTextExtent(hdc, out, k + 3)) <= w)
+                    break;
+                k--;
+            }
+            if (k > 0)
+                TextOut(hdc, (int)box->left + 3, y, out, k + 3);
+            pos = len;
+        }
+    }
 }
 
 static void map_paint(HWND hwnd)
@@ -3457,19 +4579,76 @@ static void map_paint(HWND hwnd)
         int a = map_find(g_map_edge[i].a);
         int b = map_find(g_map_edge[i].b);
         RECT ra, rb;
+        int dx, dy;
 
         if (a < 0 || b < 0)
             continue;
         map_box(&area, g_map_room[a].gx, g_map_room[a].gy, &ra);
         map_box(&area, g_map_room[b].gx, g_map_room[b].gy, &rb);
-        /* One-way passages and stairs are dotted: the eye reads a dotted
-           line as "not the same as the others", which is all the
-           distinction a 1993 map ever made. */
-        SelectObject(hdc, (g_map_edge[i].flags & 1)
-                     || g_map_edge[i].dir == 'u'
-                     || g_map_edge[i].dir == 'd' ? dotted : ink);
-        MoveTo(hdc, (ra.left + ra.right) / 2, (ra.top + ra.bottom) / 2);
-        LineTo(hdc, (rb.left + rb.right) / 2, (rb.top + rb.bottom) / 2);
+        dx = (int)g_map_room[b].gx - (int)g_map_room[a].gx;
+        dy = (int)g_map_room[b].gy - (int)g_map_room[a].gy;
+        if (dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1) {
+            /* Neighbours: centre to centre, and the boxes drawn on top
+               leave just the tick between them showing. One-way
+               passages and stairs are dotted: the eye reads a dotted
+               line as "not the same as the others", which is all the
+               distinction a 1993 map ever made. */
+            SelectObject(hdc, (g_map_edge[i].flags & 1)
+                         || g_map_edge[i].dir == 'u'
+                         || g_map_edge[i].dir == 'd' ? dotted : ink);
+            MoveTo(hdc, (ra.left + ra.right) / 2,
+                   (ra.top + ra.bottom) / 2);
+            LineTo(hdc, (rb.left + rb.right) / 2,
+                   (rb.top + rb.bottom) / 2);
+        } else {
+            /* Rooms that are NOT grid neighbours - a tunnel under the
+               map, a door the layout could not keep adjacent. A centre
+               line would vanish under every box it crossed, so the
+               route goes through the gutters: out of the departure
+               side, along a gutter, in through the nearest side. Two
+               bends, one horizontal run, one vertical - not a router.
+               Dotted like the other not-quite-corridors; a long leg
+               through an occupied stretch is still painted under the
+               boxes, so what survives is dashes in the gaps, which
+               reads as "passage through here" and never as a wall. */
+            int cw2, ch2, px, py;
+            int cxa = (int)(ra.left + ra.right) / 2;
+            int cya = (int)(ra.top + ra.bottom) / 2;
+            int cxb = (int)(rb.left + rb.right) / 2;
+            int cyb = (int)(rb.top + rb.bottom) / 2;
+
+            map_cell(&area, &cw2, &ch2, &px, &py);
+            SelectObject(hdc, dotted);
+            if (dx == 0) {
+                /* Same column: out the right side and down (or up) the
+                   gutter beside it. */
+                int gx = (int)ra.right + px;
+
+                MoveTo(hdc, (int)ra.right, cya);
+                LineTo(hdc, gx, cya);
+                LineTo(hdc, gx, cyb);
+                LineTo(hdc, (int)rb.right, cyb);
+            } else if (dy == 0) {
+                /* Same row: dip into the gutter below and along. */
+                int gy = (int)ra.bottom + py;
+
+                MoveTo(hdc, cxa, (int)ra.bottom);
+                LineTo(hdc, cxa, gy);
+                LineTo(hdc, cxb, gy);
+                LineTo(hdc, cxb, (int)rb.bottom);
+            } else {
+                /* An L: out horizontally, then down the gutter beside
+                   the destination's column, in through its near side. */
+                int sx = dx > 0 ? (int)ra.right : (int)ra.left;
+                int gx = dx > 0 ? (int)rb.left - px : (int)rb.right + px;
+                int ex = dx > 0 ? (int)rb.left : (int)rb.right;
+
+                MoveTo(hdc, sx, cya);
+                LineTo(hdc, gx, cya);
+                LineTo(hdc, gx, cyb);
+                LineTo(hdc, ex, cyb);
+            }
+        }
     }
     SelectObject(hdc, ink);
 
@@ -3500,16 +4679,11 @@ static void map_paint(HWND hwnd)
         wsprintf(num, "%d", (int)g_map_room[i].num);
         TextOut(hdc, box.left + 3, box.top + 1, num, lstrlen(num));
         /* The name only if there is room for it under the number - a
-           label that does not fit is worse than no label. */
+           label that does not fit is worse than no label. Wrapped and
+           ellipsized by map_label, not DrawText: see its comment. */
         if (box.bottom - box.top >= g_ch * 2 + 2
-                && box.right - box.left > 40) {
-            RECT nr = box;
-            nr.left += 3;
-            nr.right -= 2;
-            nr.top += g_ch;
-            DrawText(hdc, g_map_room[i].name, -1, &nr,
-                     DT_WORDBREAK | DT_NOPREFIX | DT_NOCLIP);
-        }
+                && box.right - box.left > 40)
+            map_label(hdc, g_map_room[i].name, &box);
     }
     SetTextColor(hdc, RGB(0x20, 0x20, 0x20));
 
@@ -3815,7 +4989,7 @@ static void send_command(const char *cmd)
         say(2, "Not connected. Use File > Connect.");
         return;
     }
-    say(1, cmd);
+    say_user(cmd);
     send_text_frame(MSG_CHAT_REQUEST, cmd);
     set_status("Waiting for the model...");
 }
@@ -4166,7 +5340,11 @@ static void chr_paint(HWND hwnd)
 
     chr_field(hdc, &rc, &y, &ok, "Afflicted:", g_sheet.effects);
     chr_field(hdc, &rc, &y, &ok, "Skills:", g_static.skills);
-    chr_field(hdc, &rc, &y, &ok, "Spells:", g_static.spells);
+    /* The story's current list outranks the rolled one: a Spellsword
+       who learned Frostbite in play shows Frostbite, not the blank the
+       dice left (field bug: the sheet could never gain a spell). */
+    chr_field(hdc, &rc, &y, &ok, "Spells:",
+              g_sheet.spells[0] ? g_sheet.spells : g_static.spells);
     chr_field(hdc, &rc, &y, &ok, "Kit:", g_static.gear);
     chr_field(hdc, &rc, &y, &ok, "Looks:", g_sheet.appearance);
     chr_field(hdc, &rc, &y, &ok, "With you:", g_sheet.companions);
@@ -4416,8 +5594,13 @@ static void map_open(void)
 static void note_add(int slot)
 {
     note_open();
-    note_fill();
+    /* Show first, fill second: note_fill highlights the row g_note_cur
+       points at, and it is note_show that moves it. The old order left
+       the highlight one sheet behind the page - cosmetic when the index
+       was only a picker, wrong now that Rename, Edit and Delete act on
+       the selected sheet. */
     note_show(slot);
+    note_fill();
     if (g_note_wnd)
         SendMessage(g_mdi, WM_MDIACTIVATE, (WPARAM)g_note_wnd, 0L);
 }
@@ -4545,18 +5728,20 @@ static void start_session(HWND hwnd)
 {
     char err[128];
 
-    /* The banner is also the renderer's self-check: it is written in
-       the same in-band marker language the proxy streams, so if colour
-       is broken it is broken before the first frame arrives. */
-    say(1, "LLM64 for Windows - Phase 1. "
-           "The transcript keeps its lines unwrapped and re-flows them "
-           "at paint time, so resizing this window re-lays out the text "
-           "already in it rather than leaving it wrapped where it fell.");
-    say(12, "In-band markers: "
-            "\x12" "red" "\x01" " "
-            "\x1D" "green" "\x01" " "
-            "\x17" "yellow" "\x01" " "
-            "\x02" "bold" "\x03" ".");
+    /* The donationware welcome: the same wording as the C64 client's
+       banner and the About box - every client, one message. It is
+       still the renderer's self-check: per-line colours plus the bold
+       marker in the first line exercise the same in-band language the
+       proxy streams, so broken colour shows before the first frame
+       arrives. (The old Phase 1 dev banner lived here; a user's first
+       screen is not the place to discuss re-flow internals.) */
+    say(7,  "\x02" "Welcome to LLM64" "\x03");
+    say(12, "(C) Foxipso 2026 - foxipso.com");
+    say(1,  "LLM64 is donationware, however...");
+    say(13, "I'd greatly appreciate it if you'd support my work!");
+    say(3,  "ko-fi.com/foxipso   patreon.com/c/foxipso");
+    say(7,  "Recommended donation: $10");
+    say(13, "Have fun!");
 
     if (!net_init(hwnd, err, sizeof(err))) {
         set_status(err);
@@ -5204,7 +6389,7 @@ static void menu_run(HWND owner, int idx)
             say(2, "Not connected. Use File > Connect.");
             return;
         }
-        say(1, cmd);
+        say_user(cmd);
         send_text_frame(MSG_CHAT_REQUEST, cmd);
         set_status("Waiting for the model...");
         if (g_input)
@@ -5629,8 +6814,26 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         case IDM_PING:       send_frame(MSG_PING, NULL, 0);
                              set_status("Ping sent."); return 0;
         case IDM_NEWCONV:    new_conversation(); return 0;
-        case IDM_CANCEL:     send_frame(MSG_CANCEL_REQUEST, NULL, 0);
-                             input_enable(1); return 0;
+        case IDM_CANCEL:
+            /* F3, and now Escape too. With a selection lit, Escape
+               means "never mind the selection" and stops there; a
+               second press cancels the reply. The proxy answers a
+               cancel with nothing in flight with a bare ACK, so a
+               stray one costs nothing. */
+            if (g_sel.on) {
+                sel_clear();
+                return 0;
+            }
+            send_frame(MSG_CANCEL_REQUEST, NULL, 0);
+            input_enable(1);
+            return 0;
+
+        /* The Message menu is shorthand for the proxy's history
+           commands, so the C64 and this client stay one feature: the
+           menu types what a C64 player would type. */
+        case IDM_REDO:   send_command("/redo");   return 0;
+        case IDM_RETCON: send_command("/retcon"); return 0;
+        case IDM_FORK:   send_command("/fork");   return 0;
         case IDM_ABOUT:
             about_dialog(hwnd);
             return 0;
@@ -5700,8 +6903,8 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
 
         case IDM_THEME_PAPER:
         case IDM_THEME_SCREEN:
-            theme_apply(wParam == IDM_THEME_SCREEN ? THEME_SCREEN
-                                                   : THEME_PAPER);
+            theme_apply(LLM_CMD_ID(wParam, lParam) == IDM_THEME_SCREEN
+                        ? THEME_SCREEN : THEME_PAPER);
             save_ini();
             return 0;
 
@@ -5721,9 +6924,14 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
            clicks arrive here. Each toggles its window; the transcript,
            the shelf and the menu all outlive their windows, so closing
            costs nothing but the pixels. */
-        if (wParam >= IDC_LAUNCHBASE
-                && wParam < IDC_LAUNCHBASE + LAUNCH_N) {
-            switch ((int)(wParam - IDC_LAUNCHBASE)) {
+        /* Through LLM_CMD_ID, not raw wParam: on Win32 an ACCELERATOR
+           arrives with 1 in the high word of wParam, so the raw compare
+           let the buttons and the menu work and quietly lost Ctrl+1..7
+           on the 32-bit build - llmport.h's WM_COMMAND warning, in the
+           one range this file tested without the macro. */
+        if (LLM_CMD_ID(wParam, lParam) >= IDC_LAUNCHBASE
+                && LLM_CMD_ID(wParam, lParam) < IDC_LAUNCHBASE + LAUNCH_N) {
+            switch ((int)(LLM_CMD_ID(wParam, lParam) - IDC_LAUNCHBASE)) {
             case 0:
                 /* The Menu button is the F1 dialog, not a toggle.
                    Posted rather than called: the modal box should open
@@ -5892,6 +7100,12 @@ static void load_ini(void)
     g_theme = (buf[0] == 's' || buf[0] == 'S') ? THEME_SCREEN : THEME_PAPER;
     g_room_pics = GetPrivateProfileInt("Pictures", "EveryRoom", 0, g_ini)
         ? 1 : 0;
+    /* The Notebook's split, as the index's percentage of the width.
+       0 = never dragged; anything unreasonable reads as that too. */
+    g_note_split_pct = (int)GetPrivateProfileInt("Notebook", "Split",
+                                                 0, g_ini);
+    if (g_note_split_pct < 0 || g_note_split_pct > 95)
+        g_note_split_pct = 0;
     g_win_x   = (int)GetPrivateProfileInt("Window", "X", 0, g_ini);
     g_win_y   = (int)GetPrivateProfileInt("Window", "Y", 0, g_ini);
     g_win_w   = (int)GetPrivateProfileInt("Window", "Width", 0, g_ini);
@@ -5912,6 +7126,10 @@ static void save_ini(void)
                               g_ini);
     WritePrivateProfileString("Pictures", "EveryRoom",
                               g_room_pics ? "1" : "0", g_ini);
+    if (g_note_split_pct > 0) {
+        wsprintf(num, "%d", g_note_split_pct);
+        WritePrivateProfileString("Notebook", "Split", num, g_ini);
+    }
     if (g_win_w > 0) {
         wsprintf(num, "%d", g_win_x);
         WritePrivateProfileString("Window", "X", num, g_ini);
