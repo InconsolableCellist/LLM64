@@ -5,6 +5,11 @@ c64_client/build/
 __pycache__/
 *.pyc
 .venv/
+.venv-build/
+
+# PyInstaller output (PACKAGING.md)
+llm64_proxy/build/
+llm64_proxy/dist/
 
 # Runtime data
 llm64_proxy/data/

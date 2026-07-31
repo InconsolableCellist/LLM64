@@ -38,8 +38,12 @@ Install Python 3.10+ on a machine the old/emulated hardware can reach.
 git clone https://github.com/InconsolableCellist/c64_llm.git
 cd c64_llm/llm64_proxy
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt      # httpx, toml, Pillow
+.venv/bin/pip install -r requirements.txt      # httpx, toml, Pillow, tomlkit
 ```
+
+No Python on the target machine? PACKAGING.md builds the proxy into a
+single Windows or Linux binary with a desktop launcher: start/stop
+buttons, live status, the log, and a config editor in one window.
 
 ## Configuration
 

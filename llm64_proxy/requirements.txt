@@ -1,3 +1,4 @@
 httpx>=0.24.0
 toml>=0.10.2
 Pillow>=10.0
+tomlkit>=0.12
