@@ -1088,6 +1088,25 @@ int chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
     /* Setting the title is the other route to a default caption being
        painted - the picture window renames itself as images arrive. Let
        the text change happen, then repaint over whatever drew itself. */
+    /* Do the button ourselves. Answering HTMINBUTTON/HTMAXBUTTON tells
+       DefMDIChildProc where the buttons are, and it then tracks the press
+       by drawing ITS buttons at ITS idea of the position - which is the
+       host-styled pair that appears alongside ours, depresses, and does
+       nothing, because the window it is drawing on is not the one it
+       thinks. Claiming the click stops the tracking before it starts. */
+    case WM_NCLBUTTONDOWN:
+        if (wParam == HTMINBUTTON) {
+            ShowWindow(hwnd, SW_MINIMIZE);
+            return 1;
+        }
+        if (wParam == HTMAXBUTTON) {
+            /* WM_MDIMAXIMIZE, not ShowWindow: MDI has to know, or the
+               frame caption never picks up " - [Title]". */
+            SendMessage(GetParent(hwnd), WM_MDIMAXIMIZE, (UINT)hwnd, 0L);
+            return 1;
+        }
+        return 0;                   /* HTCAPTION and the edges are MDI's */
+
     case WM_SETTEXT:
         PostMessage(hwnd, WM_NCPAINT, 1, 0L);
         return 0;
@@ -1205,6 +1224,34 @@ static void dlg_sysbox(HWND dlg, RECT *sys)
     sys->right  = FRAME + BTN_W;
     sys->top    = FRAME;
     sys->bottom = FRAME + CAP_H;
+}
+
+/* Give the dialog back the client area its template expects.
+ *
+ * The template's control positions are client-relative, and Windows sized
+ * the window using ITS non-client metrics before ours took over. Our
+ * non-client area is a different size, so the client shrinks underneath
+ * the controls: the ones near the bottom fall outside it and the rest
+ * repaint against a rect that no longer matches where they are - which
+ * looks like a control drawn twice, half of it painted over.
+ *
+ * Growing the window by the difference puts the client back. Call from
+ * WM_INITDIALOG, before anything is laid out.
+ */
+void chrome_dialog_init(HWND dlg)
+{
+    RECT wr;
+    int host_x = 2 * GetSystemMetrics(SM_CXDLGFRAME);
+    int host_y = GetSystemMetrics(SM_CYCAPTION)
+               + 2 * GetSystemMetrics(SM_CYDLGFRAME);
+    int ours_x = 2 * FRAME;
+    int ours_y = FRAME + CAP_H + RULE + FRAME;
+
+    GetWindowRect(dlg, &wr);
+    SetWindowPos(dlg, NULL, 0, 0,
+                 (wr.right - wr.left) + (ours_x - host_x),
+                 (wr.bottom - wr.top) + (ours_y - host_y),
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED);
 }
 
 void chrome_dialog_paint(HWND dlg, HDC hdc, int active)
