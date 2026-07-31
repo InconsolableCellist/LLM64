@@ -1552,8 +1552,20 @@ static void mus_update(void)
     }
 }
 
+/* A tune is being opened, and what to do when that lands: 0 nothing,
+   1 start over with whatever g_mus_file now names, 2 close and be quiet.
+   See mus_play_file for why an open is not simply a function call. */
+static int g_mus_opening;
+static int g_mus_pending;
+
 static void mus_mci_close(void)
 {
+    /* Never while an open is in flight: the device does not exist yet,
+       and MCI is being driven from a notification we have not had. */
+    if (g_mus_opening) {
+        g_mus_pending = 2;
+        return;
+    }
     if (g_mus_opened) {
         mciSendString("close llm64mid", NULL, 0, NULL);
         g_mus_opened = 0;
@@ -1569,29 +1581,77 @@ static void mus_stop(void)
     mus_update();
 }
 
-static void mus_play_file(void)
-{
-    char cmd[200];
+static void mus_play_file(void);
 
-    mus_mci_close();
-    wsprintf(cmd, "open %s type sequencer alias llm64mid",
-             (LPSTR)g_mus_file);
-    if (mciSendString(cmd, NULL, 0, NULL) != 0) {
+/* The open landed. Start the tune, or deal with whatever happened while
+   we were waiting for it. */
+static void mus_open_done(int ok)
+{
+    char msg[112];
+
+    g_mus_opening = 0;
+    g_mus_opened = ok;
+    if (g_mus_pending) {
+        int want = g_mus_pending;
+
+        g_mus_pending = 0;
+        if (want == 2)
+            mus_stop();         /* stop was asked for meanwhile */
+        else
+            mus_play_file();    /* a newer tune arrived */
+        return;
+    }
+    if (!ok) {
         /* No sequencer device is a machine without a sound setup, not
            an error worth a dialog - the C64 plays on without a SID
            filter too. */
         set_status("MIDI open failed - is a sequencer device installed?");
         return;
     }
-    g_mus_opened = 1;
-    if (mciSendString("play llm64mid notify", NULL, 0,
-                      g_frame) != 0) {
+    if (mciSendString("play llm64mid notify", NULL, 0, g_frame) != 0) {
         set_status("MIDI play failed.");
         mus_mci_close();
         return;
     }
     g_mus_state = 1;
     mus_update();
+    wsprintf(msg, "Music: %s (%s)", (LPSTR)g_mus_title,
+             (LPSTR)g_mus_author);
+    set_status(msg);
+}
+
+/* Open the tune and, when that finishes, play it.
+ *
+ * "notify" and two steps rather than one blocking call, because opening
+ * a sequencer device is not cheap on a modern machine: Windows 11 brings
+ * up its software synth on the first open, gm.dls and all, and does not
+ * return until it has. On the message loop that is the whole application
+ * frozen for as long as it takes - reported from a Windows 11 build as a
+ * delay with nothing responding, and the first thing a 1993 client
+ * should not do.
+ *
+ * If MCI chooses to run the open synchronously anyway it still posts the
+ * notification, so the completion path is the same either way and this
+ * is never worse than what it replaces. */
+static void mus_play_file(void)
+{
+    char cmd[200];
+
+    /* One at a time. A tune arriving while another is opening asks for
+       the newer one, and mus_open_done starts it. */
+    if (g_mus_opening) {
+        g_mus_pending = 1;
+        return;
+    }
+    mus_mci_close();
+    wsprintf(cmd, "open %s type sequencer alias llm64mid notify",
+             (LPSTR)g_mus_file);
+    g_mus_opening = 1;
+    set_status("Loading the tune...");
+    if (mciSendString(cmd, NULL, 0, g_frame) != 0) {
+        g_mus_opening = 0;
+        set_status("MIDI open failed - is a sequencer device installed?");
+    }
 }
 
 static void mid_abort(void)
@@ -1712,7 +1772,6 @@ static void mid_end(void)
 {
     OFSTRUCT of;
     HFILE f;
-    char msg[112];
 
     if (!g_mid_active)
         return;
@@ -1737,10 +1796,10 @@ static void mid_end(void)
     lstrcpy(g_mus_title,  g_mid_title);
     lstrcpy(g_mus_author, g_mid_author);
     lstrcpy(g_mus_mood,   g_mid_mood);
+    /* The status line is mus_open_done's now: it says "Loading the
+       tune..." until the device is actually open, which on a modern
+       machine is not instant. */
     mus_play_file();
-    wsprintf(msg, "Music: %s (%s)", (LPSTR)g_mus_title,
-             (LPSTR)g_mus_author);
-    set_status(msg);
 }
 
 /* ---------------------------------------------------------------- */
@@ -5372,6 +5431,11 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
     }
 
     case MM_MCINOTIFY:
+        /* An open we asked for asynchronously, finishing. */
+        if (g_mus_opening) {
+            mus_open_done(wParam == MCI_NOTIFY_SUCCESSFUL);
+            return 0;
+        }
         /* The tune ran out. Background music loops until told
            otherwise - the same contract the SID player has. */
         if (wParam == MCI_NOTIFY_SUCCESSFUL && g_mus_state == 1
