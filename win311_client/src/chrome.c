@@ -821,6 +821,25 @@ int chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
     case WM_NCCALCSIZE:
         return 1;                   /* the whole window is client */
 
+    /* Same reason as the frame: DefMDIChildProc does not know there is no
+       non-client area and paints a default frame during a drag, which
+       shows as native chrome flashing behind the window. */
+    case WM_NCPAINT:
+        return 1;
+
+    case WM_ERASEBKGND:
+        *result = 1;
+        return 1;
+
+    /* We draw the whole border every paint, but BeginPaint clips the DC to
+       the update region - and after a MOVE that region need not include
+       the corners, so the outer lines are left stale and the corner ends
+       up notched. Windows 11 does this; Wine invalidates everything and
+       hid it completely. */
+    case WM_WINDOWPOSCHANGED:
+        InvalidateRect(hwnd, NULL, TRUE);
+        return 0;
+
     case WM_NCHITTEST:
         f = chrome_child_edge(hwnd);
         pt.x = GET_X_LPARAM(lParam);
@@ -903,6 +922,12 @@ int chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result)
     case WM_NCPAINT:
         *result = 0;
         return 1;
+
+    /* See the child's copy of this: a partial update region after a move
+       leaves the border corners unpainted. */
+    case WM_WINDOWPOSCHANGED:
+        InvalidateRect(hwnd, NULL, TRUE);
+        return 0;
 
     /* We cover every pixel in WM_PAINT, so letting anything erase first
        only produces a flash. */
