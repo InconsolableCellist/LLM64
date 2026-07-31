@@ -1,5 +1,6 @@
 """Conversation management and storage"""
 
+import copy
 import json
 import time
 from datetime import datetime
@@ -98,6 +99,55 @@ class ConversationManager:
         self.current_id = self.current_conversation['id']
         self.save()
         return cps[index - 1]['name']
+
+    def drop_last_reply(self) -> bool:
+        """Remove the trailing assistant message(s), keeping the user
+        line that provoked them - what /redo runs before regenerating.
+        False when the last word is the user's (nothing to redo)."""
+        msgs = (self.current_conversation or {}).get('messages')
+        if not msgs or msgs[-1]['role'] != 'assistant':
+            return False
+        while msgs and msgs[-1]['role'] == 'assistant':
+            msgs.pop()
+        self.current_conversation['updated_at'] = int(time.time())
+        return True
+
+    def drop_last_exchange(self) -> str:
+        """Remove the last user line and everything after it (/retcon).
+        Returns the removed user line, '' if there was none."""
+        msgs = (self.current_conversation or {}).get('messages')
+        if not msgs:
+            return ''
+        while msgs and msgs[-1]['role'] != 'user':
+            msgs.pop()
+        if not msgs:
+            return ''
+        removed = msgs.pop()
+        self.current_conversation['updated_at'] = int(time.time())
+        return removed.get('content', '')
+
+    def fork_conversation(self) -> int:
+        """Copy the current conversation - messages AND meta, so a
+        forked adventure carries its world, map and sheet - into a new
+        one and switch to it. The original stays on disk untouched.
+        Returns the new id, 0 if there is nothing to fork."""
+        if not self.current_conversation:
+            return 0
+        self.save()                      # the original, as it stands
+        twin = copy.deepcopy(self.current_conversation)
+        # Ids are creation seconds; forking twice inside one second
+        # must still mint two distinct ids.
+        new_id = max(int(time.time()), (self.current_id or 0) + 1)
+        twin['id'] = new_id
+        twin['created_at'] = int(time.time())
+        twin['updated_at'] = int(time.time())
+        twin['title'] = (twin.get('title') or 'Conversation')[:60] + ' (fork)'
+        twin.pop('auto_titled', None)    # the suffix is ours, keep it
+        self.current_conversation = twin
+        self.current_id = new_id
+        self.save()
+        self.logger.info(f"Forked conversation into {new_id}")
+        return new_id
 
     def set_meta(self, key: str, value):
         """Attach session state (mode, music) to the conversation."""

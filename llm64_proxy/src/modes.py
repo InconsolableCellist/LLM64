@@ -106,7 +106,7 @@ ADVENTURE_PROMPT = (
     "line, exactly one, in this form: "
     '[[STATE: {"hp":12,"maxhp":20,"mana":0,"maxmana":0,"ac":14,'
     '"level":2,"xp":120,"gold":3,"score":0,"location":"...",'
-    '"effects":["poisoned"],"inventory":["..."],'
+    '"effects":["poisoned"],"inventory":["..."],"spells":["..."],'
     '"appearance":"one short visual phrase describing the player '
     'character","companions":[]}]] '
     "- compact single-line JSON, updated every turn to reflect what just "
@@ -125,10 +125,13 @@ ADVENTURE_PROMPT = (
     "how the character looks: they put on a robe, take a scar, lose an "
     "arm, are transformed. Then change only the part that changed and "
     "leave the rest of the phrase word for word. "
-    "The player's name, race, class, ability scores, trained skills, "
-    "known spells and starting gear are given to you above and are "
-    "fixed: they are not yours to restate, so never put them in the "
-    "state block. "
+    "The player's name, race, class, ability scores, trained skills "
+    "and starting gear are given to you above and are fixed: they are "
+    "not yours to restate, so never put them in the state block. "
+    "Spells are the one exception: when the story grants, teaches or "
+    "strips a spell - including a caster who began with none listed - "
+    "record the COMPLETE current spell list in the spells key. Omit "
+    "the key while nothing has changed. "
     "Out-of-character asides: the player may step outside the story by "
     "writing in single square brackets beginning with OOC, for example "
     "[OOC: make the dragon friendlier] or [OOC: what are you tracking?]. "

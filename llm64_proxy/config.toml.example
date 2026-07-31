@@ -17,6 +17,12 @@ temperature = 0.7
 # Maximum tokens in response
 max_tokens = 2000
 
+# Longest silent pause the API is allowed mid-request, in seconds
+# (streaming resets it on every chunk). Raise it for big local models
+# that load or prompt-eval slowly. The proxy keeps the client's
+# watchdog fed for the whole wait, so this can be generous.
+# read_timeout = 600
+
 [storage]
 # Directory for conversation storage
 data_dir = "./data"
@@ -38,6 +44,25 @@ backend = "gemini"
 # dark-fantasy text in images.py. Set to "" if your ComfyUI workflow
 # already carries the style.
 # style_prefix = ""
+
+# Or pick a named style preset instead: a prefix plus optional ComfyUI
+# overrides (model, sampler, a LoRA), switched with one key. Built in:
+# cinematic (moody film still + the MovieClips LoRA), oil-chiaroscuro,
+# painted-noir. A preset's prefix wins over style_prefix above. Unknown
+# names warn and fall back to the default look.
+# style = "cinematic"
+
+# Your own presets are [images.styles.<name>] tables; one that reuses a
+# built-in name overrides it key by key. style_prefix is the look (end
+# it in "Scene: "); the other keys are optional. model/clip/vae/steps/
+# cfg/sampler/scheduler override [images.comfyui] below; a lora runs
+# via the bundled flux2-klein-lora.json workflow (drop the file in
+# ComfyUI's models/loras first) unless `workflow` names your own.
+# [images.styles.mystyle]
+# style_prefix = "A woodcut in two colors, heavy black ink. Scene: "
+# lora = "my-style.safetensors"
+# lora_strength = 0.8
+# steps = 12
 
 # --- backend: gemini (hosted; key from https://aistudio.google.com/apikey)
 [images.gemini]
@@ -107,7 +132,7 @@ model = "gemini-2.5-flash-image"
 #   160x200 dither. For a Windows 3.11 / DOS client, more detail survives,
 #   so a VGA look pays off:
 #
-# style = "256-color VGA pixel art from a 1993 MS-DOS adventure game, hand-dithered gradients, visible pixels, painted backdrop in the style of Sierra and LucasArts VGA, no text, no UI, no border. Scene: "
+# style = "256-color VGA pixel art from a 1993 MS-DOS adventure game, hand-dithered gradients, visible pixels, painted backdrop in the style of Sierra and LucasArts VGA. Moody night scenes, fog and glow are drawn with dither patterns and a restrained palette, never soft focus or photographic rendering. No text, no UI, no border. Scene: "
 #
 # Anything else your workflow templates, for nodes this proxy has never
 # heard of - {LORA} and {LORA_STRENGTH} here:

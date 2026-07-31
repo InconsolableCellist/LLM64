@@ -74,6 +74,17 @@ class Config:
             config.get('api', {}).get('max_context_tokens', 8192)
         ))
 
+        # How long the API may sit silent mid-request before the proxy
+        # gives up (httpx read timeout, seconds). Streaming resets it on
+        # every chunk, so what it really bounds is the longest single
+        # pause: a cold model load, or prompt-eval on a slow GPU. Raise
+        # it for big local models. The client-facing heartbeat cap is
+        # derived from this (protocol.py), so the two cannot drift.
+        self.api_read_timeout = float(os.getenv(
+            'OPENAI_READ_TIMEOUT',
+            config.get('api', {}).get('read_timeout', 600)
+        ))
+
         # Disable model thinking blocks (Gemma/Qwen style) via
         # chat_template_kwargs - thinking eats the token budget and the C64
         # user just sees a long pause.
@@ -224,6 +235,12 @@ class Config:
         # choice and its per-backend settings) goes to imagegen
         # unparsed; relative paths in it resolve against config.toml.
         self.images_cfg = config.get('images', {})
+        # [images] style = "<preset>" folds a named style preset into
+        # the table (style_prefix, comfyui overrides, a LoRA) before
+        # anything downstream reads it - see imgstyles.py. Unset =
+        # no change.
+        from .imgstyles import apply_style
+        apply_style(self.images_cfg)
         self.images_mode = self.images_cfg.get('mode', 'ask')
         self.config_dir = str(Path(config_file).resolve().parent) \
             if config_file else '.'

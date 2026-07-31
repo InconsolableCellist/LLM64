@@ -615,6 +615,137 @@ def test_sidecars():
         Path.write_text = orig
 
 
+def test_style_presets():
+    """[images] style = "<name>" resolution (imgstyles.py).
+
+    apply_style folds the preset into the raw [images] table at config
+    load; nothing downstream knows presets exist. So the contract to
+    pin is exactly that fold: untouched when unset, prefix replaced,
+    comfyui keys overridden, the LoRA workflow selected - and a typo
+    warning, never a crash."""
+    print("style presets (imgstyles)")
+    import copy
+    import logging
+    from src.imgstyles import PRESETS, apply_style, resolve_style
+
+    # No style key: the table must come back byte-identical, because
+    # this is every pre-preset config in the field.
+    cfg = {"mode": "ask", "backend": "comfyui",
+           "comfyui": {"url": "http://x:1", "steps": 8}}
+    before = copy.deepcopy(cfg)
+    apply_style(cfg)
+    check("style unset leaves the table untouched", cfg == before)
+    cfg["style"] = ""
+    apply_style(cfg)
+    del cfg["style"]
+    check("style empty-string is unset too", cfg == before)
+
+    # A built-in with a LoRA: prefix set, comfyui vars injected, and
+    # the bundled LoRA workflow picked because nobody named one.
+    cfg = {"backend": "comfyui", "style": "cinematic", "comfyui": {}}
+    apply_style(cfg)
+    check("preset prefix lands in style_prefix",
+          cfg.get("style_prefix") == PRESETS["cinematic"]["style_prefix"])
+    comfy = cfg["comfyui"]
+    check("lora preset selects the lora workflow",
+          comfy.get("workflow") == "flux2-klein-lora.json",
+          repr(comfy.get("workflow")))
+    check("LORA var injected",
+          comfy["vars"]["LORA"] == PRESETS["cinematic"]["lora"])
+    check("LORA_STRENGTH is a float (exact-token typing)",
+          comfy["vars"]["LORA_STRENGTH"] == 0.8
+          and isinstance(comfy["vars"]["LORA_STRENGTH"], float))
+    # ...and the backend built from that table runs the BUNDLED copy,
+    # ready to go: {PROMPT} present, {LORA} in the loader node.
+    be = make_backend({"backend": "comfyui", **cfg}, TMP, base_dir=TMP)
+    check("resolved workflow is the bundled lora one",
+          be.workflow_path.parent.name == "workflows" and be.available())
+    g = be._prepare(be._load(), "x")
+    lora_nodes = [n for n in g.values()
+                  if n["class_type"] == "LoraLoaderModelOnly"]
+    check("lora node filled from the preset",
+          lora_nodes and lora_nodes[0]["inputs"]["lora_name"]
+          == PRESETS["cinematic"]["lora"]
+          and lora_nodes[0]["inputs"]["strength_model"] == 0.8)
+
+    # A prefix-only built-in must not touch the workflow choice.
+    cfg = {"style": "oil-chiaroscuro", "comfyui": {}}
+    apply_style(cfg)
+    check("prefix-only preset leaves the workflow alone",
+          "workflow" not in cfg["comfyui"])
+    check("oil-chiaroscuro prefix applied",
+          cfg["style_prefix"].startswith("A dark oil painting"))
+
+    # The preset's prefix REPLACES a configured style_prefix - picking
+    # a named style is the more specific choice.
+    cfg = {"style": "painted-noir", "style_prefix": "OLD "}
+    apply_style(cfg)
+    check("preset prefix wins over style_prefix",
+          cfg["style_prefix"] == PRESETS["painted-noir"]["style_prefix"])
+
+    # Preset comfy keys override [images.comfyui]; untouched keys stay.
+    cfg = {"style": "custom", "comfyui": {"model": "old.st", "steps": 8},
+           "styles": {"custom": {"style_prefix": "P: ", "model": "new.st",
+                                 "sampler": "euler"}}}
+    apply_style(cfg)
+    check("preset model overrides the comfyui table",
+          cfg["comfyui"]["model"] == "new.st")
+    check("preset sampler lands too",
+          cfg["comfyui"]["sampler"] == "euler")
+    check("keys the preset lacks survive", cfg["comfyui"]["steps"] == 8)
+
+    # A user table with a built-in's name overrides it key by key.
+    cfg = {"style": "cinematic",
+           "styles": {"cinematic": {"lora_strength": 0.5}}}
+    apply_style(cfg)
+    check("user table merges over the built-in",
+          cfg["comfyui"]["vars"]["LORA_STRENGTH"] == 0.5
+          and cfg["style_prefix"] == PRESETS["cinematic"]["style_prefix"])
+
+    # A preset naming its own workflow keeps it; the vars still fill a
+    # {LORA} token that workflow may carry.
+    cfg = {"style": "custom",
+           "styles": {"custom": {"style_prefix": "P: ", "lora": "l.st",
+                                 "workflow": "mine.json"}}}
+    apply_style(cfg)
+    check("explicit preset workflow beats the lora default",
+          cfg["comfyui"]["workflow"] == "mine.json")
+    check("vars injected regardless",
+          cfg["comfyui"]["vars"]["LORA"] == "l.st")
+
+    # An operator's own [images.comfyui].workflow is not overridden by
+    # the lora fallback either.
+    cfg = {"style": "cinematic", "comfyui": {"workflow": "ops.json"}}
+    apply_style(cfg)
+    check("configured workflow survives a lora preset",
+          cfg["comfyui"]["workflow"] == "ops.json")
+
+    # A prefixless preset (bare-LoRA custom table) keeps the default
+    # prefix path: style_prefix stays absent.
+    cfg = {"style": "custom", "styles": {"custom": {"lora": "l.st"}}}
+    apply_style(cfg)
+    check("prefixless preset leaves style_prefix unset",
+          "style_prefix" not in cfg)
+
+    # Unknown name: a warning and today's behavior, never a crash.
+    records = []
+    handler = logging.Handler()
+    handler.emit = lambda r: records.append(r)
+    logging.getLogger("src.imgstyles").addHandler(handler)
+    try:
+        cfg = {"style": "tpyo", "comfyui": {"url": "http://x:1"}}
+        before = copy.deepcopy(cfg)
+        apply_style(cfg)
+        check("unknown style leaves the table untouched", cfg == before)
+        check("unknown style warns",
+              any(r.levelno == logging.WARNING
+                  and "tpyo" in r.getMessage() for r in records))
+        check("resolve reports nothing active",
+              resolve_style(cfg) == (None, None))
+    finally:
+        logging.getLogger("src.imgstyles").removeHandler(handler)
+
+
 def test_usage_log():
     print("usage accounting")
     imagegen._log_usage(TMP, "comfyui", "adventure")
@@ -647,6 +778,7 @@ if __name__ == "__main__":
         test_safety()
         test_make_backend()
         test_sidecars()
+        test_style_presets()
         test_usage_log()
 
     print()

@@ -38,6 +38,10 @@ COMFY_MODEL_NODES = (("UNETLoader", "unet_name"),
                      ("CheckpointLoaderSimple", "ckpt_name"))
 COMFY_CLIP_NODES = (("CLIPLoader", "clip_name"),)
 COMFY_VAE_NODES = (("VAELoader", "vae_name"),)
+# Both standard LoRA loaders list the same models/loras directory; the
+# union covers an install that has trimmed one of them.
+COMFY_LORA_NODES = (("LoraLoaderModelOnly", "lora_name"),
+                    ("LoraLoader", "lora_name"))
 
 
 class DiscoveryError(Exception):

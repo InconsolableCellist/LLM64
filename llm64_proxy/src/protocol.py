@@ -597,6 +597,9 @@ class ProtocolHandler:
                 "/print [what] - hardcopy on the printer\n"
                 "/save [name] - checkpoint this conversation\n"
                 "/saves - list, /restore <n> - roll back\n"
+                "/redo - a different take on the last reply\n"
+                "/retcon - strike the last exchange from the record\n"
+                "/fork - split off a copy and keep both\n"
                 "/history [page] - browse the full conversation\n"
                 "/find <text> - search this conversation\n"
                 "/findall <text> - search all conversations\n"
@@ -631,7 +634,8 @@ class ProtocolHandler:
             else:
                 self._adv_music = False
                 self._adv_setup = AdventureSetup(
-                    templates=self._templates.list())
+                    templates=self._templates.list(),
+                    width=self.profile.text_width)
                 await self._send_canned(self._adv_setup.opening_screen())
 
         elif cmd == 'chars':
@@ -740,6 +744,54 @@ class ProtocolHandler:
                     f"Restored: {name}. The story continues from there...")
             else:
                 await self._send_canned("Usage: /restore <n> (see /saves)")
+
+        # The three history verbs. Plain commands on purpose: the same
+        # words work from a C64, and the Windows client's message menu
+        # is only a shorter way to type them.
+        elif cmd == 'redo':
+            if self.mode.name == 'claude':
+                await self._send_canned(
+                    "/redo does not apply to a Claude Code session.")
+            elif self.conv_manager.drop_last_reply():
+                self.conv_manager.save()
+                self._cancel_stream()
+                await self.send_status("Asking for a different take...")
+                self.stream_task = asyncio.create_task(
+                    self._stream_response())
+            else:
+                await self._send_canned(
+                    "Nothing to redo - the last word is yours.")
+
+        elif cmd == 'retcon':
+            if self.mode.name == 'claude':
+                await self._send_canned(
+                    "/retcon does not apply to a Claude Code session.")
+                return
+            line = self.conv_manager.drop_last_exchange()
+            if line:
+                self.conv_manager.save()
+                first = ' '.join(line.split())[:40]
+                # Honest about the limits: the sheet and map are built
+                # from directives already acted on, and this does not
+                # unlearn them. Rare enough to say rather than solve.
+                await self._send_canned(
+                    f"Retconned: \"{first}\" and everything after it "
+                    "are struck from the record. (What the sheet and "
+                    "map already learned stays learned.)")
+            else:
+                await self._send_canned("Nothing to retcon yet.")
+
+        elif cmd == 'fork':
+            new_id = self.conv_manager.fork_conversation()
+            if new_id:
+                await self._send_canned(
+                    "Forked. You are now in a separate copy of this "
+                    "conversation - world, sheet and map came along, "
+                    "and the original is untouched (F5 lists both). "
+                    "Try the road not taken; /retcon and /redo work "
+                    "here too.")
+            else:
+                await self._send_canned("Nothing to fork yet.")
 
         elif cmd == 'stats':
             convs = self.conv_manager.list_conversations()
@@ -1629,7 +1681,7 @@ class ProtocolHandler:
     SHEET_SCHEMA = (
         '{"hp":12,"maxhp":20,"mana":0,"maxmana":0,"ac":14,"level":2,'
         '"xp":120,"gold":3,"score":0,"location":"...",'
-        '"effects":["poisoned"],"inventory":["..."],'
+        '"effects":["poisoned"],"inventory":["..."],"spells":["..."],'
         '"appearance":"one short visual phrase describing the player '
         'character","companions":[]}')
 
@@ -1701,9 +1753,13 @@ class ProtocolHandler:
             return
         # Keep only keys the block is allowed to carry, so a chatty model
         # cannot smuggle prose into the authoritative state.
+        # 'spells' rides along for casters whose list the story grew -
+        # a custom class (Spellsword) starts with none rolled, and
+        # without the key the narrator had nowhere to put what it
+        # taught. Field bug: a /sheet refresh could never add spells.
         allowed = ('hp', 'maxhp', 'mana', 'maxmana', 'ac', 'level', 'xp',
                    'gold', 'score', 'location', 'effects', 'inventory',
-                   'appearance', 'companions')
+                   'spells', 'appearance', 'companions')
         clean = {k: obj[k] for k in allowed if k in obj}
         state = json.dumps(clean, separators=(',', ':'))
         self.conv_manager.set_meta('adv_state', state)
@@ -2579,17 +2635,23 @@ class ProtocolHandler:
 
     # Heartbeats keep the client's ~43s response watchdog fed during a
     # long silence. The cap must OUTLIVE the API's own read timeout
-    # (api_client, 600s) or the C64 gives up first and the real error -
-    # the one that would say what went wrong - never arrives. A slow GPU
-    # doing a cold prompt-eval on a long conversation is minutes.
-    HEARTBEAT_BEATS = 63
+    # ([api] read_timeout, default 600s) or the C64 gives up first and
+    # the real error - the one that would say what went wrong - never
+    # arrives. A slow GPU doing a cold prompt-eval on a long
+    # conversation is minutes; hence derived, not fixed: three beats
+    # past the timeout, so the API always speaks first.
+    def _heartbeat_beats(self, interval: float) -> int:
+        read = float(getattr(self.config, 'api_read_timeout', 600.0))
+        return int(read / interval) + 3
 
     async def _heartbeat(self, label: str, interval: float = 10.0,
-                         beats: int = HEARTBEAT_BEATS):
+                         beats: int = None):
         """Keep the client's response watchdog fed during long silent
         waits (cold prompt-eval of a big conversation, model load, image
         generation). Capped: if the wait outlives the cap, the silence
         lets the client watchdog abort as a last resort."""
+        if beats is None:
+            beats = self._heartbeat_beats(interval)
         try:
             for i in range(1, beats + 1):
                 await asyncio.sleep(interval)

@@ -48,14 +48,23 @@ def build_sidecar(meta: dict, final_prompt: str, scene: str,
     return out
 
 # Style guidance matters as much as the converter: art made of flat
-# shapes and high contrast survives 16 colors nearly untouched, and image
-# models love drawing frames unless told not to. Overridable via
-# [images].style_prefix - ComfyUI workflows that own their look set "".
+# shapes and clear value contrast survives 16 colors nearly untouched,
+# and image models love drawing frames unless told not to. Written as
+# plain sentences rather than a keyword list because Flux-class models
+# (the shipped ComfyUI workflow) follow prose far better than tag soup;
+# the old "bold ... high contrast" keywords also forced every scene
+# bright and poster-flat, which is exactly wrong for a moody one.
+# Overridable via [images].style_prefix - ComfyUI workflows that own
+# their look set "".
 DEFAULT_STYLE_PREFIX = (
-    "Dark fantasy adventure game scene painted in a bold 16-color retro "
-    "palette, flat color areas, strong silhouettes, high contrast, "
-    "dramatic lighting. The artwork fills the ENTIRE frame edge to edge "
-    "- no borders, no frame, no letterboxing, no text. Scene: ")
+    "A painted scene from a dark fantasy adventure game. Build it from "
+    "bold flat shapes and strong silhouettes that stay readable at low "
+    "resolution, with one dominant light source setting the mood - "
+    "torchlight, moonlight, a lamp in fog. Deep shadow and heavy "
+    "atmosphere are welcome; keep the key shapes separated by clear "
+    "value contrast instead of losing them in murk. The artwork fills "
+    "the entire frame edge to edge - no borders, no frame, no "
+    "letterboxing, no text. Scene: ")
 
 
 class ImageService:

@@ -113,9 +113,15 @@ MSG_SHELF = "Numbers take or put back, or b to go back."
 class AdventureSetup:
     """One player's trip through the front door."""
 
-    def __init__(self, templates=(), rules=None, rng=None):
+    def __init__(self, templates=(), rules=None, rng=None, width=40):
         self.rules = rules or chargen.load_rules()
         self.rng = rng
+        # The client's screen, in columns. Only the review screen reads
+        # it: its value column is capped so the "! needs a look" flag is
+        # never pushed onto a wrapped line, and the cap has to know how
+        # wide a line is. 40 (the C64) is the floor every other client
+        # widens from.
+        self.width = max(int(width or 40), 40)
         self.templates = list(templates)
         self.answers = {}
         self.state = 'choose'
@@ -457,13 +463,21 @@ class AdventureSetup:
     def review_screen(self) -> str:
         lines = ["Your adventure:", ""]
         n = 0
+        # The value column's cap. 15 is the row prefix, 16 the flag; what
+        # is left is what a value can use without pushing the flag onto a
+        # wrapped line. Floored at the old 42 so the C64's screen (where
+        # rows wrap regardless) reads exactly as it always has - the cap
+        # only GROWS, for clients wide enough to show what the C64 could
+        # not: an 80-column screen was cutting "STR .. CHA 15" off at
+        # "CH" for no reason its user could see.
+        vw = max(self.width - 15 - 16, 42)
         for st in STAGES:
             if not self._applies(st):
                 continue
             n += 1
             flag = "  ! needs a look" if st['key'] in self.invalid else ""
             lines.append(f"  {n}  {st['label']:9} "
-                         f"{self.shown(st['key'])[:42]}{flag}")
+                         f"{self.shown(st['key'])[:vw]}{flag}")
         lines += ["", "  y  begin      N  change that      /chat  cancel"]
         if self.invalid:
             lines.append("(Something above changed under a choice you had "
@@ -480,7 +494,14 @@ class AdventureSetup:
     # --- input --------------------------------------------------------
 
     def feed(self, text: str):
-        text = (text or '').strip()
+        # Control characters are never typed on purpose. One arrived as
+        # 0x1F - a Windows client's failed Ctrl+_ undo - and lived on
+        # INSIDE a character's name for a whole adventure. Tabs and
+        # newlines become spaces (the Windows client can send multiline
+        # now); the rest are dropped.
+        text = ''.join(' ' if ch in '\t\n\r' else ch
+                       for ch in (text or '') if ch >= ' ' or ch in '\t\n\r')
+        text = text.strip()
         if self.state == 'choose':
             return self._choose(text)
         if self.state == 'theme':
@@ -648,6 +669,8 @@ class AdventureSetup:
                             + self.stage_screen()), ACT_NONE
                 self._record(key, own)
         else:
+            if key == 'name':
+                text = self._name_or_delegate(text)
             self._record(key, SURPRISE if text in ('', SURPRISE) else text)
 
         # Say what they just chose, in words, before the next question:
@@ -661,6 +684,23 @@ class AdventureSetup:
             return self._with(note, self.review_screen()), ACT_NONE
         reply, act = self._advance()
         return self._with(note, reply), act
+
+    # "You can name my character" is a request, not a name - but it was
+    # stored verbatim once, and a whole session's system prompt then
+    # insisted the player character was called a full sentence. Any of
+    # these phrasings means "the narrator decides", which is exactly
+    # what SURPRISE already does.
+    _DELEGATE = ('you name', 'you can name', 'you pick', 'you choose',
+                 'you decide', 'name me', 'name my', 'name her',
+                 'name him', 'name them', 'up to you', 'surprise me',
+                 "dealer's choice", "don't care", 'dont care',
+                 'narrator')
+
+    def _name_or_delegate(self, text):
+        low = ' '.join(text.lower().split())
+        if any(p in low for p in self._DELEGATE):
+            return SURPRISE
+        return text
 
     @staticmethod
     def _with(note, screen):

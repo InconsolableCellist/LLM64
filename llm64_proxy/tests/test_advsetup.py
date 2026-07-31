@@ -559,6 +559,37 @@ for label in vis:
     if label not in review:
         failures.append(f"review missing {label}")
 
+# Control characters are stripped at the door: a 0x1F (a Windows
+# client's failed Ctrl+_ undo) once survived into a character's name.
+s2 = to_race(fresh())
+s2.answers['scores'] = {a: 15 for a in RULES['abilities']}
+pick(s2, '1'); pick(s2, 'Fighter'); s2.feed('1 2'); gear(s2, '1 1')
+s2.feed('Bru\x1fni')
+check("0x1F never reaches the recorded name",
+      s2.answers.get('name'), 'Bruni')
+
+# "You can name my character" is delegation, not a name.
+s3 = to_race(fresh())
+s3.answers['scores'] = {a: 15 for a in RULES['abilities']}
+pick(s3, '1'); pick(s3, 'Fighter'); s3.feed('1 2'); gear(s3, '1 1')
+s3.feed("You can name my character. I'm a shapely female Khajiit")
+check("delegating the name records SURPRISE",
+      s3.answers.get('name'), '?')
+
+# The value column grows with the client's screen: the 40-column cap cut
+# a full six-ability scores line off at "CH", and an 80-column client
+# has the room to show all of it.
+full_scores = s.shown('scores')
+if len(full_scores) <= 42:
+    failures.append(f"scores line unexpectedly short: {full_scores!r}")
+else:
+    s.width = 80
+    if full_scores not in s.review_screen():
+        failures.append("80-col review still truncates the scores line")
+    s.width = 40
+    if full_scores in s.review_screen():
+        failures.append("40-col review lost its value cap")
+
 # Editing race puts class (and so skills/spells) back in question
 n_race = vis.index('Race') + 1
 s.feed(str(n_race))

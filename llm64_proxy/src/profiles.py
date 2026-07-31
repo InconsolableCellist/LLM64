@@ -192,9 +192,10 @@ VGA_STYLE = (
     "adventure game in the style of Monkey Island 2, Indiana Jones and "
     "the Fate of Atlantis, King's Quest VI. Visible chunky pixels, hard "
     "aliased edges, ordered dithering in the gradients, flat painted "
-    "backdrop, no anti-aliasing, no soft focus, no depth of field, no "
-    "film grain, no photographic lighting. No text, no UI, no border. "
-    "Scene: ")
+    "backdrop. Moody light belongs here, done the VGA way: night "
+    "scenes, fog and glow built from dither patterns and a restrained "
+    "palette - never soft focus, depth of field, film grain, or "
+    "photographic rendering. No text, no UI, no border. Scene: ")
 
 WIN16 = ClientProfile(
     name='win16',

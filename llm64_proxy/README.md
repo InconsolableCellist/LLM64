@@ -117,6 +117,7 @@ Refer also to the included `config.toml.example`.
 | `temperature` | `0.7` | `OPENAI_TEMPERATURE` | Chat-mode sampling |
 | `max_tokens` | `2000` | `OPENAI_MAX_TOKENS` | Reply cap |
 | `max_context_tokens` | `8192` | `OPENAI_MAX_CONTEXT` | Auto-detected from llama.cpp when possible |
+| `read_timeout` | `600` | `OPENAI_READ_TIMEOUT` | Longest silent pause allowed mid-request, seconds; raise it for big local models that load or prompt-eval slowly |
 | `system_prompt` | `""` | `OPENAI_SYSTEM_PROMPT` | Prepended to chat mode |
 | `disable_thinking` | `true` | -- | Suppresses Gemma/Qwen thinking blocks (thinking adds 20-25s of latency on a C64) |
 
@@ -212,6 +213,17 @@ it to `""` if your ComfyUI workflow carries its own style. Backends
   bundled set when the config dir has no such file. No auth -- keep it
   on a trusted LAN.
 - **`fixture`** -- a fixed local image, for tests.
+
+**Style presets.** Set `[images] style` to a named look instead of
+hand-writing a prefix: `cinematic` (moody film still, runs the
+MovieClips LoRA through the bundled `flux2-klein-lora.json` workflow),
+`oil-chiaroscuro` (Rembrandt-style night oil painting), or
+`painted-noir` (film-noir lit dark fantasy). Define your own as an
+`[images.styles.<name>]` table -- see config.toml.example. To use your
+own LoRA: drop the `.safetensors` file in ComfyUI's `models/loras`,
+open the launcher's Settings tab, set Style preset to `custom`, hit the
+custom section's refresh button to list the server's LoRAs, and pick
+yours.
 
 Minimum to get pictures: install Pillow (it's in requirements.txt), set
 `mode = "ask"`, and supply a Gemini key. Then type `/pic a snake-like

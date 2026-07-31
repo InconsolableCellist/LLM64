@@ -241,6 +241,9 @@ CONFIG_SCHEMA = [
          'Kept small so replies reach the C64 fast (default 2000)'),
         ('max_context_tokens', 'int', 'Context window fallback',
          'Used when the model does not report its own size (default 8192)'),
+        ('read_timeout', 'int', 'API read timeout (s)',
+         'Longest silent pause allowed mid-request; raise for big local '
+         'models that load or prompt-eval slowly (default 600)'),
         ('disable_thinking', 'bool:true', 'Disable model thinking',
          'Thinking blocks eat the token budget; the C64 just sees a pause'),
         ('system_prompt', 'str', 'System prompt', ''),
@@ -273,6 +276,11 @@ CONFIG_SCHEMA = [
          'ask = model suggests, /pic confirms. auto = striking scenes '
          'illustrate themselves. off = never.'),
         ('backend', 'choice:gemini,openai,comfyui,fixture', 'Backend', ''),
+        ('style', 'pick:styles', 'Style preset',
+         'A named look: cinematic, oil-chiaroscuro and painted-noir ship '
+         'built in; ↻ also lists [images.styles.*] tables from this '
+         'config. Empty = the default look. When set, the preset\'s '
+         'prefix wins over Style prefix below.'),
         ('style_prefix', 'str', 'Style prefix',
          'Prepended to every scene description. Empty string = none; '
          'unset = the built-in dark-fantasy text.'),
@@ -311,6 +319,21 @@ CONFIG_SCHEMA = [
         ('negative', 'str', 'Negative prompt', ''),
         ('style', 'str', 'Style', ''),
     ]),
+    # These fields define ONE user preset named "custom" - they only do
+    # anything when the Style preset above is set to "custom". For more
+    # presets, or to override a built-in, write [images.styles.<name>]
+    # tables in the Raw config tab.
+    ('images.styles.custom', 'Images: custom style preset', [
+        ('style_prefix', 'str', 'Style prefix',
+         'The look, as prose ending in "Scene: ". Only used when Style '
+         'preset above is "custom". Empty = keep the default prefix and '
+         'let the LoRA do the styling.'),
+        ('lora', 'pick:comfy_lora', 'LoRA',
+         'File in ComfyUI\'s models/loras; ↻ asks the running instance. '
+         'Fills {LORA} via the bundled flux2-klein-lora.json workflow.'),
+        ('lora_strength', 'float', 'LoRA strength',
+         '0.0 - 1.0ish; unset = 1.0. 0.8 is a good start.'),
+    ]),
     ('claude', 'Claude Code', [
         ('command', 'str', 'claude command',
          'Path to the claude CLI on this machine (absolute path is '
@@ -344,6 +367,42 @@ CONFIG_SCHEMA = [
          'the queue\'s real dot pitch or CUPS moires the halftone'),
     ]),
 ]
+
+
+def music_status_lines(data_dir):
+    """One line each for the SID and MIDI libraries under data_dir.
+
+    Goes through the real loaders (MusicLibrary/MidiLibrary), so
+    "detected" means the server would actually play it, not just that a
+    file exists. The loaders swallow parse errors and come back empty,
+    which is why a present-but-empty database gets its own wording.
+    """
+    from .music import MusicLibrary
+    from .midi_library import MidiLibrary
+    lines = []
+    for name, db_path, cls, hint in (
+            ('SID', Path(data_dir) / 'sids' / 'moods.json', MusicLibrary,
+             'run llm64_proxy/tools/sid_build.py (README: "Building the '
+             'SID music library")'),
+            ('MIDI', Path(data_dir) / 'midi' / 'midi.json', MidiLibrary,
+             'run llm64_proxy/tools/midi_fetch.py, midi_scan.py, '
+             'midi_mood.py, midi_makedb.py (README: "Music for the '
+             'Windows client")')):
+        try:
+            if not db_path.exists():
+                lines.append(f'{name}: not set up - {hint}')
+                continue
+            lib = cls(db_path)
+            if lib.available:
+                lines.append(f'{name}: {len(lib.tunes)} tunes, '
+                             f'{len(lib.moods)} moods ({db_path})')
+            else:
+                lines.append(f'{name}: {db_path} exists but loaded no '
+                             f'tunes (broken or empty database) - {hint}')
+        except Exception as e:
+            lines.append(f'{name}: {db_path} failed to load '
+                         f'({type(e).__name__}: {e})')
+    return lines
 
 
 def _dig(doc, dotted, create=False):
@@ -613,6 +672,49 @@ class LauncherApp(tk.Tk):
                     hint.grid(row=row * 2 + 1, column=1, sticky='w',
                               pady=(0, 3))
                 self._fields[(section, key)] = (var, ftype, initial, present)
+            if section == 'storage':
+                # Music lives under data_dir, so its status box goes
+                # right below the field that decides where to look
+                self._build_music_box()
+
+    def _build_music_box(self):
+        """Music status: there are no music config keys (both library
+        paths are derived from storage.data_dir), so this box reports
+        instead of editing - whether the server would find each library,
+        and how big it is."""
+        box = ttk.LabelFrame(self.form, text='Music', padding=6)
+        box.pack(fill='x', pady=(0, 8))
+        box.columnconfigure(0, weight=1)
+        self._music_labels = []
+        for row in range(2):
+            lbl = ttk.Label(box, text='', wraplength=560, justify='left')
+            lbl.grid(row=row, column=0, sticky='w')
+            self._music_labels.append(lbl)
+        btn = ttk.Button(box, text='Refresh', command=self._refresh_music)
+        btn.grid(row=0, column=1, rowspan=2, padx=(8, 0), sticky='e')
+        hint = ttk.Label(
+            box, text='Checked when this form loads; Refresh after a '
+            'library rebuild. Paths follow the data directory above.',
+            foreground='#777', wraplength=560, justify='left',
+            font=('TkDefaultFont', 8))
+        hint.grid(row=2, column=0, sticky='w', pady=(3, 0))
+        for w in (box, btn, hint, *self._music_labels):
+            w.bind('<MouseWheel>', self._form_wheel)
+            w.bind('<Button-4>', self._form_wheel)
+            w.bind('<Button-5>', self._form_wheel)
+        self._refresh_music()
+
+    def _refresh_music(self):
+        data_dir = Path(self._field_value('storage', 'data_dir',
+                                          'LLM64_DATA_DIR', './data'))
+        if not data_dir.is_absolute():
+            # same resolution the server gets: _on_start chdirs to the
+            # config file's directory before it runs
+            data_dir = Path(self.config_path.get()).resolve().parent \
+                / data_dir
+        for lbl, line in zip(self._music_labels,
+                             music_status_lines(data_dir)):
+            lbl.configure(text=line)
 
     # ---- model discovery ----
 
@@ -632,6 +734,13 @@ class LauncherApp(tk.Tk):
         _discover_queue; the workflows source is a local scan."""
         if source == 'workflows':
             combo['values'] = self._workflow_choices()
+            combo.focus_set()
+            combo.event_generate('<Down>')
+            return
+        if source == 'styles':
+            # Local too: built-in presets plus this config's own
+            # [images.styles.*] tables. No endpoint involved.
+            combo['values'] = self._style_choices()
             combo.focus_set()
             combo.event_generate('<Down>')
             return
@@ -679,7 +788,8 @@ class LauncherApp(tk.Tk):
                                 'http://127.0.0.1:8188')
         nodes = {'comfy_model': discovery.COMFY_MODEL_NODES,
                  'comfy_clip': discovery.COMFY_CLIP_NODES,
-                 'comfy_vae': discovery.COMFY_VAE_NODES}[source]
+                 'comfy_vae': discovery.COMFY_VAE_NODES,
+                 'comfy_lora': discovery.COMFY_LORA_NODES}[source]
         return lambda: discovery.comfy_model_choices(url, nodes)
 
     def _workflow_choices(self):
@@ -699,6 +809,19 @@ class LauncherApp(tk.Tk):
             if resolved not in choices.values() and label not in choices:
                 choices[label] = resolved
         return list(choices)
+
+    def _style_choices(self):
+        """Style preset names: the built-ins plus any [images.styles.*]
+        tables in the form's loaded document (which may hold unsaved
+        edits from other fields, but tables only change via Raw/Reload,
+        so the doc is the truth for them)."""
+        from .imgstyles import PRESETS
+        names = set(PRESETS)
+        tables = _dig(self._doc, 'images.styles') if self._doc else None
+        if isinstance(tables, dict):
+            names.update(k for k, v in tables.items()
+                         if isinstance(v, dict))
+        return sorted(names)
 
     def _drain_discovery(self):
         while True:
