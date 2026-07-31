@@ -151,13 +151,16 @@ real machine before you can call them working. For sound, see
 [Getting sound out of Wine](#getting-sound-out-of-wine).
 
 If your terminal fills with
-`err:msg:process_hardware_message unknown message type 3` (or type 0),
-that is Wine's input plumbing complaining about events from your X
-input devices (high-resolution wheels and touchpads are the usual
-source), not this client - it appears with any program under the same
-Wine. `make run` already silences it with `WINEDEBUG=-all`; when
-launching `wine` by hand, prefix `WINEDEBUG=-all` (or just `-msg`)
-yourself.
+`err:msg:process_hardware_message unknown message type N`, that is
+Wine's input plumbing, not this client - it appears with any program
+under the same Wine. Launch through `./tools/llm32.sh` (or `make run` /
+`make run32`), which silence it with `WINEDEBUG=-all`. The flag alone
+can LOOK ineffective: Wine's background services keep the debug
+setting of whoever started the wineserver first, so a resident server
+from an earlier plain launch keeps logging regardless - llm32.sh runs
+`wineserver -k` first for exactly that reason (which also clears a
+stale server left over from a Wine upgrade, the other classic source
+of this chatter).
 
 ### In a VM
 
