@@ -47,6 +47,10 @@
 /* Pictures dialog */
 #define IDC_ROOMPICS    1401
 
+/* Our own message box, which exists because MessageBox() draws the
+   host's - see the template in llm64.rc. */
+#define IDC_MSGTEXT     1450
+
 /* The session shelf: the picture window's list of everything received
    this run. A control id, like ID_PANE and ID_INPUT. */
 #define ID_PICLIST      1002

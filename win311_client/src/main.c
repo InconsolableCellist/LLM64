@@ -1121,6 +1121,10 @@ static void layout_default(void);
 /* The INI lives at the bottom of the file, next to WinMain that reads
    it; the picture window's checkbox writes it. */
 static void save_ini(void);
+/* MessageBox's signature and MessageBox's return values, drawn by us -
+   the real one wears the host's chrome. Defined with the other dialogs;
+   declared here because the first callers are the picture window's. */
+static int llm_message(HWND owner, LPCSTR text, LPCSTR title, UINT type);
 
 /* Open (or refresh) the picture window. Created through the MDI client
    like every document; PicProc records the handle in WM_CREATE because
@@ -4326,8 +4330,8 @@ static void do_save_pic(HWND hwnd)
     int failed = 0;
 
     if (!g_pic_mem) {
-        MessageBox(hwnd, "No picture to save yet.", APP_TITLE,
-                   MB_OK | MB_ICONINFORMATION);
+        llm_message(hwnd, "No picture to save yet.", APP_TITLE,
+                    MB_OK | MB_ICONINFORMATION);
         return;
     }
     lstrcpy(file, "PICTURE.BMP");
@@ -4352,8 +4356,8 @@ static void do_save_pic(HWND hwnd)
 
     f = _lcreat(file, 0);
     if (f == HFILE_ERROR) {
-        MessageBox(hwnd, "Couldn't create that file.", APP_TITLE,
-                   MB_OK | MB_ICONEXCLAMATION);
+        llm_message(hwnd, "Couldn't create that file.", APP_TITLE,
+                    MB_OK | MB_ICONEXCLAMATION);
         return;
     }
     if (_lwrite(f, (LPSTR)&bf, sizeof(bf)) != sizeof(bf))
@@ -4362,8 +4366,8 @@ static void do_save_pic(HWND hwnd)
         failed = 1;
     _lclose(f);
     if (failed) {
-        MessageBox(hwnd, "The save didn't finish - disk full?",
-                   APP_TITLE, MB_OK | MB_ICONEXCLAMATION);
+        llm_message(hwnd, "The save didn't finish - disk full?",
+                    APP_TITLE, MB_OK | MB_ICONEXCLAMATION);
     } else {
         char msg[176];
         wsprintf(msg, "Saved picture to %s.", (LPSTR)file);
@@ -4717,8 +4721,8 @@ BOOL FAR PASCAL _export ConvDlgProc(HWND dlg, UINT msg, UINT wParam,
                 return TRUE;
             wsprintf(q, "Delete \"%s\"?\n\nThis cannot be undone.",
                      (LPSTR)g_convs[i].title);
-            if (MessageBox(dlg, q, "Delete Conversation",
-                           MB_YESNO | MB_ICONQUESTION) != IDYES)
+            if (llm_message(dlg, q, "Delete Conversation",
+                            MB_YESNO | MB_ICONQUESTION) != IDYES)
                 return TRUE;
             conv_send_id(MSG_DELETE_CONVERSATION, g_convs[i].id);
             g_ack_quiet++;
@@ -4800,8 +4804,8 @@ BOOL FAR PASCAL _export ServerDlgProc(HWND dlg, UINT msg, UINT wParam,
             GetDlgItemText(dlg, IDC_HOST, buf, sizeof(buf) - 1);
             port = GetDlgItemInt(dlg, IDC_PORT, NULL, FALSE);
             if (!buf[0] || port == 0) {
-                MessageBox(dlg, "A host and a port are both needed.",
-                           APP_TITLE, MB_OK | MB_ICONEXCLAMATION);
+                llm_message(dlg, "A host and a port are both needed.",
+                            APP_TITLE, MB_OK | MB_ICONEXCLAMATION);
                 return TRUE;
             }
             lstrcpyn(g_host, buf, sizeof(g_host) - 1);
@@ -4843,6 +4847,149 @@ static void server_dialog(HWND owner)
                  (LPSTR)g_host, g_port);
         set_status(msg);
     }
+}
+
+/* ---------------------------------------------------------------- */
+/* The message box, ours                                             */
+/* ---------------------------------------------------------------- */
+
+/* MessageBox() draws the host's box, which on Windows 11 is the one
+   surface left in the program wearing 2026. This is the same box built
+   from our own template, so it goes through chrome_dialog_msg like every
+   other dialog and comes out in the 3.1 palette with 3.1 buttons.
+
+   The arguments arrive through file statics rather than a lParam,
+   because DialogBox has nowhere to put one and DialogBoxParam is not in
+   3.1. Modal, so there is never a second box in flight. */
+static LPCSTR g_msg_text;
+static LPCSTR g_msg_title;
+static UINT   g_msg_type;
+
+BOOL FAR PASCAL _export MsgDlgProc(HWND dlg, UINT msg, UINT wParam,
+                                   LONG lParam)
+{
+    LONG cres;
+
+    if (LLM_IS_CTLCOLOR(msg) && chrome_ctlcolor(msg, wParam, lParam, &cres))
+        return (BOOL)cres;
+    if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
+        SetWindowLong(dlg, DWL_MSGRESULT, cres);
+        return TRUE;
+    }
+
+    switch (msg) {
+    case WM_INITDIALOG: {
+        HWND st = GetDlgItem(dlg, IDC_MSGTEXT);
+        HWND ok = GetDlgItem(dlg, IDOK);
+        HWND cancel = GetDlgItem(dlg, IDCANCEL);
+        HDC hdc;
+        HFONT of;
+        RECT tr, sr, wr, cr, fr;
+        int two = (g_msg_type & MB_TYPEMASK) != MB_OK;
+        int grow, bw, bh, gap, w, h, x, y;
+
+        SetWindowText(dlg, g_msg_title);
+        SetDlgItemText(dlg, IDC_MSGTEXT, g_msg_text);
+        if (two) {
+            /* Yes/No relabels the same two buttons, so Escape keeps
+               working: the dialog manager sends IDCANCEL, which on a
+               Yes/No box is No. */
+            SetWindowText(ok, (g_msg_type & MB_TYPEMASK) == MB_YESNO
+                              ? "&Yes" : "OK");
+            SetWindowText(cancel, (g_msg_type & MB_TYPEMASK) == MB_YESNO
+                                  ? "&No" : "Cancel");
+        } else {
+            ShowWindow(cancel, SW_HIDE);
+        }
+
+        /* How tall the text actually is at the template's width. The
+           template height is a floor, not a promise - a long message on
+           a host with a wide dialog font needs more rows than 3.1 did,
+           and this is the bug that truncated the proxy's menu message
+           before the Menu dialog was widened by hand. */
+        GetWindowRect(st, &sr);
+        ScreenToClient(dlg, (LPPOINT)&sr);
+        ScreenToClient(dlg, (LPPOINT)&sr.right);
+        tr = sr;
+        tr.bottom = tr.top + 1;
+        hdc = GetDC(dlg);
+        of = SelectObject(hdc, (HFONT)SendMessage(st, WM_GETFONT, 0, 0L));
+        DrawText(hdc, g_msg_text, -1, &tr,
+                 DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+        SelectObject(hdc, of);
+        ReleaseDC(dlg, hdc);
+        grow = (tr.bottom - tr.top) - (sr.bottom - sr.top);
+        if (grow < 0)
+            grow = 0;
+
+        MoveWindow(st, sr.left, sr.top, sr.right - sr.left,
+                   (sr.bottom - sr.top) + grow, TRUE);
+
+        /* The buttons ride down with it, centred under the text. */
+        GetWindowRect(ok, &tr);
+        bw = (int)(tr.right - tr.left);
+        bh = (int)(tr.bottom - tr.top);
+        gap = 12;
+        GetClientRect(dlg, &cr);
+        y = (int)sr.bottom + grow + 10;
+        x = ((int)cr.right - (two ? 2 * bw + gap : bw)) / 2;
+        MoveWindow(ok, x, y, bw, bh, TRUE);
+        if (two)
+            MoveWindow(cancel, x + bw + gap, y, bw, bh, TRUE);
+
+        /* Then the box around all of it, centred on the frame. */
+        GetWindowRect(dlg, &wr);
+        w = (int)(wr.right - wr.left);
+        h = (int)(wr.bottom - wr.top) - (int)cr.bottom + y + bh + 10;
+        GetWindowRect(g_frame ? g_frame : GetDesktopWindow(), &fr);
+        x = (int)fr.left + ((int)(fr.right - fr.left) - w) / 2;
+        y = (int)fr.top + ((int)(fr.bottom - fr.top) - h) / 2;
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+        SetWindowPos(dlg, NULL, x, y, w, h, SWP_NOZORDER);
+
+        chrome_controls(dlg);
+        MessageBeep(g_msg_type & MB_ICONMASK);
+        return TRUE;
+    }
+
+    case WM_COMMAND:
+        switch (LLM_CMD_ID(wParam, lParam)) {
+        case IDOK:
+            EndDialog(dlg, IDOK);
+            return TRUE;
+        case IDCANCEL:
+            EndDialog(dlg, IDCANCEL);
+            return TRUE;
+        }
+        break;
+    }
+    return FALSE;
+}
+
+/* MessageBox's signature, MessageBox's return values, our drawing.
+   MB_OK, MB_OKCANCEL and MB_YESNO; the icon bits are accepted and used
+   only for the beep, which is the part of them 3.1 and 2026 agree on. */
+static int llm_message(HWND owner, LPCSTR text, LPCSTR title, UINT type)
+{
+    HINSTANCE inst;
+    FARPROC fn;
+    int r;
+
+    if (!owner)
+        owner = g_frame;
+    inst = LLM_INST(owner);
+    g_msg_text = text ? text : "";
+    g_msg_title = title ? title : APP_TITLE;
+    g_msg_type = type;
+    fn = MakeProcInstance((FARPROC)MsgDlgProc, inst);
+    r = (int)DialogBox(inst, "LLM64MSG", owner, (DLGPROC)fn);
+    FreeProcInstance(fn);
+    /* DialogBox answers -1 if the box could not be created at all; a
+       caller asking a yes/no question must not read that as yes. */
+    if (r != IDOK)
+        return (type & MB_TYPEMASK) == MB_YESNO ? IDNO : IDCANCEL;
+    return (type & MB_TYPEMASK) == MB_YESNO ? IDYES : IDOK;
 }
 
 static void new_conversation(void)
@@ -5096,8 +5243,8 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
            with the theme, and WM_CTLCOLOR hands it out. */
         theme_apply(g_theme);
         if (!sb_init(&g_conv_view.sb)) {
-            MessageBox(hwnd, "Not enough memory for the transcript.",
-                       APP_TITLE, MB_OK | MB_ICONSTOP);
+            llm_message(hwnd, "Not enough memory for the transcript.",
+                        APP_TITLE, MB_OK | MB_ICONSTOP);
             return -1;
         }
         g_conv_view.live   = 1;
@@ -5266,11 +5413,11 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         case IDM_CANCEL:     send_frame(MSG_CANCEL_REQUEST, NULL, 0);
                              input_enable(1); return 0;
         case IDM_ABOUT:
-            MessageBox(hwnd,
-                       "LLM64 for Windows\n\n"
-                       "A Windows 3.1 client for the LLM64 proxy.\n"
-                       "Phase 1.",
-                       "About LLM64", MB_OK | MB_ICONINFORMATION);
+            llm_message(hwnd,
+                        "LLM64 for Windows\n\n"
+                        "A Windows 3.1 client for the LLM64 proxy.\n"
+                        "Phase 1.",
+                        "About LLM64", MB_OK | MB_ICONINFORMATION);
             return 0;
         case IDM_EXIT:
             PostMessage(hwnd, WM_CLOSE, 0, 0L);

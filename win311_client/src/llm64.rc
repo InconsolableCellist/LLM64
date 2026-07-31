@@ -182,3 +182,34 @@ BEGIN
     DEFPUSHBUTTON   "OK",                IDOK,      74, 64,  50, 14
     PUSHBUTTON      "Cancel",            IDCANCEL, 128, 64,  50, 14
 END
+
+/* The message box, ours.
+ *
+ * MessageBox() draws the host's, and on Windows 11 that is the one
+ * surface in the program still wearing 2026: a modern caption, modern
+ * buttons, a modern font and a #F0F0F0 body inside a #C0C0C0
+ * application. It is also the only dialog here that cannot be a fixed
+ * template, because the text decides how tall it is - MsgDlgProc
+ * measures the string and grows the box around it.
+ *
+ * Two buttons, always the same ids. MB_YESNO relabels them and the
+ * wrapper maps the answer back, which keeps Escape working: the dialog
+ * manager sends IDCANCEL, and on a Yes/No box that is No.
+ *
+ * No icon, deliberately. 3.1's stop sign and question mark are 32x32
+ * bitmaps we do not have and could not measure, and LoadIcon would hand
+ * back the host's - right on 3.11 and a 2026 tell everywhere else. A
+ * message box without an icon is period-plausible; a 2026 icon is not.
+ */
+/* One line tall, and no taller. MsgDlgProc measures the string and grows
+   the static, the buttons and the box to suit, so this height is a floor
+   rather than a guess - which matters because the same message needs
+   more rows on a host with a wider dialog font than 3.1 had. */
+LLM64MSG DIALOG 40, 40, 200, 50
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "LLM64"
+BEGIN
+    LTEXT           "", IDC_MSGTEXT, 12, 10, 176, 10
+    DEFPUSHBUTTON   "OK",     IDOK,      44, 30, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 106, 30, 50, 14
+END
