@@ -91,6 +91,12 @@ int  chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result);
  * Everything else stays DefMDIChildProc's, which is what keeps the Window
  * menu, Ctrl+F4/F6, Cascade, Tile and maximise-into-frame working.
  */
+/* Tell the chrome about the MDI client, so a MAXIMISED child's sysmenu
+   box and restore button appear in the menu bar - which is where 3.1 puts
+   them, and the one piece of MDI's behaviour that cannot come free,
+   because the bar is drawn rather than handed to MDI. */
+void chrome_set_mdi(HWND mdiclient);
+
 int  chrome_child_top(HWND hwnd);
 int  chrome_child_edge(HWND hwnd);
 void chrome_child_paint(HWND hwnd, HDC hdc, int active);

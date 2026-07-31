@@ -153,6 +153,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                              rc.bottom - chrome_top(hwnd) - chrome_edge(hwnd),
                              hwnd, (HMENU)1, LLM_INST(hwnd),
                              (LPSTR)&ccs);
+        chrome_set_mdi(g_mdi);
         new_child("Conversation", 10, 10);
         g_last = new_child("Picture", 120, 90);
         return 0;

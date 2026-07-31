@@ -98,6 +98,25 @@ static int   g_bar_down = -1;
    3.1 window beside it paints inactive. */
 static int   g_active = 1;
 
+/* The MDI client, if the frame has one. Needed because a MAXIMISED child
+   has no caption of its own: 3.1 moves its sysmenu box to the left of the
+   menu bar and its restore button to the right, and only the MDI client
+   can say which child that is. Measured off a real 3.11 client. */
+static HWND  g_mdi;
+
+/* The maximised child, or NULL. IsZoomed rather than WM_MDIGETACTIVE's
+   maximised flag, because that flag is reported differently on the two
+   targets and this is not. */
+static HWND maxchild(void)
+{
+    HWND c;
+
+    if (!g_mdi)
+        return NULL;
+    c = LLM_HWND(SendMessage(g_mdi, WM_MDIGETACTIVE, 0, 0L));
+    return (c && IsZoomed(c)) ? c : NULL;
+}
+
 /* ------------------------------------------------------------------ */
 
 /* A 3.1 bevel: highlight on top and left, shadow on bottom and right.
@@ -459,15 +478,35 @@ static void sysmenu_drop(HWND hwnd)
    side. Windows would normally compute these; owning the bar means owning
    the arithmetic, and it is the one place a hand-drawn menu can drift out
    of step with where the popup appears. */
-static int menu_layout(HWND hwnd, HDC hdc, RECT out[])
+/* Where the maximised child's two glyphs go, if there is one. */
+static int menu_glyphs(HWND hwnd, RECT *sys, RECT *res)
 {
     RECT rc;
+    int f = FRAME_W();
+
+    if (!maxchild())
+        return 0;
+    GetClientRect(hwnd, &rc);
+    sys->left   = f;
+    sys->right  = f + BTN_W;
+    res->right  = rc.right - f;
+    res->left   = res->right - BTN_W;
+    sys->top = res->top = f + CAP_H + RULE;
+    sys->bottom = res->bottom = sys->top + MENU_H;
+    return 1;
+}
+
+static int menu_layout(HWND hwnd, HDC hdc, RECT out[])
+{
+    RECT rc, sys, res;
     HFONT of;
     int i, x, f = FRAME_W();
 
     GetClientRect(hwnd, &rc);
     of = SelectObject(hdc, GetStockObject(SYSTEM_FONT));
     x = f;
+    if (menu_glyphs(hwnd, &sys, &res))
+        x = sys.right + 1;      /* past the child's sysmenu box */
     for (i = 0; i < g_nmenus; i++) {
         const char *lbl = g_label[i];
         char plain[32];
@@ -529,6 +568,24 @@ static void menu_paint(HWND hwnd, HDC hdc)
     bar.bottom = bar.top + MENU_H;
     fill(hdc, &bar, C_MENU);
     hline(hdc, bar.left, bar.right - 1, bar.bottom, C_FRAME);
+
+    /* A maximised child's chrome lives in the bar: its sysmenu box on the
+       left and its restore button on the right, with the menu titles
+       moved over to make room. This is the one piece of 3.1's MDI
+       behaviour that does not come free - MDI inserts those into the menu
+       it was handed, and this bar is drawn, not handed over. */
+    {
+        RECT sys, res;
+
+        if (menu_glyphs(hwnd, &sys, &res)) {
+            sysmenu_box(hdc, &sys, BAR_CHILD);
+            vline(hdc, sys.right, sys.top, sys.bottom - 1, C_FRAME);
+            raised_box(hdc, &res, 0);
+            vline(hdc, res.left - 1, res.top, res.bottom - 1, C_FRAME);
+            arrow(hdc, res.left + 8, res.top + 4, 1);
+            arrow(hdc, res.left + 8, res.top + 10, 0);
+        }
+    }
 
     menu_layout(hwnd, hdc, items);
     SetBkMode(hdc, TRANSPARENT);
@@ -789,6 +846,14 @@ static void square_corners(HWND hwnd)
 
 
 /* ---------------------------------------------------------------- API */
+
+/* Tell the chrome which window is the MDI client, so a maximised child's
+   glyphs can appear in the menu bar. Call after creating it; NULL if the
+   frame has no MDI. */
+void chrome_set_mdi(HWND mdiclient)
+{
+    g_mdi = mdiclient;
+}
 
 void chrome_init(HWND hwnd, HMENU bar)
 {
@@ -1159,6 +1224,21 @@ int chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result)
             g_open = g_bar_down;            /* highlight on the press */
             inval_bar(hwnd, 1);
             return 1;
+        }
+        {
+            RECT sys, res;
+            HWND mc = maxchild();
+
+            if (mc && menu_glyphs(hwnd, &sys, &res)) {
+                if (PtInRect(&res, pt)) {
+                    SendMessage(g_mdi, WM_MDIRESTORE, (UINT)mc, 0L);
+                    return 1;
+                }
+                if (PtInRect(&sys, pt)) {
+                    SendMessage(mc, WM_SYSCOMMAND, SC_KEYMENU, (LONG)' ');
+                    return 1;
+                }
+            }
         }
         g_down = cap_button_at(hwnd, pt);
         if (g_down != HIT_NONE) {
