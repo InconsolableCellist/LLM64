@@ -41,9 +41,11 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <mmsystem.h>   /* MCI: the sequencer plays our .MIDs */
+#include <shellapi.h>   /* ShellExecute, for the address in the About box */
 #include <string.h>
 #include <stdlib.h>
-#include <i86.h>        /* FP_OFF, for segment-boundary math */
+#include "llmport.h"    /* the 16-bit/32-bit seam; brings i86.h on Watcom */
+#include "chrome.h"     /* the 3.1 frame, drawn by us */
 #include "wire.h"
 #include "net.h"
 #include "scroll.h"
@@ -63,6 +65,7 @@
 
 #define ID_PANE     1000
 #define ID_INPUT    1001
+#define ID_SBAR     1002        /* the pane's own 3.1 scrollbar */
 
 /* One document's worth of text and where we are looking at it from. The
    transcript is one of these; every sheet of printed paper is another.
@@ -91,7 +94,8 @@ static View     g_conv_view;
 static View     g_paper[MAX_PAPER];
 static unsigned g_paper_seq;        /* sheets printed, for the titles */
 
-static HWND     g_frame;    /* the one top-level window */
+static HWND     g_frame;
+static HMENU    g_menubar;   /* the resource menu, detached; chrome draws it */    /* the one top-level window */
 static HWND     g_mdi;      /* MDICLIENT, between the frame and its docs */
 static HWND     g_conv;     /* the conversation document */
 static HWND     g_input;    /* the conversation's input box */
@@ -104,7 +108,7 @@ static HWND     g_input;    /* the conversation's input box */
 static HFONT    g_fonts[FONT_VARIANTS];
 static HFONT    g_font;                 /* == g_fonts[0], read constantly */
 static int      g_cw = 8, g_ch = 16;    /* character cell */
-static FARPROC  g_old_edit_proc;
+static LlmOldProc g_old_edit_proc;
 static char     g_status[128] = "Not connected.";
 /* The proxy composes its own right-hand chrome - place, now playing,
    pictures waiting - and sends it in HINT. It gets its own half of the
@@ -326,9 +330,19 @@ static int view_rows(const View *v)
     return (rc.bottom / g_ch) > 0 ? (int)(rc.bottom / g_ch) : 1;
 }
 
-static int view_cols(const View *v)
+/* The pane's width with its scrollbar taken off. The bar is a child
+   window sitting inside the pane's border, so the client rect still
+   includes it and everything that lays text out has to stop short. */
+static int pane_width(HWND pane)
 {
     RECT rc;
+
+    GetClientRect(pane, &rc);
+    return (int)rc.right - CHROME_SB_W;
+}
+
+static int view_cols(const View *v)
+{
     int c;
 
     /* A sheet of paper is already laid out by the proxy to a printer
@@ -339,8 +353,7 @@ static int view_cols(const View *v)
         return 1000;
     if (!v->pane)
         return 40;
-    GetClientRect(v->pane, &rc);
-    c = (int)((rc.right - v->margin - 2) / g_cw);
+    c = (int)((pane_width(v->pane) - v->margin - 2) / g_cw);
     if (c < 10) c = 10;
     return c;
 }
@@ -367,8 +380,8 @@ static void view_sync_scroll(View *v)
     if (v->top < 0) v->top = 0;
     if (!v->pane)
         return;
-    SetScrollRange(v->pane, SB_VERT, 0, (int)max, FALSE);
-    SetScrollPos(v->pane, SB_VERT, (int)v->top, TRUE);
+    chrome_scrollbar_set(GetDlgItem(v->pane, ID_SBAR), v->top, max,
+                         view_rows(v));
 }
 
 static void view_bottom(View *v)
@@ -497,6 +510,7 @@ static void pane_paint(HWND hwnd)
 
     hdc = BeginPaint(hwnd, &ps);
     GetClientRect(hwnd, &rc);
+    rc.right = pane_width(hwnd);        /* the scrollbar paints itself */
 
     if (!v || !v->live) {
         FillRect(hdc, &rc, g_bg_brush);
@@ -716,7 +730,7 @@ static void launch_create(HWND frame)
     static const char *label[LAUNCH_N] =
         { "Menu", "Conversation", "Picture", "Music",
           "Character", "Items", "Notebook", "Map" };
-    HINSTANCE inst = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
+    HINSTANCE inst = LLM_INST(frame);
     int i;
 
     /* Owner-drawn so a button can show that its window is OPEN: 3.1 has
@@ -730,15 +744,21 @@ static void launch_create(HWND frame)
                                    NULL);
 }
 
+/* Defined with the frame's layout, but the launcher strip needs it
+   first: the buttons sit inside the chrome, not at the window's edge. */
+static void frame_content(HWND hwnd, RECT *r);
+
 static void launch_layout(HWND frame)
 {
     RECT rc;
-    int i, x = 4, y = 3, bh = launch_btn_h();
+    int i, x, y, bh = launch_btn_h();
 
-    GetClientRect(frame, &rc);
+    frame_content(frame, &rc);
+    x = (int)rc.left + 4;
+    y = (int)rc.top + 3;
     for (i = 0; i < LAUNCH_N; i++) {
-        if (x + g_launch_w[i] + 4 > (int)rc.right && x > 4) {
-            x = 4;
+        if (x + g_launch_w[i] + 4 > (int)rc.right && x > (int)rc.left + 4) {
+            x = (int)rc.left + 4;
             y += bh + 3;
         }
         if (g_launch[i])
@@ -1113,6 +1133,10 @@ static void layout_default(void);
 /* The INI lives at the bottom of the file, next to WinMain that reads
    it; the picture window's checkbox writes it. */
 static void save_ini(void);
+/* MessageBox's signature and MessageBox's return values, drawn by us -
+   the real one wears the host's chrome. Defined with the other dialogs;
+   declared here because the first callers are the picture window's. */
+static int llm_message(HWND owner, LPCSTR text, LPCSTR title, UINT type);
 
 /* Open (or refresh) the picture window. Created through the MDI client
    like every document; PicProc records the handle in WM_CREATE because
@@ -1142,7 +1166,7 @@ static void pic_open(void)
     }
     mcs.szClass = PIC_CLASS;
     mcs.szTitle = "Picture";
-    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.hOwner  = LLM_INST(g_frame);
     desk_place(DESK_PIC, &mcs, 24, 16, 336, 240);
     mcs.style   = 0;
     mcs.lParam  = 0;
@@ -1540,8 +1564,20 @@ static void mus_update(void)
     }
 }
 
+/* A tune is being opened, and what to do when that lands: 0 nothing,
+   1 start over with whatever g_mus_file now names, 2 close and be quiet.
+   See mus_play_file for why an open is not simply a function call. */
+static int g_mus_opening;
+static int g_mus_pending;
+
 static void mus_mci_close(void)
 {
+    /* Never while an open is in flight: the device does not exist yet,
+       and MCI is being driven from a notification we have not had. */
+    if (g_mus_opening) {
+        g_mus_pending = 2;
+        return;
+    }
     if (g_mus_opened) {
         mciSendString("close llm64mid", NULL, 0, NULL);
         g_mus_opened = 0;
@@ -1557,29 +1593,77 @@ static void mus_stop(void)
     mus_update();
 }
 
-static void mus_play_file(void)
-{
-    char cmd[200];
+static void mus_play_file(void);
 
-    mus_mci_close();
-    wsprintf(cmd, "open %s type sequencer alias llm64mid",
-             (LPSTR)g_mus_file);
-    if (mciSendString(cmd, NULL, 0, NULL) != 0) {
+/* The open landed. Start the tune, or deal with whatever happened while
+   we were waiting for it. */
+static void mus_open_done(int ok)
+{
+    char msg[112];
+
+    g_mus_opening = 0;
+    g_mus_opened = ok;
+    if (g_mus_pending) {
+        int want = g_mus_pending;
+
+        g_mus_pending = 0;
+        if (want == 2)
+            mus_stop();         /* stop was asked for meanwhile */
+        else
+            mus_play_file();    /* a newer tune arrived */
+        return;
+    }
+    if (!ok) {
         /* No sequencer device is a machine without a sound setup, not
            an error worth a dialog - the C64 plays on without a SID
            filter too. */
         set_status("MIDI open failed - is a sequencer device installed?");
         return;
     }
-    g_mus_opened = 1;
-    if (mciSendString("play llm64mid notify", NULL, 0,
-                      g_frame) != 0) {
+    if (mciSendString("play llm64mid notify", NULL, 0, g_frame) != 0) {
         set_status("MIDI play failed.");
         mus_mci_close();
         return;
     }
     g_mus_state = 1;
     mus_update();
+    wsprintf(msg, "Music: %s (%s)", (LPSTR)g_mus_title,
+             (LPSTR)g_mus_author);
+    set_status(msg);
+}
+
+/* Open the tune and, when that finishes, play it.
+ *
+ * "notify" and two steps rather than one blocking call, because opening
+ * a sequencer device is not cheap on a modern machine: Windows 11 brings
+ * up its software synth on the first open, gm.dls and all, and does not
+ * return until it has. On the message loop that is the whole application
+ * frozen for as long as it takes - reported from a Windows 11 build as a
+ * delay with nothing responding, and the first thing a 1993 client
+ * should not do.
+ *
+ * If MCI chooses to run the open synchronously anyway it still posts the
+ * notification, so the completion path is the same either way and this
+ * is never worse than what it replaces. */
+static void mus_play_file(void)
+{
+    char cmd[200];
+
+    /* One at a time. A tune arriving while another is opening asks for
+       the newer one, and mus_open_done starts it. */
+    if (g_mus_opening) {
+        g_mus_pending = 1;
+        return;
+    }
+    mus_mci_close();
+    wsprintf(cmd, "open %s type sequencer alias llm64mid notify",
+             (LPSTR)g_mus_file);
+    g_mus_opening = 1;
+    set_status("Loading the tune...");
+    if (mciSendString(cmd, NULL, 0, g_frame) != 0) {
+        g_mus_opening = 0;
+        set_status("MIDI open failed - is a sequencer device installed?");
+    }
 }
 
 static void mid_abort(void)
@@ -1700,7 +1784,6 @@ static void mid_end(void)
 {
     OFSTRUCT of;
     HFILE f;
-    char msg[112];
 
     if (!g_mid_active)
         return;
@@ -1725,10 +1808,10 @@ static void mid_end(void)
     lstrcpy(g_mus_title,  g_mid_title);
     lstrcpy(g_mus_author, g_mid_author);
     lstrcpy(g_mus_mood,   g_mid_mood);
+    /* The status line is mus_open_done's now: it says "Loading the
+       tune..." until the device is actually open, which on a modern
+       machine is not instant. */
     mus_play_file();
-    wsprintf(msg, "Music: %s (%s)", (LPSTR)g_mus_title,
-             (LPSTR)g_mus_author);
-    set_status(msg);
 }
 
 /* ---------------------------------------------------------------- */
@@ -2374,13 +2457,15 @@ long FAR PASCAL _export PaneProc(HWND hwnd, UINT msg, UINT wParam,
     switch (msg) {
     case WM_VSCROLL:
         rows = view_rows(v);
-        switch (wParam) {
+        switch (LLM_SCROLL_CODE(wParam, lParam)) {
         case SB_LINEUP:   v->top--; break;
         case SB_LINEDOWN: v->top++; break;
         case SB_PAGEUP:   v->top -= rows; break;
         case SB_PAGEDOWN: v->top += rows; break;
         case SB_THUMBPOSITION:
-        case SB_THUMBTRACK: v->top = LOWORD(lParam); break;
+        case SB_THUMBTRACK:
+            v->top = LLM_SCROLL_POS(wParam, lParam);
+            break;
         default: return 0;
         }
         view_sync_scroll(v);
@@ -2390,7 +2475,39 @@ long FAR PASCAL _export PaneProc(HWND hwnd, UINT msg, UINT wParam,
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
 
+    /* The one modern nicety in here, and it is worth the anachronism:
+       nobody in 2026 reads a scrollback without turning the wheel, and
+       a window that ignores it feels broken rather than old. Three lines
+       a notch, which is what Windows has meant by a wheel click since
+       the Intellimouse.
+
+       Nothing arrives here on 3.11 - there was no wheel to send it - so
+       the period build is unaffected and the message number is simply
+       never seen. */
+    case WM_MOUSEWHEEL: {
+        int notches = (int)(short)HIWORD(wParam) / WHEEL_DELTA;
+
+        if (!notches)
+            return 0;
+        v->top -= (long)notches * 3;
+        view_sync_scroll(v);
+        v->follow = (v->top >= view_max_top(v));
+        InvalidateRect(hwnd, NULL, TRUE);
+        return 0;
+    }
+
     case WM_SIZE:
+        /* The scrollbar first, so view_cols measures against the width
+           that is actually left for text. */
+        {
+            HWND bar = GetDlgItem(hwnd, ID_SBAR);
+            RECT rc;
+
+            GetClientRect(hwnd, &rc);
+            if (bar)
+                MoveWindow(bar, (int)rc.right - CHROME_SB_W, 0,
+                           CHROME_SB_W, (int)rc.bottom, TRUE);
+        }
         /* The whole point of the far-block transcript: a resize re-flows
            what is already on screen, because nothing was ever stored
            wrapped in the first place. Paper is the exception - it keeps
@@ -2411,13 +2528,18 @@ long FAR PASCAL _export PaneProc(HWND hwnd, UINT msg, UINT wParam,
    else. */
 static HWND pane_create(HWND parent, View *v)
 {
+    /* No WS_VSCROLL: the host would draw that one, and it has been
+       drawing it wrong since 1995. chrome_scrollbar is the 3.1 bar, and
+       it speaks the same WM_VSCROLL this window already handles. */
     HWND p = CreateWindow(PANE_CLASS, NULL,
-                          WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER,
+                          WS_CHILD | WS_VISIBLE | WS_BORDER
+                          | WS_CLIPCHILDREN,
                           0, 0, 10, 10, parent, (HMENU)ID_PANE,
-                          (HINSTANCE)GetWindowWord(parent, GWW_HINSTANCE),
+                          LLM_INST(parent),
                           NULL);
     if (!p)
         return NULL;
+    chrome_scrollbar(p, ID_SBAR);
     SetWindowLong(p, 0, (LONG)v);
     v->pane = p;
     return p;
@@ -2606,7 +2728,9 @@ long FAR PASCAL _export EditProc(HWND hwnd, UINT msg, UINT wParam,
     case WM_KEYDOWN:
         if (wParam == VK_PRIOR || wParam == VK_NEXT) {
             SendMessage(g_conv_view.pane, WM_VSCROLL,
-                        wParam == VK_PRIOR ? SB_PAGEUP : SB_PAGEDOWN, 0L);
+                        LLM_SCROLL_WP(wParam == VK_PRIOR
+                                      ? SB_PAGEUP : SB_PAGEDOWN, 0),
+                        LLM_SCROLL_LP(0, 0));
             return 0;
         }
         break;
@@ -2724,6 +2848,21 @@ static void layout_default(void)
 
 /* The frame gives everything except the status strip to the MDI client,
    which is what actually owns the document windows. */
+/* Where the application's own furniture goes, once the chrome has taken
+   its share off the top and the edges. Everything the frame positions or
+   paints works inside this rather than the raw client rect - which, since
+   we answer WM_NCCALCSIZE ourselves, is now the whole window. */
+static void frame_content(HWND hwnd, RECT *r)
+{
+    int e = chrome_edge(hwnd);
+
+    GetClientRect(hwnd, r);
+    r->left   += e;
+    r->right  -= e;
+    r->bottom -= e;
+    r->top     = chrome_top(hwnd);
+}
+
 static void frame_layout(HWND hwnd)
 {
     RECT rc;
@@ -2732,22 +2871,22 @@ static void frame_layout(HWND hwnd)
 
     if (!g_mdi)
         return;
-    GetClientRect(hwnd, &rc);
+    frame_content(hwnd, &rc);
     /* The strip's height depends on the width, so it has to be decided
        before the height is divided up. */
-    launch_rows_calc((int)rc.right);
-    h = rc.bottom - statush - launch_h();
+    launch_rows_calc((int)(rc.right - rc.left));
+    h = (rc.bottom - rc.top) - statush - launch_h();
     if (h < g_ch) h = g_ch;
     /* The documents get everything between the launcher strip and the
        status strip. */
-    w = (int)rc.right;
+    w = (int)(rc.right - rc.left);
     /* Resizing the workspace resizes any maximized document with it, and
        that WM_SIZE is the frame's doing, not the user's: without this
        guard one drag of the frame border made the desk "arranged" and
        every window that closed afterwards came back at its built-in
        coordinates instead of its own. */
     g_in_layout = 1;
-    MoveWindow(g_mdi, 0, launch_h(), w, h, TRUE);
+    MoveWindow(g_mdi, rc.left, rc.top + launch_h(), w, h, TRUE);
     g_in_layout = 0;
     launch_layout(hwnd);
 }
@@ -2755,17 +2894,25 @@ static void frame_layout(HWND hwnd)
 long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
                                  LONG lParam)
 {
+    LONG cres;
     HINSTANCE inst;
+
+    /* The 3.1 child caption and border. chrome_child_msg declares the
+       non-client area in WM_NCCALCSIZE and paints it in WM_NCPAINT, so
+       this window's CLIENT rect is unchanged and none of the layout
+       below had to move. */
+    if (chrome_child_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
 
     switch (msg) {
     case WM_CREATE:
-        inst = (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE);
+        inst = LLM_INST(hwnd);
         pane_create(hwnd, &g_conv_view);
         g_input = CreateWindow("EDIT", "",
                                WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
                                0, 0, 10, 10, hwnd, (HMENU)ID_INPUT, inst, NULL);
         SendMessage(g_input, WM_SETFONT, (WPARAM)g_font, 0L);
-        g_old_edit_proc = (FARPROC)GetWindowLong(g_input, GWL_WNDPROC);
+        g_old_edit_proc = (LlmOldProc)GetWindowLong(g_input, GWL_WNDPROC);
         SetWindowLong(g_input, GWL_WNDPROC, (LONG)EditProc);
         break;
 
@@ -2783,21 +2930,28 @@ long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
     case WM_MDIACTIVATE:
         /* Typing should land in the document you just clicked on, not
            wherever the focus happened to be. */
-        if (wParam)
+        if (LLM_MDI_ACTIVE(wParam, lParam, hwnd))
             SetFocus(g_input);
         break;
 
+    /* The input box has to follow the theme, or the Screen palette
+       leaves a white box glued under a black transcript. The brush is
+       returned, not copied, which is why it is a global that outlives
+       the message.
+
+       Win16 has one WM_CTLCOLOR for every control and says which kind
+       it is in HIWORD(lParam); Win32 split it into a message per class
+       and never sends the old one. */
+#ifdef __WATCOMC__
     case WM_CTLCOLOR:
-        /* The input box has to follow the theme, or the Screen palette
-           leaves a white box glued under a black transcript. WM_CTLCOLOR
-           is how 3.1 did this - the brush is returned, not copied, which
-           is why it is a global that outlives the message. */
-        if (HIWORD(lParam) == CTLCOLOR_EDIT) {
-            SetTextColor((HDC)wParam, g_pal[1]);
-            SetBkColor((HDC)wParam, g_bg);
-            return (LONG)g_bg_brush;
-        }
-        break;
+        if (HIWORD(lParam) != CTLCOLOR_EDIT)
+            break;
+#else
+    case WM_CTLCOLOREDIT:
+#endif
+        SetTextColor((HDC)wParam, g_pal[1]);
+        SetBkColor((HDC)wParam, g_bg);
+        return (LONG)g_bg_brush;
 
     case WM_SETFOCUS:
         if (g_input)
@@ -2977,7 +3131,15 @@ static void note_paint(HWND hwnd)
 long FAR PASCAL _export NoteProc(HWND hwnd, UINT msg, UINT wParam,
                                  LONG lParam)
 {
+    LONG cres;
     int i;
+
+    /* The 3.1 child caption and border. chrome_child_msg declares the
+       non-client area in WM_NCCALCSIZE and paints it in WM_NCPAINT, so
+       this window's CLIENT rect is unchanged and none of the layout
+       below had to move. */
+    if (chrome_child_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
 
     switch (msg) {
     case WM_CREATE:
@@ -2986,8 +3148,7 @@ long FAR PASCAL _export NoteProc(HWND hwnd, UINT msg, UINT wParam,
                                  WS_CHILD | WS_VISIBLE | WS_BORDER
                                  | WS_VSCROLL | LBS_NOTIFY,
                                  0, 0, 10, 10, hwnd, (HMENU)ID_NOTELIST,
-                                 (HINSTANCE)GetWindowWord(hwnd,
-                                                          GWW_HINSTANCE),
+                                 LLM_INST(hwnd),
                                  NULL);
         SendMessage(g_note_lb, WM_SETFONT, (WPARAM)g_font, 0L);
         /* The sheets outlive this window, so reopening it finds them
@@ -3008,7 +3169,8 @@ long FAR PASCAL _export NoteProc(HWND hwnd, UINT msg, UINT wParam,
         return 0;
 
     case WM_COMMAND:
-        if (wParam == ID_NOTELIST && HIWORD(lParam) == LBN_SELCHANGE) {
+        if (LLM_CMD_ID(wParam, lParam) == ID_NOTELIST
+            && LLM_CMD_NOTIFY(wParam, lParam) == LBN_SELCHANGE) {
             int r = (int)SendMessage(g_note_lb, LB_GETCURSEL, 0, 0L);
             if (r >= 0)
                 note_show((int)SendMessage(g_note_lb, LB_GETITEMDATA,
@@ -3028,7 +3190,7 @@ long FAR PASCAL _export NoteProc(HWND hwnd, UINT msg, UINT wParam,
         /* Paper has nothing to type into, so activating the Notebook must
            not leave the keyboard on the conversation's input box - give
            the focus to the page, where PgUp and PgDn work. */
-        if (wParam && g_note_pane)
+        if (LLM_MDI_ACTIVE(wParam, lParam, hwnd) && g_note_pane)
             SetFocus(g_note_pane);
         break;
 
@@ -3348,6 +3510,14 @@ static void map_paint(HWND hwnd)
 long FAR PASCAL _export MapProc(HWND hwnd, UINT msg, UINT wParam,
                                 LONG lParam)
 {
+    LONG cres;
+    /* The 3.1 child caption and border. chrome_child_msg declares the
+       non-client area in WM_NCCALCSIZE and paints it in WM_NCPAINT, so
+       this window's CLIENT rect is unchanged and none of the layout
+       below had to move. */
+    if (chrome_child_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
+
     switch (msg) {
     case WM_CREATE:
         g_map_wnd = hwnd;
@@ -3515,7 +3685,15 @@ static void pic_paint(HWND hwnd)
 long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
                                 LONG lParam)
 {
+    LONG cres;
     int i;
+
+    /* The 3.1 child caption and border. chrome_child_msg declares the
+       non-client area in WM_NCCALCSIZE and paints it in WM_NCPAINT, so
+       this window's CLIENT rect is unchanged and none of the layout
+       below had to move. */
+    if (chrome_child_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
 
     switch (msg) {
     case WM_CREATE:
@@ -3529,8 +3707,7 @@ long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
                                 WS_CHILD | WS_BORDER | WS_VSCROLL
                                 | LBS_NOTIFY,
                                 0, 0, 10, 10, hwnd, (HMENU)ID_PICLIST,
-                                (HINSTANCE)GetWindowWord(hwnd,
-                                                         GWW_HINSTANCE),
+                                LLM_INST(hwnd),
                                 NULL);
         for (i = 0; i < g_shelf_count; i++)
             SendMessage(g_pic_lb, LB_ADDSTRING, 0,
@@ -3545,10 +3722,10 @@ long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
         g_pic_auto = CreateWindow("BUTTON", "Illustrate every room",
                                   WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
                                   0, 0, 10, 10, hwnd, (HMENU)ID_PICAUTO,
-                                  (HINSTANCE)GetWindowWord(hwnd,
-                                                           GWW_HINSTANCE),
+                                  LLM_INST(hwnd),
                                   NULL);
         SendMessage(g_pic_auto, WM_SETFONT, (WPARAM)g_font, 0L);
+        chrome_button(g_pic_auto);
         pic_auto_sync();
         break;
 
@@ -3561,11 +3738,12 @@ long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
         return 1;
 
     case WM_COMMAND:
-        if (wParam == ID_PICLIST && HIWORD(lParam) == LBN_SELCHANGE) {
+        if (LLM_CMD_ID(wParam, lParam) == ID_PICLIST
+            && LLM_CMD_NOTIFY(wParam, lParam) == LBN_SELCHANGE) {
             shelf_show((int)SendMessage(g_pic_lb, LB_GETCURSEL, 0, 0L));
             return 0;
         }
-        if (wParam == ID_PICAUTO) {
+        if (LLM_CMD_ID(wParam, lParam) == ID_PICAUTO) {
             /* BS_AUTOCHECKBOX has already flipped its own state; read it
                rather than assuming, and persist immediately - a setting
                that needs OK is a setting people distrust. */
@@ -3711,14 +3889,22 @@ static void mus_paint(HWND hwnd)
 long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
                                 LONG lParam)
 {
+    LONG cres;
     static const char *label[3] = { "Pause", "Stop", "Next" };
     HINSTANCE inst;
     int i;
 
+    /* The 3.1 child caption and border. chrome_child_msg declares the
+       non-client area in WM_NCCALCSIZE and paints it in WM_NCPAINT, so
+       this window's CLIENT rect is unchanged and none of the layout
+       below had to move. */
+    if (chrome_child_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
+
     switch (msg) {
     case WM_CREATE:
         g_mus_wnd = hwnd;
-        inst = (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE);
+        inst = LLM_INST(hwnd);
         for (i = 0; i < 3; i++)
             g_mus_btn[i] = CreateWindow("BUTTON", label[i],
                                         WS_CHILD | WS_VISIBLE
@@ -3735,6 +3921,7 @@ long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
                                   WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                                   0, 0, 10, 10, hwnd,
                                   (HMENU)(IDC_MUSBASE + 4), inst, NULL);
+        chrome_controls(hwnd);
         mus_fill_moods();
         mus_update();
         break;
@@ -3752,7 +3939,7 @@ long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
         break;
 
     case WM_COMMAND:
-        switch (wParam) {
+        switch (LLM_CMD_ID(wParam, lParam)) {
         case IDC_MUSBASE + 0:       /* Pause / Resume: purely local */
             if (g_mus_state == 1) {
                 mciSendString("pause llm64mid", NULL, 0, NULL);
@@ -3991,7 +4178,15 @@ done:
 long FAR PASCAL _export ChrProc(HWND hwnd, UINT msg, UINT wParam,
                                 LONG lParam)
 {
+    LONG cres;
     RECT rc;
+
+    /* The 3.1 child caption and border. chrome_child_msg declares the
+       non-client area in WM_NCCALCSIZE and paints it in WM_NCPAINT, so
+       this window's CLIENT rect is unchanged and none of the layout
+       below had to move. */
+    if (chrome_child_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
 
     switch (msg) {
     case WM_CREATE:
@@ -4002,16 +4197,16 @@ long FAR PASCAL _export ChrProc(HWND hwnd, UINT msg, UINT wParam,
         g_chr_btn = CreateWindow("BUTTON", "Refresh",
                                  WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                                  0, 0, 10, 10, hwnd, (HMENU)ID_CHRREFRESH,
-                                 (HINSTANCE)GetWindowWord(hwnd,
-                                                          GWW_HINSTANCE),
+                                 LLM_INST(hwnd),
                                  NULL);
         SendMessage(g_chr_btn, WM_SETFONT, (WPARAM)g_font, 0L);
+        chrome_button(g_chr_btn);
         break;
     case WM_PAINT:
         chr_paint(hwnd);
         return 0;
     case WM_COMMAND:
-        if (wParam == ID_CHRREFRESH) {
+        if (LLM_CMD_ID(wParam, lParam) == ID_CHRREFRESH) {
             /* '/sheet' is a real command, so the C64 can type it too. The
                proxy answers with its stored halves immediately and asks
                the model for a fresh state block. */
@@ -4073,7 +4268,15 @@ static void inv_fill(void)
 long FAR PASCAL _export InvProc(HWND hwnd, UINT msg, UINT wParam,
                                 LONG lParam)
 {
+    LONG cres;
     RECT rc;
+
+    /* The 3.1 child caption and border. chrome_child_msg declares the
+       non-client area in WM_NCCALCSIZE and paints it in WM_NCPAINT, so
+       this window's CLIENT rect is unchanged and none of the layout
+       below had to move. */
+    if (chrome_child_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
 
     switch (msg) {
     case WM_CREATE:
@@ -4082,8 +4285,7 @@ long FAR PASCAL _export InvProc(HWND hwnd, UINT msg, UINT wParam,
                                 WS_CHILD | WS_VISIBLE | WS_BORDER
                                 | WS_VSCROLL,
                                 0, 0, 10, 10, hwnd, (HMENU)ID_INVLIST,
-                                (HINSTANCE)GetWindowWord(hwnd,
-                                                         GWW_HINSTANCE),
+                                LLM_INST(hwnd),
                                 NULL);
         inv_fill();
         break;
@@ -4123,7 +4325,7 @@ static void sheet_open(const char *cls, HWND *slot, int which,
     }
     mcs.szClass = cls;
     mcs.szTitle = cls[5] == 'C' ? "Character" : "Inventory";
-    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.hOwner  = LLM_INST(g_frame);
     desk_place(which, &mcs, x, y, cx, cy);
     mcs.style = 0;
     /* Opening a sheet is a good moment to ask for the proxy's stored copy:
@@ -4148,7 +4350,7 @@ static void note_open(void)
     }
     mcs.szClass = NOTE_CLASS;
     mcs.szTitle = "Notebook";
-    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.hOwner  = LLM_INST(g_frame);
     /* Wide enough for the index and a whole 78-column printed page, which
        is what the proxy laid the sheet out to: the page half does not
        re-flow (it is already typeset), so a narrower window clips it. */
@@ -4182,7 +4384,7 @@ static void map_open(void)
     if (h > 420) h = 420;
     mcs.szClass = MAP_CLASS;
     mcs.szTitle = "Map";
-    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.hOwner  = LLM_INST(g_frame);
     /* Same free refresh the sheet windows ask for. */
     if (net_state() == NET_UP)
         send_frame(MSG_GET_SHEET, NULL, 0);
@@ -4217,7 +4419,7 @@ static void mus_open_wnd(void)
     }
     mcs.szClass = MUS_CLASS;
     mcs.szTitle = "Music";
-    mcs.hOwner  = (HINSTANCE)GetWindowWord(g_frame, GWW_HINSTANCE);
+    mcs.hOwner  = LLM_INST(g_frame);
     desk_place(DESK_MUS, &mcs, 60, 40, 250, 140);
     mcs.style   = 0;
     mcs.lParam  = 0;
@@ -4238,8 +4440,8 @@ static void do_save_pic(HWND hwnd)
     int failed = 0;
 
     if (!g_pic_mem) {
-        MessageBox(hwnd, "No picture to save yet.", APP_TITLE,
-                   MB_OK | MB_ICONINFORMATION);
+        llm_message(hwnd, "No picture to save yet.", APP_TITLE,
+                    MB_OK | MB_ICONINFORMATION);
         return;
     }
     lstrcpy(file, "PICTURE.BMP");
@@ -4264,8 +4466,8 @@ static void do_save_pic(HWND hwnd)
 
     f = _lcreat(file, 0);
     if (f == HFILE_ERROR) {
-        MessageBox(hwnd, "Couldn't create that file.", APP_TITLE,
-                   MB_OK | MB_ICONEXCLAMATION);
+        llm_message(hwnd, "Couldn't create that file.", APP_TITLE,
+                    MB_OK | MB_ICONEXCLAMATION);
         return;
     }
     if (_lwrite(f, (LPSTR)&bf, sizeof(bf)) != sizeof(bf))
@@ -4274,8 +4476,8 @@ static void do_save_pic(HWND hwnd)
         failed = 1;
     _lclose(f);
     if (failed) {
-        MessageBox(hwnd, "The save didn't finish - disk full?",
-                   APP_TITLE, MB_OK | MB_ICONEXCLAMATION);
+        llm_message(hwnd, "The save didn't finish - disk full?",
+                    APP_TITLE, MB_OK | MB_ICONEXCLAMATION);
     } else {
         char msg[176];
         wsprintf(msg, "Saved picture to %s.", (LPSTR)file);
@@ -4291,7 +4493,15 @@ static void paint_status(HWND hwnd)
     int statush = g_ch + 6;
 
     hdc = BeginPaint(hwnd, &ps);
-    GetClientRect(hwnd, &rc);
+    /* The frame, caption and menu bar first; then our own furniture
+       inside what is left. */
+    chrome_paint(hwnd, hdc);
+    frame_content(hwnd, &rc);
+    /* The class background no longer runs - the chrome claims
+       WM_ERASEBKGND, because it covers every pixel it owns - so the strip
+       behind the launcher buttons is ours to fill. WS_CLIPCHILDREN keeps
+       this off the MDI client. */
+    FillRect(hdc, &rc, GetStockObject(LTGRAY_BRUSH));
     sr = rc;
     sr.top = rc.bottom - statush;
     FillRect(hdc, &sr, GetStockObject(LTGRAY_BRUSH));
@@ -4300,12 +4510,12 @@ static void paint_status(HWND hwnd)
     LineTo(hdc, sr.right, sr.top);
     /* And the same edge under the launcher strip, so it reads as a
        toolbar rather than as buttons loose on the background. */
-    MoveTo(hdc, rc.left, launch_h() - 1);
-    LineTo(hdc, rc.right, launch_h() - 1);
+    MoveTo(hdc, rc.left, rc.top + launch_h() - 1);
+    LineTo(hdc, rc.right, rc.top + launch_h() - 1);
     SetBkMode(hdc, TRANSPARENT);
     SelectObject(hdc, GetStockObject(SYSTEM_FONT));
     SetTextColor(hdc, RGB(0, 0, 0));
-    TextOut(hdc, 4, sr.top + 3, g_status, lstrlen(g_status));
+    TextOut(hdc, (int)rc.left + 4, sr.top + 3, g_status, lstrlen(g_status));
     if (g_chrome[0]) {
         int n = lstrlen(g_chrome);
         int w = LOWORD(GetTextExtent(hdc, g_chrome, n));
@@ -4353,6 +4563,7 @@ static void save_ini(void);
 BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
                                     LONG lParam)
 {
+    LONG cres;
     int i, rows, cols, x, y, w, h;
     /* mgy clears the caption line above the buttons - the static text is
        at 6 dialog units, which is lower than it looks. */
@@ -4362,9 +4573,21 @@ BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
     char text[52];
 
     (void)lParam;
+    /* The 3.1 palette for the controls. Ahead of chrome_dialog_msg and
+       returned directly, because the answer is a brush and DWL_MSGRESULT
+       is not where the dialog manager looks for one - see chrome.h. */
+    if (LLM_IS_CTLCOLOR(msg) && chrome_ctlcolor(msg, wParam, lParam, &cres))
+        return (BOOL)cres;
+    /* The 3.1 dialog frame. A DialogProc cannot return an arbitrary
+       value, so the result goes back through DWL_MSGRESULT. */
+    if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
+        SetWindowLong(dlg, DWL_MSGRESULT, cres);
+        return TRUE;
+    }
+
     switch (msg) {
     case WM_INITDIALOG:
-        inst = (HINSTANCE)GetWindowWord(dlg, GWW_HINSTANCE);
+        inst = LLM_INST(dlg);
         SetDlgItemText(dlg, IDC_MENUTITLE, g_menu_count
             ? "Choose an action:"
             : "The proxy has not sent its menu yet. Connect, then try F1.");
@@ -4401,15 +4624,20 @@ BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
         SetWindowPos(dlg, NULL, x, y, w, h, SWP_NOZORDER);
         MoveWindow(GetDlgItem(dlg, IDCANCEL),
                    (w - 70) / 2, mgy + rows * (bh + gap) + 4, 70, bh, TRUE);
+        /* Again, and by hand: the chrome skins a dialog's buttons when
+           WM_INITDIALOG reaches it, and this one's buttons did not exist
+           yet - they are built from the proxy's menu a few lines up. */
+        chrome_controls(dlg);
         return TRUE;
 
     case WM_COMMAND:
-        if (wParam >= IDC_MENUBASE && wParam < IDC_MENUBASE + MAX_MENU) {
-            g_menu_choice = (int)(wParam - IDC_MENUBASE);
+        if (LLM_CMD_ID(wParam, lParam) >= IDC_MENUBASE
+            && LLM_CMD_ID(wParam, lParam) < IDC_MENUBASE + MAX_MENU) {
+            g_menu_choice = (int)(LLM_CMD_ID(wParam, lParam) - IDC_MENUBASE);
             EndDialog(dlg, 1);
             return TRUE;
         }
-        if (wParam == IDCANCEL) {
+        if (LLM_CMD_ID(wParam, lParam) == IDCANCEL) {
             EndDialog(dlg, 0);
             return TRUE;
         }
@@ -4424,14 +4652,27 @@ BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
 BOOL FAR PASCAL _export PicsDlgProc(HWND dlg, UINT msg, UINT wParam,
                                     LONG lParam)
 {
+    LONG cres;
     (void)lParam;
+    /* The 3.1 palette for the controls. Ahead of chrome_dialog_msg and
+       returned directly, because the answer is a brush and DWL_MSGRESULT
+       is not where the dialog manager looks for one - see chrome.h. */
+    if (LLM_IS_CTLCOLOR(msg) && chrome_ctlcolor(msg, wParam, lParam, &cres))
+        return (BOOL)cres;
+    /* The 3.1 dialog frame. A DialogProc cannot return an arbitrary
+       value, so the result goes back through DWL_MSGRESULT. */
+    if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
+        SetWindowLong(dlg, DWL_MSGRESULT, cres);
+        return TRUE;
+    }
+
     switch (msg) {
     case WM_INITDIALOG:
         CheckDlgButton(dlg, IDC_ROOMPICS, g_room_pics);
         return TRUE;
 
     case WM_COMMAND:
-        switch (wParam) {
+        switch (LLM_CMD_ID(wParam, lParam)) {
         case IDOK:
             g_room_pics = IsDlgButtonChecked(dlg, IDC_ROOMPICS) ? 1 : 0;
             save_ini();
@@ -4451,7 +4692,7 @@ BOOL FAR PASCAL _export PicsDlgProc(HWND dlg, UINT msg, UINT wParam,
    the link is up; a later connect re-sends it either way. */
 static void pics_dialog(HWND owner)
 {
-    HINSTANCE inst = (HINSTANCE)GetWindowWord(owner, GWW_HINSTANCE);
+    HINSTANCE inst = LLM_INST(owner);
     FARPROC fn = MakeProcInstance((FARPROC)PicsDlgProc, inst);
     int r = DialogBox(inst, "LLM64PICS", owner, (DLGPROC)fn);
 
@@ -4524,8 +4765,22 @@ static void conv_send_id(unsigned char type, unsigned long id)
 BOOL FAR PASCAL _export ConvDlgProc(HWND dlg, UINT msg, UINT wParam,
                                     LONG lParam)
 {
+    LONG cres;
     int i;
     char q[96];
+    UINT cmd;
+
+    /* The 3.1 palette for the controls. Ahead of chrome_dialog_msg and
+       returned directly, because the answer is a brush and DWL_MSGRESULT
+       is not where the dialog manager looks for one - see chrome.h. */
+    if (LLM_IS_CTLCOLOR(msg) && chrome_ctlcolor(msg, wParam, lParam, &cres))
+        return (BOOL)cres;
+    /* The 3.1 dialog frame. A DialogProc cannot return an arbitrary
+       value, so the result goes back through DWL_MSGRESULT. */
+    if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
+        SetWindowLong(dlg, DWL_MSGRESULT, cres);
+        return TRUE;
+    }
 
     switch (msg) {
     case WM_INITDIALOG:
@@ -4539,9 +4794,11 @@ BOOL FAR PASCAL _export ConvDlgProc(HWND dlg, UINT msg, UINT wParam,
 
     case WM_COMMAND:
         /* Double-clicking a row is Load - every 1993 file box agrees. */
-        if (wParam == IDC_CONVLIST && HIWORD(lParam) == LBN_DBLCLK)
-            wParam = IDC_CONVLOAD;
-        switch (wParam) {
+        cmd = LLM_CMD_ID(wParam, lParam);
+        if (cmd == IDC_CONVLIST
+            && LLM_CMD_NOTIFY(wParam, lParam) == LBN_DBLCLK)
+            cmd = IDC_CONVLOAD;
+        switch (cmd) {
         case IDC_CONVLOAD:
             i = conv_sel(dlg);
             if (i < 0)
@@ -4574,8 +4831,8 @@ BOOL FAR PASCAL _export ConvDlgProc(HWND dlg, UINT msg, UINT wParam,
                 return TRUE;
             wsprintf(q, "Delete \"%s\"?\n\nThis cannot be undone.",
                      (LPSTR)g_convs[i].title);
-            if (MessageBox(dlg, q, "Delete Conversation",
-                           MB_YESNO | MB_ICONQUESTION) != IDYES)
+            if (llm_message(dlg, q, "Delete Conversation",
+                            MB_YESNO | MB_ICONQUESTION) != IDYES)
                 return TRUE;
             conv_send_id(MSG_DELETE_CONVERSATION, g_convs[i].id);
             g_ack_quiet++;
@@ -4608,7 +4865,7 @@ BOOL FAR PASCAL _export ConvDlgProc(HWND dlg, UINT msg, UINT wParam,
    window's socket messages. */
 static int conv_dialog(HWND owner)
 {
-    HINSTANCE inst = (HINSTANCE)GetWindowWord(owner, GWW_HINSTANCE);
+    HINSTANCE inst = LLM_INST(owner);
     FARPROC fn;
     int r;
 
@@ -4627,10 +4884,23 @@ static int conv_dialog(HWND owner)
 BOOL FAR PASCAL _export ServerDlgProc(HWND dlg, UINT msg, UINT wParam,
                                       LONG lParam)
 {
+    LONG cres;
     char buf[64];
     unsigned port;
 
     (void)lParam;
+    /* The 3.1 palette for the controls. Ahead of chrome_dialog_msg and
+       returned directly, because the answer is a brush and DWL_MSGRESULT
+       is not where the dialog manager looks for one - see chrome.h. */
+    if (LLM_IS_CTLCOLOR(msg) && chrome_ctlcolor(msg, wParam, lParam, &cres))
+        return (BOOL)cres;
+    /* The 3.1 dialog frame. A DialogProc cannot return an arbitrary
+       value, so the result goes back through DWL_MSGRESULT. */
+    if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
+        SetWindowLong(dlg, DWL_MSGRESULT, cres);
+        return TRUE;
+    }
+
     switch (msg) {
     case WM_INITDIALOG:
         SetDlgItemText(dlg, IDC_HOST, g_host);
@@ -4639,13 +4909,13 @@ BOOL FAR PASCAL _export ServerDlgProc(HWND dlg, UINT msg, UINT wParam,
         return TRUE;
 
     case WM_COMMAND:
-        switch (wParam) {
+        switch (LLM_CMD_ID(wParam, lParam)) {
         case IDOK:
             GetDlgItemText(dlg, IDC_HOST, buf, sizeof(buf) - 1);
             port = GetDlgItemInt(dlg, IDC_PORT, NULL, FALSE);
             if (!buf[0] || port == 0) {
-                MessageBox(dlg, "A host and a port are both needed.",
-                           APP_TITLE, MB_OK | MB_ICONEXCLAMATION);
+                llm_message(dlg, "A host and a port are both needed.",
+                            APP_TITLE, MB_OK | MB_ICONEXCLAMATION);
                 return TRUE;
             }
             lstrcpyn(g_host, buf, sizeof(g_host) - 1);
@@ -4671,7 +4941,7 @@ BOOL FAR PASCAL _export ServerDlgProc(HWND dlg, UINT msg, UINT wParam,
    Settings menu and from the proxy's own "Server config" entry. */
 static void server_dialog(HWND owner)
 {
-    HINSTANCE inst = (HINSTANCE)GetWindowWord(owner, GWW_HINSTANCE);
+    HINSTANCE inst = LLM_INST(owner);
     /* MakeProcInstance is not optional in Win16: the dialog is called
        back through a thunk that reloads DS for this instance. */
     FARPROC fn = MakeProcInstance((FARPROC)ServerDlgProc, inst);
@@ -4687,6 +4957,215 @@ static void server_dialog(HWND owner)
                  (LPSTR)g_host, g_port);
         set_status(msg);
     }
+}
+
+/* ---------------------------------------------------------------- */
+/* The message box, ours                                             */
+/* ---------------------------------------------------------------- */
+
+/* MessageBox() draws the host's box, which on Windows 11 is the one
+   surface left in the program wearing 2026. This is the same box built
+   from our own template, so it goes through chrome_dialog_msg like every
+   other dialog and comes out in the 3.1 palette with 3.1 buttons.
+
+   The arguments arrive through file statics rather than a lParam,
+   because DialogBox has nowhere to put one and DialogBoxParam is not in
+   3.1. Modal, so there is never a second box in flight. */
+static LPCSTR g_msg_text;
+static LPCSTR g_msg_title;
+static UINT   g_msg_type;
+
+BOOL FAR PASCAL _export MsgDlgProc(HWND dlg, UINT msg, UINT wParam,
+                                   LONG lParam)
+{
+    LONG cres;
+
+    if (LLM_IS_CTLCOLOR(msg) && chrome_ctlcolor(msg, wParam, lParam, &cres))
+        return (BOOL)cres;
+    if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
+        SetWindowLong(dlg, DWL_MSGRESULT, cres);
+        return TRUE;
+    }
+
+    switch (msg) {
+    case WM_INITDIALOG: {
+        HWND st = GetDlgItem(dlg, IDC_MSGTEXT);
+        HWND ok = GetDlgItem(dlg, IDOK);
+        HWND cancel = GetDlgItem(dlg, IDCANCEL);
+        HDC hdc;
+        HFONT of;
+        RECT tr, sr, wr, cr, fr;
+        int two = (g_msg_type & MB_TYPEMASK) != MB_OK;
+        int grow, bw, bh, gap, w, h, x, y;
+
+        SetWindowText(dlg, g_msg_title);
+        SetDlgItemText(dlg, IDC_MSGTEXT, g_msg_text);
+        if (two) {
+            /* Yes/No relabels the same two buttons, so Escape keeps
+               working: the dialog manager sends IDCANCEL, which on a
+               Yes/No box is No. */
+            SetWindowText(ok, (g_msg_type & MB_TYPEMASK) == MB_YESNO
+                              ? "&Yes" : "OK");
+            SetWindowText(cancel, (g_msg_type & MB_TYPEMASK) == MB_YESNO
+                                  ? "&No" : "Cancel");
+        } else {
+            ShowWindow(cancel, SW_HIDE);
+        }
+
+        /* How tall the text actually is at the template's width. The
+           template height is a floor, not a promise - a long message on
+           a host with a wide dialog font needs more rows than 3.1 did,
+           and this is the bug that truncated the proxy's menu message
+           before the Menu dialog was widened by hand. */
+        GetWindowRect(st, &sr);
+        ScreenToClient(dlg, (LPPOINT)&sr);
+        ScreenToClient(dlg, (LPPOINT)&sr.right);
+        tr = sr;
+        tr.bottom = tr.top + 1;
+        hdc = GetDC(dlg);
+        of = SelectObject(hdc, (HFONT)SendMessage(st, WM_GETFONT, 0, 0L));
+        DrawText(hdc, g_msg_text, -1, &tr,
+                 DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+        SelectObject(hdc, of);
+        ReleaseDC(dlg, hdc);
+        grow = (tr.bottom - tr.top) - (sr.bottom - sr.top);
+        if (grow < 0)
+            grow = 0;
+
+        MoveWindow(st, sr.left, sr.top, sr.right - sr.left,
+                   (sr.bottom - sr.top) + grow, TRUE);
+
+        /* The buttons ride down with it, centred under the text. */
+        GetWindowRect(ok, &tr);
+        bw = (int)(tr.right - tr.left);
+        bh = (int)(tr.bottom - tr.top);
+        gap = 12;
+        GetClientRect(dlg, &cr);
+        y = (int)sr.bottom + grow + 10;
+        x = ((int)cr.right - (two ? 2 * bw + gap : bw)) / 2;
+        MoveWindow(ok, x, y, bw, bh, TRUE);
+        if (two)
+            MoveWindow(cancel, x + bw + gap, y, bw, bh, TRUE);
+
+        /* Then the box around all of it, centred on the frame. */
+        GetWindowRect(dlg, &wr);
+        w = (int)(wr.right - wr.left);
+        h = (int)(wr.bottom - wr.top) - (int)cr.bottom + y + bh + 10;
+        GetWindowRect(g_frame ? g_frame : GetDesktopWindow(), &fr);
+        x = (int)fr.left + ((int)(fr.right - fr.left) - w) / 2;
+        y = (int)fr.top + ((int)(fr.bottom - fr.top) - h) / 2;
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+        SetWindowPos(dlg, NULL, x, y, w, h, SWP_NOZORDER);
+
+        chrome_controls(dlg);
+        MessageBeep(g_msg_type & MB_ICONMASK);
+        return TRUE;
+    }
+
+    case WM_COMMAND:
+        switch (LLM_CMD_ID(wParam, lParam)) {
+        case IDOK:
+            EndDialog(dlg, IDOK);
+            return TRUE;
+        case IDCANCEL:
+            EndDialog(dlg, IDCANCEL);
+            return TRUE;
+        }
+        break;
+    }
+    return FALSE;
+}
+
+/* MessageBox's signature, MessageBox's return values, our drawing.
+   MB_OK, MB_OKCANCEL and MB_YESNO; the icon bits are accepted and used
+   only for the beep, which is the part of them 3.1 and 2026 agree on. */
+static int llm_message(HWND owner, LPCSTR text, LPCSTR title, UINT type)
+{
+    HINSTANCE inst;
+    FARPROC fn;
+    int r;
+
+    if (!owner)
+        owner = g_frame;
+    inst = LLM_INST(owner);
+    g_msg_text = text ? text : "";
+    g_msg_title = title ? title : APP_TITLE;
+    g_msg_type = type;
+    fn = MakeProcInstance((FARPROC)MsgDlgProc, inst);
+    r = (int)DialogBox(inst, "LLM64MSG", owner, (DLGPROC)fn);
+    FreeProcInstance(fn);
+    /* DialogBox answers -1 if the box could not be created at all; a
+       caller asking a yes/no question must not read that as yes. */
+    if (r != IDOK)
+        return (type & MB_TYPEMASK) == MB_YESNO ? IDNO : IDCANCEL;
+    return (type & MB_TYPEMASK) == MB_YESNO ? IDYES : IDOK;
+}
+
+/* ---------------------------------------------------------------- */
+/* About: what this program is, and who to thank for it              */
+/* ---------------------------------------------------------------- */
+
+/* Hand a web address to whatever the host opens one with. Windows 95
+   and later have a browser associated with "http:" and this works;
+   3.11 has no such association and ShellExecute just fails, so the
+   fallback says the address out loud - which is all a 1993 About box
+   could have done anyway. */
+static void open_url(HWND owner, LPCSTR url)
+{
+    char msg[160];
+
+    if (LLM_SHELL_OK(ShellExecute(owner, "open", url, NULL, NULL,
+                                  SW_SHOWNORMAL)))
+        return;
+    wsprintf(msg, "No browser is set up on this machine.\n\n"
+                  "The address is %s", (LPSTR)url);
+    llm_message(owner, msg, "About LLM64", MB_OK | MB_ICONINFORMATION);
+}
+
+BOOL FAR PASCAL _export AboutDlgProc(HWND dlg, UINT msg, UINT wParam,
+                                     LONG lParam)
+{
+    LONG cres;
+    (void)lParam;
+
+    /* The 3.1 palette for the controls, then the 3.1 dialog frame -
+       same order and same reasons as every other box here. */
+    if (LLM_IS_CTLCOLOR(msg) && chrome_ctlcolor(msg, wParam, lParam, &cres))
+        return (BOOL)cres;
+    if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
+        SetWindowLong(dlg, DWL_MSGRESULT, cres);
+        return TRUE;
+    }
+
+    switch (msg) {
+    case WM_INITDIALOG:
+        return TRUE;
+
+    case WM_COMMAND:
+        switch (LLM_CMD_ID(wParam, lParam)) {
+        case IDC_ABOUTWWW:
+            open_url(dlg, "https://foxipso.com");
+            return TRUE;
+
+        case IDOK:
+        case IDCANCEL:
+            EndDialog(dlg, 0);
+            return TRUE;
+        }
+        break;
+    }
+    return FALSE;
+}
+
+/* Help > About. */
+static void about_dialog(HWND owner)
+{
+    HINSTANCE inst = LLM_INST(owner);
+    FARPROC fn = MakeProcInstance((FARPROC)AboutDlgProc, inst);
+
+    DialogBox(inst, "LLM64ABOUT", owner, (DLGPROC)fn);
+    FreeProcInstance(fn);
 }
 
 static void new_conversation(void)
@@ -4761,7 +5240,7 @@ static HWND conv_create(HWND frame)
 
     mcs.szClass = CONV_CLASS;
     mcs.szTitle = "Conversation";
-    mcs.hOwner  = (HINSTANCE)GetWindowWord(frame, GWW_HINSTANCE);
+    mcs.hOwner  = LLM_INST(frame);
     /* A real restored size, not CW_USEDEFAULT, and created *unmaximized*
        even though it is wanted maximized. Creating it maximized with
        CW_USEDEFAULT leaves the normal rect degenerate, so the first
@@ -4777,8 +5256,8 @@ static HWND conv_create(HWND frame)
     /* Same guard as pic_open: creation-time WM_SIZEs are not the user
        arranging the desk. */
     g_in_layout = 1;
-    w = (HWND)(WORD)SendMessage(g_mdi, WM_MDICREATE, 0,
-                                (LONG)(LPMDICREATESTRUCT)&mcs);
+    w = LLM_HWND(SendMessage(g_mdi, WM_MDICREATE, 0,
+                             (LONG)(LPMDICREATESTRUCT)&mcs));
     g_in_layout = 0;
     /* Not maximized any more: the desk holds two documents now, and
        layout_default puts this one beside the picture. Maximizing is
@@ -4827,19 +5306,6 @@ static void launch_sync(void)
 #define ID_LAUNCHTIMER  1
 #define LAUNCH_TICK_MS  400
 
-/* One edge of a bevel: a thin filled rectangle, which is easier to get
-   right than a pen and a cursor. */
-static void bevel(HDC hdc, int x, int y, int cx, int cy, HBRUSH b)
-{
-    RECT r;
-
-    r.left = x;
-    r.top = y;
-    r.right = x + cx;
-    r.bottom = y + cy;
-    FillRect(hdc, &r, b);
-}
-
 /* The 50% stipple a 3.1 toolbar used for a latched button - Word 2 and
    Excel 4 both did this, and it is what makes "held down" read as a state
    rather than as a mouse still being held. A monochrome pattern brush
@@ -4864,18 +5330,18 @@ static HBRUSH stipple_brush(void)
     return g_stipple;
 }
 
-/* A button in the default Windows 3.1 style, drawn by hand because 3.1
-   has no push-like checkbox (BS_PUSHLIKE is Win32) and no
-   DrawFrameControl. That style is not one bevel line but four rings: a
-   black outer frame, a white highlight inside it on the top and left, and
-   TWO pixels of shadow on the bottom and right. Pressed, or latched
-   because its window is open, the whole arrangement inverts - which is
-   what makes it obvious across the room, and what a single-pixel toolbar
-   bevel never quite managed.
+/* A button in the Windows 3.1 style, drawn by hand because 3.1 has no
+   push-like checkbox (BS_PUSHLIKE is Win32) and no DrawFrameControl.
+   The face itself is the chrome's, so this strip and every real BUTTON
+   in the program are the same measured drawing - which they were not
+   before: this one had a one pixel highlight where a real 3.1 button has
+   two, and square corners where a real one has none.
 
-   Colours come from GetSysColor, so the strip still looks like the rest of
-   the desktop under whatever scheme is loaded (3.11 shipped a dozen, and
-   two of them are not grey at all). */
+   The 3.1 palette rather than GetSysColor, for the same reason the
+   chrome hardcodes it: COLOR_BTNFACE on a modern machine is #F0F0F0,
+   which put a 2026 grey button on a #C0C0C0 strip. The cost is that a
+   3.11 user's colour scheme no longer reaches the strip - and it never
+   reached the caption either, so the strip was the odd one out. */
 static void launch_draw(LPDRAWITEMSTRUCT di)
 {
     int idx = (int)di->CtlID - IDC_LAUNCHBASE;
@@ -4884,73 +5350,41 @@ static void launch_draw(LPDRAWITEMSTRUCT di)
     int on = idx > 0 && (launch_state() & (1u << idx)) != 0;
     int down = on || (di->itemState & ODS_SELECTED) != 0;
     RECT r = di->rcItem;
-    RECT in;
-    HBRUSH face, hi, sh, frm;
-    COLORREF facec = GetSysColor(COLOR_BTNFACE);
-    COLORREF hic = GetSysColor(COLOR_BTNHIGHLIGHT);
-    COLORREF shc = GetSysColor(COLOR_BTNSHADOW);
-    int w, h, n;
+    int n;
     char text[28];
 
-    face = CreateSolidBrush(facec);
-    hi   = CreateSolidBrush(hic);
-    sh   = CreateSolidBrush(shc);
-    frm  = CreateSolidBrush(GetSysColor(COLOR_WINDOWFRAME));
+    chrome_button_face(di->hDC, &r, down, 0);
+    if (on && !(di->itemState & ODS_SELECTED)) {
+        HBRUSH st = stipple_brush();
 
-    FillRect(di->hDC, &r, face);
-    FrameRect(di->hDC, &r, frm);            /* the black outline */
-    in = r;
-    InflateRect(&in, -1, -1);
-    w = in.right - in.left;
-    h = in.bottom - in.top;
-    if (w > 4 && h > 4) {
-        if (!down) {
-            bevel(di->hDC, in.left, in.top, w, 1, hi);           /* top */
-            bevel(di->hDC, in.left, in.top, 1, h, hi);           /* left */
-            bevel(di->hDC, in.left, in.bottom - 2, w, 2, sh);    /* under */
-            bevel(di->hDC, in.right - 2, in.top, 2, h, sh);      /* right */
-        } else {
-            /* Sunken: the shadow moves to the top and left and doubles,
-               and the face carries the toolbar stipple when the button is
-               latched rather than merely held. */
-            bevel(di->hDC, in.left, in.top, w, 2, sh);
-            bevel(di->hDC, in.left, in.top, 2, h, sh);
-            bevel(di->hDC, in.left, in.bottom - 1, w, 1, hi);
-            bevel(di->hDC, in.right - 1, in.top, 1, h, hi);
-            if (on && !(di->itemState & ODS_SELECTED)) {
-                HBRUSH st = stipple_brush();
-                if (st) {
-                    RECT fr = in;
-                    /* Inset past the bevel on every side: the bevel is
-                       the signal, the stipple only says "and it stayed
-                       that way". Face against highlight rather than
-                       shadow against highlight - at 1:1 that is a faint
-                       dither, where grey-on-white was a checkerboard
-                       loud enough to bury the bevel it sits inside. */
-                    fr.left += 3;
-                    fr.top += 3;
-                    fr.right -= 2;
-                    fr.bottom -= 2;
-                    SetTextColor(di->hDC, facec);
-                    SetBkColor(di->hDC, hic);
-                    FillRect(di->hDC, &fr, st);
-                }
-            }
+        if (st) {
+            RECT fr = r;
+
+            /* The face carries the toolbar stipple when the button is
+               latched rather than merely held. Inset past the bevel on
+               every side: the bevel is the signal, the stipple only says
+               "and it stayed that way". Face against highlight rather
+               than shadow against highlight - at 1:1 that is a faint
+               dither, where grey-on-white was a checkerboard loud enough
+               to bury the bevel it sits inside. */
+            fr.left += 4;
+            fr.top += 4;
+            fr.right -= 3;
+            fr.bottom -= 3;
+            SetTextColor(di->hDC, RGB(0xC0, 0xC0, 0xC0));
+            SetBkColor(di->hDC, RGB(0xFF, 0xFF, 0xFF));
+            FillRect(di->hDC, &fr, st);
         }
     }
-    DeleteObject(face);
-    DeleteObject(hi);
-    DeleteObject(sh);
-    DeleteObject(frm);
 
     n = GetWindowText(di->hwndItem, text, sizeof(text) - 1);
     text[n < 0 ? 0 : n] = '\0';
     SetBkMode(di->hDC, TRANSPARENT);
     SelectObject(di->hDC, g_font ? g_font : GetStockObject(SYSTEM_FONT));
-    SetTextColor(di->hDC, GetSysColor(COLOR_BTNTEXT));
+    SetTextColor(di->hDC, RGB(0x00, 0x00, 0x00));
     if (down) {                 /* the label rides the bevel down */
-        r.left += 2;
-        r.top += 2;
+        r.left += 1;
+        r.top += 1;
     }
     DrawText(di->hDC, text, -1, &r,
              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -4968,6 +5402,15 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
     TEXTMETRIC tm;
     HDC hdc;
     CLIENTCREATESTRUCT ccs;
+    LONG cres;
+
+    /* The 3.1 frame. One line, before anything else: it owns the caption,
+       the menu bar, the sizing border and the messages that go with them,
+       and returns 0 for everything else so the application still sees it.
+       WM_DRAWITEM is only claimed for ODT_MENU, which is what leaves the
+       launcher strip's owner-drawn buttons alone. */
+    if (chrome_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
 
     switch (msg) {
     case WM_CREATE:
@@ -4976,8 +5419,8 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
            with the theme, and WM_CTLCOLOR hands it out. */
         theme_apply(g_theme);
         if (!sb_init(&g_conv_view.sb)) {
-            MessageBox(hwnd, "Not enough memory for the transcript.",
-                       APP_TITLE, MB_OK | MB_ICONSTOP);
+            llm_message(hwnd, "Not enough memory for the transcript.",
+                        APP_TITLE, MB_OK | MB_ICONSTOP);
             return -1;
         }
         g_conv_view.live   = 1;
@@ -4993,18 +5436,29 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         fonts_init(hdc);
         ReleaseDC(hwnd, hdc);
 
+        /* The chrome draws the menu bar, so the resource menu is read for
+           its popups and then DETACHED - leave it attached and Windows
+           draws a second, 2026-styled bar above ours. SetMenu(NULL) only
+           detaches; the HMENU stays valid, which matters because MDI is
+           about to append the window list to one of its submenus and the
+           chrome is holding that same handle. */
+        g_menubar = GetMenu(hwnd);
+        chrome_init(hwnd, g_menubar);
+        SetMenu(hwnd, NULL);
+
         /* The MDI client owns the documents. It wants the Window menu
            by handle so it can append the child list to it, and the id
            it should start numbering those entries from. */
-        ccs.hWindowMenu  = GetSubMenu(GetMenu(hwnd), WINDOW_MENU_POS);
+        ccs.hWindowMenu  = GetSubMenu(g_menubar, WINDOW_MENU_POS);
         ccs.idFirstChild = IDM_FIRSTCHILD;
         g_mdi = CreateWindow("MDICLIENT", NULL,
                              WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
                              0, 0, 10, 10, hwnd, (HMENU)1,
-                             (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE),
+                             LLM_INST(hwnd),
                              (LPSTR)&ccs);
         if (!g_mdi)
             return -1;
+        chrome_set_mdi(g_mdi);
         launch_create(hwnd);
         /* The buttons report what is open, and a window can close without
            going through them - the system menu, Ctrl+F4, the Window menu.
@@ -5044,6 +5498,23 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         if (g_input)
             SetFocus(g_input);
         return 0;
+
+    /* The wheel goes to the FOCUSED window, which in this program is
+       almost always the input line, and DefWindowProc walks it up the
+       parent chain until something takes it - so it arrives here having
+       passed the scrollback without stopping. Hand it to the active
+       document's pane, which is what the reader meant.
+
+       Windows 10 and 11 also send it to whatever is under the pointer,
+       and PaneProc takes that one directly; this is the other half. */
+    case WM_MOUSEWHEEL: {
+        HWND c = LLM_HWND(SendMessage(g_mdi, WM_MDIGETACTIVE, 0, 0L));
+        HWND p = c ? GetDlgItem(c, ID_PANE) : NULL;
+
+        if (p)
+            return SendMessage(p, msg, wParam, lParam);
+        return 0;
+    }
 
     case WM_PAINT:
         paint_status(hwnd);
@@ -5094,6 +5565,11 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
     }
 
     case MM_MCINOTIFY:
+        /* An open we asked for asynchronously, finishing. */
+        if (g_mus_opening) {
+            mus_open_done(wParam == MCI_NOTIFY_SUCCESSFUL);
+            return 0;
+        }
         /* The tune ran out. Background music loops until told
            otherwise - the same contract the SID player has. */
         if (wParam == MCI_NOTIFY_SUCCESSFUL && g_mus_state == 1
@@ -5125,7 +5601,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         break;
 
     case WM_COMMAND:
-        switch (wParam) {
+        switch (LLM_CMD_ID(wParam, lParam)) {
         case IDM_CONNECT:    do_connect(); return 0;
         case IDM_DISCONNECT: net_disconnect();
                              set_status("Disconnected."); return 0;
@@ -5135,11 +5611,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         case IDM_CANCEL:     send_frame(MSG_CANCEL_REQUEST, NULL, 0);
                              input_enable(1); return 0;
         case IDM_ABOUT:
-            MessageBox(hwnd,
-                       "LLM64 for Windows\n\n"
-                       "A Windows 3.1 client for the LLM64 proxy.\n"
-                       "Phase 1.",
-                       "About LLM64", MB_OK | MB_ICONINFORMATION);
+            about_dialog(hwnd);
             return 0;
         case IDM_EXIT:
             PostMessage(hwnd, WM_CLOSE, 0, 0L);
@@ -5159,7 +5631,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
             return 0;
 
         case IDM_MENU: {
-            HINSTANCE inst = (HINSTANCE)GetWindowWord(hwnd, GWW_HINSTANCE);
+            HINSTANCE inst = LLM_INST(hwnd);
             FARPROC fn;
             int r;
 
@@ -5422,7 +5894,7 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
     }
 
     if (!hPrev) {
-        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.style = CHROME_CLASS_STYLE;
         wc.lpfnWndProc = FrameProc;
         wc.cbClsExtra = 0;
         wc.cbWndExtra = 0;
@@ -5517,6 +5989,10 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
         if (!RegisterClass(&wc))
             return 1;
         wc.cbWndExtra = 0;
+
+        /* And the scrollbar the pane wears instead of WS_VSCROLL. */
+        if (!chrome_scrollbar_init(hInst))
+            return 1;
     }
 
     /* WS_CLIPCHILDREN is not decoration on an MDI frame: without it the
@@ -5527,12 +6003,23 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
        non-client area happened to be invalidated. The symptom was grey
        slabs where titlebars belong, most visibly during a conversation
        load. */
-    hwnd = CreateWindow(APP_CLASS, APP_TITLE,
-                        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+    hwnd = CreateWindow(APP_CLASS, APP_TITLE, CHROME_STYLE,
                         CW_USEDEFAULT, CW_USEDEFAULT, 640, 440,
                         NULL, NULL, hInst, NULL);
     if (!hwnd)
         return 1;
+    /* One forced NC recalculation. Windows worked the client rect out at
+       creation, before the frame knew it had no non-client area, and
+       nothing recomputes it on its own - so without this the layout is a
+       frame's width out and the MDI client covers the chrome. */
+    {
+        RECT wr;
+
+        GetWindowRect(hwnd, &wr);
+        SetWindowPos(hwnd, NULL, 0, 0, wr.right - wr.left,
+                     wr.bottom - wr.top,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    }
     ShowWindow(hwnd, show);
     UpdateWindow(hwnd);
 

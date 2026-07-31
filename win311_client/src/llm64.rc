@@ -92,10 +92,20 @@ END
    because the proxy decides what is on it - so this resource holds only
    the frame and the way out. */
 LLM64ACTIONS DIALOG 20, 20, 260, 170
+/* WS_CAPTION stays, deliberately. chrome_dialog_msg answers
+   WM_NCCALCSIZE and WM_NCPAINT and should win on Windows - but it
+   cannot be verified under Wine, where the X window manager decorates
+   dialogs no matter what style they carry. Leaving the style alone
+   means that if our non-client handling ever fails to take, the host
+   still draws a caption that works rather than none at all. */
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Menu"
 BEGIN
-    LTEXT       "", IDC_MENUTITLE, 10, 6, 240, 9
+    /* Three lines, not one. The height was exactly one line of 3.1's
+       dialog font, and a static that cannot wrap simply truncates - so
+       on any host whose dialog font is wider (every modern Windows) the
+       message lost its tail: "The proxy has not sent its me". */
+    LTEXT       "", IDC_MENUTITLE, 10, 6, 240, 30
     PUSHBUTTON  "Close", IDCANCEL, 105, 150, 50, 14
 END
 
@@ -105,6 +115,12 @@ END
    key the C64 uses. The titles arrive server-rendered (a '*' prefix
    means starred), so the box holds no opinions of its own. */
 LLM64CONVS DIALOG 16, 16, 248, 152
+/* WS_CAPTION stays, deliberately. chrome_dialog_msg answers
+   WM_NCCALCSIZE and WM_NCPAINT and should win on Windows - but it
+   cannot be verified under Wine, where the X window manager decorates
+   dialogs no matter what style they carry. Leaving the style alone
+   means that if our non-client handling ever fails to take, the host
+   still draws a caption that works rather than none at all. */
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Conversations"
 BEGIN
@@ -124,6 +140,12 @@ END
    is a paid API call, and spending the player's money is the player's
    decision. */
 LLM64PICS DIALOG 24, 24, 232, 92
+/* WS_CAPTION stays, deliberately. chrome_dialog_msg answers
+   WM_NCCALCSIZE and WM_NCPAINT and should win on Windows - but it
+   cannot be verified under Wine, where the X window manager decorates
+   dialogs no matter what style they carry. Leaving the style alone
+   means that if our non-client handling ever fails to take, the host
+   still draws a caption that works rather than none at all. */
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Pictures"
 BEGIN
@@ -142,6 +164,12 @@ END
    way to change it, which is exactly the situation in a VM: retype the
    address rather than rebuild the disk it booted from. */
 LLM64SERVER DIALOG 24, 24, 186, 84
+/* WS_CAPTION stays, deliberately. chrome_dialog_msg answers
+   WM_NCCALCSIZE and WM_NCPAINT and should win on Windows - but it
+   cannot be verified under Wine, where the X window manager decorates
+   dialogs no matter what style they carry. Leaving the style alone
+   means that if our non-client handling ever fails to take, the host
+   still draws a caption that works rather than none at all. */
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Server"
 BEGIN
@@ -153,4 +181,67 @@ BEGIN
                     BS_AUTOCHECKBOX | WS_TABSTOP, 40, 46, 100, 10
     DEFPUSHBUTTON   "OK",                IDOK,      74, 64,  50, 14
     PUSHBUTTON      "Cancel",            IDCANCEL, 128, 64,  50, 14
+END
+
+/* Help > About: what this program is, who wrote it, and what it costs.
+   The same three things the C64 client says on its welcome screen, and
+   for the same reason - a shareware program has to tell you it is one,
+   and it is the only place in the program that can.
+
+   Every block is allotted at least one line more than the text needs at
+   3.1's dialog font. Dialog units scale with the font, so the widths
+   carry across to a modern host, but a wider face wraps a paragraph at
+   different words and can spill a line - the slack absorbs it. */
+LLM64ABOUT DIALOG 30, 24, 232, 190
+/* WS_CAPTION stays, deliberately - see the note on LLM64ACTIONS. */
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "About LLM64"
+BEGIN
+    /* SS_NOPREFIX throughout: '&' is a literal ampersand in prose, and
+       without it "D&D" prints as "DD" with the second D underlined. */
+    LTEXT   "LLM64 for Windows", -1, 12, 10, 208, 10, SS_NOPREFIX
+    LTEXT   "An infinite D&D-style text adventure, an AI assistant and a \
+chat client, played against a local or remote Large Language Model \
+through the LLM64 proxy.",
+            -1, 12, 24, 208, 40, SS_NOPREFIX
+    LTEXT   "(C) Foxipso 2026", -1, 12, 70, 208, 10, SS_NOPREFIX
+    LTEXT   "foxipso.com",      -1, 12, 82, 208, 10, SS_NOPREFIX
+    LTEXT   "LLM64 is donationware. If you enjoy it, please consider \
+supporting my work - the recommended donation is $10.",
+            -1, 12, 100, 208, 30, SS_NOPREFIX
+    LTEXT   "ko-fi.com/foxipso",     -1, 12, 134, 208, 10, SS_NOPREFIX
+    LTEXT   "patreon.com/c/foxipso", -1, 12, 146, 208, 10, SS_NOPREFIX
+    PUSHBUTTON      "&Visit foxipso.com", IDC_ABOUTWWW, 46, 168, 80, 14
+    DEFPUSHBUTTON   "OK",                 IDOK,        136, 168, 50, 14
+END
+
+/* The message box, ours.
+ *
+ * MessageBox() draws the host's, and on Windows 11 that is the one
+ * surface in the program still wearing 2026: a modern caption, modern
+ * buttons, a modern font and a #F0F0F0 body inside a #C0C0C0
+ * application. It is also the only dialog here that cannot be a fixed
+ * template, because the text decides how tall it is - MsgDlgProc
+ * measures the string and grows the box around it.
+ *
+ * Two buttons, always the same ids. MB_YESNO relabels them and the
+ * wrapper maps the answer back, which keeps Escape working: the dialog
+ * manager sends IDCANCEL, and on a Yes/No box that is No.
+ *
+ * No icon, deliberately. 3.1's stop sign and question mark are 32x32
+ * bitmaps we do not have and could not measure, and LoadIcon would hand
+ * back the host's - right on 3.11 and a 2026 tell everywhere else. A
+ * message box without an icon is period-plausible; a 2026 icon is not.
+ */
+/* One line tall, and no taller. MsgDlgProc measures the string and grows
+   the static, the buttons and the box to suit, so this height is a floor
+   rather than a guess - which matters because the same message needs
+   more rows on a host with a wider dialog font than 3.1 had. */
+LLM64MSG DIALOG 40, 40, 200, 50
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "LLM64"
+BEGIN
+    LTEXT           "", IDC_MSGTEXT, 12, 10, 176, 10
+    DEFPUSHBUTTON   "OK",     IDOK,      44, 30, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 106, 30, 50, 14
 END

@@ -37,7 +37,13 @@ You need a running proxy first: see
 - The transcript re-flows when you resize the window.
 - Settings > Server... changes the host and port and reconnects.
 
-Not implemented yet: in-program help (the Help menu has only About).
+- Help > About says what the program is, who wrote it, and what it costs:
+  LLM64 is donationware, and the recommended donation is $10. The button
+  on it opens [foxipso.com](https://foxipso.com) in your browser (Windows
+  95 and later; 3.11 has no browser to hand it to, so it tells you the
+  address instead).
+
+Not implemented yet: an in-program manual (the Help menu has only About).
 Accelerators such as `Ctrl+F4` do nothing under Wine, but work on real
 Windows; every one of them is also on a menu.
 

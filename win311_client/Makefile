@@ -33,10 +33,25 @@ export PATH := $(OWBIN):$(PATH)
 export INCLUDE := $(WATCOM)/h/win:$(WATCOM)/h
 export EDPATH  := $(WATCOM)/eddat
 
-SRC     := src/wire.c src/scroll.c src/net.c src/main.c
+SRC     := src/wire.c src/scroll.c src/net.c src/chrome.c src/main.c
 OBJ     := $(patsubst src/%.c,build/%.obj,$(SRC))
 EXE     := build/LLM64.EXE
 RC      := src/llm64.rc
+
+# The 32-bit PE, for Windows 10/11 and for Wine without the 16-bit
+# subsystem. Same sources, same resources: include/llmport.h is the only
+# file that knows which target it is, and it decides on __WATCOMC__.
+#
+# 32-bit rather than 64-bit on purpose - see llmport.h. WoW64 is on every
+# x64 Windows and Windows 11 on ARM emulates x86-32, so this runs
+# everywhere a 64-bit build would, with a much smaller diff.
+W32CC   := i686-w64-mingw32-gcc
+W32RC   := i686-w64-mingw32-windres
+W32OBJ  := $(patsubst src/%.c,build/w32/%.o,$(SRC))
+EXE32   := build/LLM32.EXE
+# -mwindows picks the GUI subsystem, so no console appears behind it.
+W32CFLAGS := -std=gnu89 -O2 -Wall -Iinclude -mwindows
+W32LIBS   := -lcomdlg32 -lwinmm -lws2_32 -lgdi32 -luser32 -lkernel32 -lshell32
 
 # -bt=windows  16-bit Windows target      -ml  large model (far code+data)
 # -zW          Windows API prologue        -zu  DS != SS, as callbacks need
@@ -60,18 +75,153 @@ PORT ?= 6400
 VMHOST ?= 10.0.2.2
 VMPORT ?= 6410
 
-.PHONY: all run devproxy test floppy vm-in vm-out clean
+.PHONY: all both run run32 spike spike16 mdispike mdispike16 spike-floppy run-spike devproxy test floppy vm-in vm-out clean
 
 all: $(EXE)
 
+# Both targets in one go. Use this rather than `make`: the whole point of
+# llmport.h is that the 16-bit build cannot be allowed to rot, and it
+# only stays green if you compile it every time.
+both: $(EXE) $(EXE32)
+
 build:
 	@mkdir -p build
+
+build/w32:
+	@mkdir -p build/w32
+
+build/w32/%.o: src/%.c | build/w32
+	$(W32CC) $(W32CFLAGS) -c -o $@ $<
+
+$(EXE32): $(W32OBJ) $(RC) | build/w32
+	$(W32RC) -i $(RC) -o build/w32/llm64_res.o --include-dir include
+	$(W32CC) $(W32CFLAGS) -o $@ $(W32OBJ) build/w32/llm64_res.o $(W32LIBS)
+	@echo "-> $@"
+
+run32: $(EXE32)
+	WINEPREFIX=$(WINEPREFIX) WINEDEBUG=-all wine $(EXE32) $(HOST) $(PORT)
+
+# Tier 2 spike: the 3.1 frame, drawn by us. Standalone on purpose - see
+# the header of spike/caption.c. Win32 only; there is nothing to prove on
+# the 16-bit target, where the OS already draws this correctly.
+spike: build/CAPSPIKE.EXE
+
+build/CAPSPIKE.EXE: spike/caption.c src/chrome.c | build/w32
+	$(W32CC) $(W32CFLAGS) -o $@ spike/caption.c src/chrome.c -lgdi32 -luser32
+	@echo "-> $@"
+
+run-spike: build/CAPSPIKE.EXE
+	WINEPREFIX=$(WINEPREFIX) WINEDEBUG=-all wine build/CAPSPIKE.EXE
+
+# The SAME spike source as a 16-bit NE. This is the claim that the chrome
+# is target-neutral, made checkable: if it builds and runs here, the 3.1
+# look can go on Windows 95 and 98 too, where the OS would otherwise dress
+# the app as 1995.
+spike16: build/CAPSPK16.EXE
+
+build/CAPSPK16.EXE: spike/caption.c src/chrome.c | build
+	$(OWBIN)/wcl $(CFLAGS) $(LFLAGS) -fe=$@ spike/caption.c src/chrome.c
+	@rm -f __wcl_*.lnk caption.obj chrome.obj
+	@echo "-> $@"
+
+# The controls, rendered to a BMP so they can be diffed against the real
+# 3.11 capture with no window manager or screen grabber in the way.
+#
+#   make ctlcheck
+#
+# Win32 only: chrome.c renders identically on both targets, so measuring
+# one measures both, and this one runs without a DOS emulator.
+ctlspike: build/CTLSPIKE.EXE
+
+build/CTLSPIKE.EXE: spike/ctl.c src/chrome.c | build/w32
+	$(W32CC) $(W32CFLAGS) -o $@ spike/ctl.c src/chrome.c -lgdi32 -luser32
+	@echo "-> $@"
+
+# Pillow lives in the proxy's virtualenv, which is the only one this
+# repo has; fall back to the system interpreter if it is not there.
+PY := $(shell [ -x ../llm64_proxy/.venv/bin/python ] \
+	  && echo ../llm64_proxy/.venv/bin/python || echo python3)
+
+ctlcheck: build/CTLSPIKE.EXE
+	@WINEPREFIX=$(WINEPREFIX) WINEDEBUG=-all wine build/CTLSPIKE.EXE \
+	    $$(pwd)/build/ctl.bmp
+	@$(PY) tools/ctldiff.py build/ctl.bmp
+
+# The MDI experiment: can a child give up its non-client area and keep
+# DefMDIChildProc? See the header of spike/mdi.c.
+mdispike: build/MDISPIKE.EXE
+mdispike16: build/MDISPK16.EXE
+
+build/MDISPIKE.EXE: spike/mdi.c src/chrome.c | build/w32
+	$(W32CC) $(W32CFLAGS) -o $@ spike/mdi.c src/chrome.c -lgdi32 -luser32
+	@echo "-> $@"
+
+build/MDISPK16.EXE: spike/mdi.c src/chrome.c | build
+	$(OWBIN)/wcl $(CFLAGS) $(LFLAGS) -fe=$@ spike/mdi.c src/chrome.c
+	@rm -f __wcl_*.lnk mdi.obj chrome.obj
+	@echo "-> $@"
+
+# A floppy carrying the 16-bit spike into a real 3.11 or 95 guest - and
+# the screenshots back out, since the EXE is 8 KB and the disk is 1.44 MB.
+# Only the NE build goes on it: CAPSPIKE.EXE is a 32-bit PE, which 3.11
+# cannot run at all and 95 cannot either (it imports the UCRT).
+#
+#   make spike-floppy
+#   ./tools/vmfloppy.sh in build/spike.img     (running guest)
+#   qemu ... -fda build/spike.img              (at boot)
+spike-floppy: build/CAPSPK16.EXE build/MDISPK16.EXE
+	rm -f build/spike.img
+	mformat -C -f 1440 -v SPIKE -i build/spike.img ::
+	mcopy -i build/spike.img build/CAPSPK16.EXE ::/CAPSPK16.EXE
+	mcopy -i build/spike.img build/MDISPK16.EXE ::/MDISPK16.EXE
+	printf '%s\r\n' \
+	  'Two programs. Both draw their own Windows 3.1 chrome.' \
+	  '' \
+	  'CAPSPK16.EXE   the frame: caption, menu bar, control menu.' \
+	  '               A:\CAPSPK16.EXE        normal window' \
+	  '               A:\CAPSPK16.EXE max    starts maximised' \
+	  '' \
+	  'MDISPK16.EXE   the same frame with MDI children inside it, each' \
+	  '               drawing its own caption too. This is the one that' \
+	  '               needs checking on real 3.11 - everything about it' \
+	  '               so far has only been proved under Wine, and Wine' \
+	  '               has already been wrong four times.' \
+	  '               A:\MDISPK16.EXE        two children' \
+	  '               A:\MDISPK16.EXE max    one child maximised' \
+	  '' \
+	  'What to check in MDISPK16, in order of how much it matters:' \
+	  '' \
+	  ' 1. MAXIMISE. Does the child fill the grey area with no caption,' \
+	  '    and does the FRAME caption become "LLM64 - [Picture]"?' \
+	  '    Expected gap: the maximised child sysmenu box and restore' \
+	  '    arrow should appear in the menu bar beside "Window" and will' \
+	  '    NOT - we draw that bar, so MDI cannot insert into it.' \
+	  ' 2. The Window menu should list the open children at the bottom.' \
+	  ' 3. Clicking between children: the active one navy, other white.' \
+	  ' 4. Drag a child by its caption; resize it by an edge or corner.' \
+	  ' 5. Ctrl+F4 closes a child, Ctrl+F6 moves to the next.' \
+	  '' \
+	  'Captures still wanted from a REAL 3.11 window, for measuring:' \
+	  ' - an open menu (Notepad Edit has greyed items). Every popup' \
+	  '   metric we use is guessed; none of it is measured.' \
+	  ' - an MDI app with a child maximised (Program Manager will do),' \
+	  '   to see exactly where 3.1 puts those two glyphs in the bar.' \
+	  '' \
+	  'How: PrintScreen for the screen, Alt+PrintScreen for the active' \
+	  'window. Then PBRUSH.EXE, and BEFORE pasting set Options > Image' \
+	  'Attributes to the screen size in pels or the paste is cropped.' \
+	  'Save to A: as PCX - a 1024x768 BMP is ~790 KB and only one fits.' \
+	  > build/SPIKE.TXT
+	mcopy -i build/spike.img build/SPIKE.TXT ::/README.TXT
+	@echo
+	@mdir -i build/spike.img :: | tail -4
+	@echo "-> $(CURDIR)/build/spike.img"
 
 build/%.obj: src/%.c | build
 	$(OWBIN)/wcc $(CFLAGS) -fo=$@ $<
 
 $(EXE): $(OBJ) $(RC) | build
-	$(OWBIN)/wcl $(LFLAGS) -fe=$@ $(OBJ) winsock.lib commdlg.lib mmsystem.lib
+	$(OWBIN)/wcl $(LFLAGS) -fe=$@ $(OBJ) winsock.lib commdlg.lib mmsystem.lib shell.lib
 	$(OWBIN)/wrc -q -bt=windows -i=$(WATCOM)/h/win -i=include -fo=build/llm64.res $(RC) $@
 	@rm -f __wcl_*.lnk
 
