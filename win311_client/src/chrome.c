@@ -1020,14 +1020,38 @@ static int child_is_active(HWND hwnd)
     return LLM_HWND(SendMessage(p, WM_MDIGETACTIVE, 0, 0L)) == hwnd;
 }
 
-static void child_nc(HWND hwnd)
+/* Paint the child's non-client area - and ONLY that.
+ *
+ * A window DC covers the whole window, client area included, so filling
+ * the window rect here scribbles over everything the application drew:
+ * the transcript, the picture, the music panel all go flat grey and stay
+ * that way until something happens to invalidate them. Excluding the
+ * client rect first is what makes this non-client painting rather than
+ * vandalism. The frame does not need it because the frame HAS no
+ * non-client area - its client rect is the whole window, and filling it
+ * is the intent.
+ */
+static void child_nc_active(HWND hwnd, int active)
 {
     HDC hdc = GetWindowDC(hwnd);
+    RECT wr, cr;
+    POINT o;
 
     if (!hdc)
         return;
-    chrome_child_paint(hwnd, hdc, child_is_active(hwnd));
+    GetWindowRect(hwnd, &wr);
+    GetClientRect(hwnd, &cr);
+    o.x = 0; o.y = 0;
+    ClientToScreen(hwnd, &o);
+    ExcludeClipRect(hdc, o.x - wr.left, o.y - wr.top,
+                    o.x - wr.left + cr.right, o.y - wr.top + cr.bottom);
+    chrome_child_paint(hwnd, hdc, active);
     ReleaseDC(hwnd, hdc);
+}
+
+static void child_nc(HWND hwnd)
+{
+    child_nc_active(hwnd, child_is_active(hwnd));
 }
 
 int chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
@@ -1062,9 +1086,32 @@ int chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
         return 1;
 
     case WM_NCACTIVATE:
-    case WM_MDIACTIVATE:
         child_nc(hwnd);
-        return 0;                   /* MDI still wants both */
+        return 0;                   /* MDI still wants it */
+
+    /* Take the answer from the message, do not go asking for it.
+       WM_MDIGETACTIVE still names the OLD child while this is being
+       delivered, so a child losing activation would repaint itself
+       active - and every window ends up with a navy caption at once. */
+    case WM_MDIACTIVATE:
+        child_nc_active(hwnd, LLM_MDI_ACTIVE(wParam, lParam, hwnd));
+        return 0;
+
+    /* Clicking a child's CONTENT activates it through WM_CHILDACTIVATE,
+       not WM_MDIACTIVATE - and only the winner is told, so the window
+       losing the caption never repaints and two of them look active at
+       once. Repaint every sibling instead. Sent as WM_NCPAINT rather than
+       painted directly, so a sibling that is not one of ours still does
+       whatever is right for it. */
+    case WM_CHILDACTIVATE: {
+        HWND c = GetWindow(GetParent(hwnd), GW_CHILD);
+
+        while (c) {
+            SendMessage(c, WM_NCPAINT, 1, 0L);
+            c = GetWindow(c, GW_HWNDNEXT);
+        }
+        return 0;
+    }
 
     /* Answer with the codes DefMDIChildProc already knows, and it runs
        the control menu, the minimise and the maximise itself. */
