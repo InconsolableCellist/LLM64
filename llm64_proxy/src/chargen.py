@@ -14,7 +14,9 @@ import json
 import random
 from pathlib import Path
 
-RULES_PATH = Path(__file__).resolve().parent / 'adventure_rules.json'
+from .respath import resource_dir
+
+RULES_PATH = resource_dir() / 'adventure_rules.json'
 
 
 def load_rules(path=None) -> dict:

@@ -8,6 +8,7 @@ from typing import Optional
 
 from . import printcups
 from . import printpic
+from .respath import resource_dir
 
 logger = logging.getLogger(__name__)
 
@@ -197,11 +198,11 @@ class Config:
                                    modes.get('cards_dir', './cards'))
         # Cards that ship with the proxy, so a fresh install has at least
         # one character to talk to. Lives inside the package: resolved
-        # against __file__ rather than the cwd, and carried along by the
-        # deploy, which rsyncs src/ only. cards_dir is the user's own
-        # (gitignored) folder and wins when both define the same name.
-        self.default_cards_dir = str(
-            Path(__file__).resolve().parent / 'default_cards')
+        # against the package dir (respath, so a frozen binary finds it
+        # too), and carried along by the deploy, which rsyncs src/ only.
+        # cards_dir is the user's own (gitignored) folder and wins when
+        # both define the same name.
+        self.default_cards_dir = str(resource_dir() / 'default_cards')
 
         # Gemma's recommended sampling (matches the llama-server preset):
         # temperature 1.0, top-k 64, top-p 0.95. Only keys present are sent;

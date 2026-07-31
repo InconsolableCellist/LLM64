@@ -43,8 +43,10 @@ import json
 import os
 from pathlib import Path
 
+from .respath import resource_dir
+
 VERSION = 1
-DEFAULT_PATH = Path(__file__).resolve().parent / 'sid_overrides.json'
+DEFAULT_PATH = resource_dir() / 'sid_overrides.json'
 
 # Fields a human verdict may replace on a tune record. Everything else in
 # a tune (load/init/play addresses, size, file, secs...) is measured, not
