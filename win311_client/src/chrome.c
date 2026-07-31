@@ -253,6 +253,104 @@ static const MItem SYSITEMS[] = {
 #define POPUP_PADR   20     /* space past the accelerator */
 static HMENU g_sysmenu;
 
+/* ---- converting the application's own menus to owner-draw ----------
+ *
+ * chrome_init only borrows the resource's popups; their items are still
+ * MF_STRING, so Windows draws them and every measured 3.1 metric above
+ * goes unused. MF_OWNERDRAW fixes that, but it REPLACES the item string
+ * with a pointer - so the labels have to live somewhere of ours.
+ *
+ * Somewhere is the global heap, not DGROUP: the 16-bit build has about
+ * 10 KB of DGROUP spare and menu text would spend a sixth of it.
+ *
+ * And the conversion happens on WM_INITMENUPOPUP, not once at startup,
+ * because MDI appends the open-window list to the Window menu at runtime.
+ * Convert once and those entries are the only Windows-drawn items in an
+ * otherwise 3.1 menu, which looks worse than not converting at all. */
+#define CONV_MAX   64
+#define CONV_TEXT  1536
+
+typedef struct {
+    MItem items[CONV_MAX];
+    char  text[CONV_TEXT];
+} ConvArena;
+
+static HGLOBAL    g_convmem;
+static ConvArena FAR *g_conv;
+static int        g_convn, g_convt;
+
+/* Reset before a bar menu opens - safe there because nothing is on screen
+   yet, and it bounds the arena against MDI's changing window list. */
+static void conv_reset(void)
+{
+    g_convn = 0;
+    g_convt = 0;
+}
+
+static const MItem FAR *conv_add(const char *label)
+{
+    MItem FAR *it;
+    char FAR *dst;
+    const char *src = label;
+    int n = lstrlen(label);
+
+    if (!g_conv || g_convn >= CONV_MAX || g_convt + n + 2 > CONV_TEXT)
+        return NULL;                /* full: leave the item to Windows */
+    it = &g_conv->items[g_convn++];
+    dst = g_conv->text + g_convt;
+    it->text = dst;
+    it->accel = NULL;
+    it->id = 0;
+    /* An accelerator is the tail after a tab, and it is right-aligned. */
+    while (*src && *src != '\t')
+        *dst++ = *src++;
+    *dst++ = '\0';
+    if (*src == '\t') {
+        src++;
+        it->accel = dst;
+        while (*src)
+            *dst++ = *src++;
+        *dst++ = '\0';
+    }
+    g_convt = (int)(dst - g_conv->text);
+    return it;
+}
+
+/* Turn one popup's plain items into owner-draw ones, preserving id, and
+   the checked and greyed state. Items already converted are skipped, and
+   submenus are left alone - a submenu's own WM_INITMENUPOPUP will do it
+   when it opens. */
+static void popup_convert(HMENU h)
+{
+    int i, n;
+
+    if (!g_conv)
+        return;
+    n = GetMenuItemCount(h);
+    for (i = 0; i < n; i++) {
+        UINT st = GetMenuState(h, i, MF_BYPOSITION);
+        UINT id = GetMenuItemID(h, i);
+        const MItem FAR *it;
+        char buf[80];
+
+        if (st == (UINT)-1 || (st & (MF_OWNERDRAW | MF_POPUP)))
+            continue;
+        if (st & MF_SEPARATOR) {
+            ModifyMenu(h, i, MF_BYPOSITION | MF_OWNERDRAW | MF_SEPARATOR,
+                       0, (LPCSTR)NULL);
+            continue;
+        }
+        if (!GetMenuString(h, i, buf, sizeof(buf) - 1, MF_BYPOSITION))
+            continue;
+        it = conv_add(buf);
+        if (!it)
+            continue;
+        ModifyMenu(h, i, MF_BYPOSITION | MF_OWNERDRAW
+                   | (st & (MF_CHECKED | MF_GRAYED | MF_DISABLED)),
+                   id, (LPCSTR)it);
+    }
+}
+
 /* Build a popup out of a table. MF_OWNERDRAW keeps every behaviour -
    arrow keys, mnemonics, dismissal - and hands us only the pixels. */
 static HMENU popup_from(const MItem *items, int n)
@@ -306,6 +404,17 @@ static void popup_draw(DRAWITEMSTRUCT FAR *dis)
     }
 
     fill(dis->hDC, &r, sel ? C_HILITE : C_MENU);
+    if (dis->itemState & ODS_CHECKED) {
+        /* A tick in the gutter, which is what the gutter is reserved for. */
+        int cx = r.left + 5, cy = (r.top + r.bottom) / 2;
+        COLORREF c = sel ? C_HILITETX : C_FRAME;
+
+        vline(dis->hDC, cx,     cy,     cy + 2, c);
+        vline(dis->hDC, cx + 1, cy + 1, cy + 3, c);
+        vline(dis->hDC, cx + 2, cy,     cy + 2, c);
+        vline(dis->hDC, cx + 3, cy - 2, cy + 1, c);
+        vline(dis->hDC, cx + 4, cy - 4, cy - 1, c);
+    }
     SetBkMode(dis->hDC, TRANSPARENT);
     SetTextColor(dis->hDC, dis_ ? C_GRAYTEXT
                                 : (sel ? C_HILITETX : C_FRAME));
@@ -472,6 +581,8 @@ static void menu_drop(HWND hwnd, int i)
     ReleaseDC(hwnd, hdc);
     if (i < 0 || i >= NMENUS || !g_pop[i])
         return;
+    conv_reset();
+    popup_convert(g_pop[i]);
     g_open = i;
     inval_bar(hwnd, 1);
     UpdateWindow(hwnd);
@@ -690,6 +801,12 @@ void chrome_init(HWND hwnd, HMENU bar)
        from the module. */
     square_corners(hwnd);
     g_sysmenu = popup_from(SYSITEMS, NSYSITEMS);
+    if (!g_convmem) {
+        g_convmem = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT,
+                                (DWORD)sizeof(ConvArena));
+        if (g_convmem)
+            g_conv = (ConvArena FAR *)GlobalLock(g_convmem);
+    }
     g_nmenus = 0;
     if (!bar)
         return;
@@ -819,6 +936,9 @@ int chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
     *result = 0;
     switch (msg) {
     case WM_NCCALCSIZE:
+        /* See the frame's copy: WVR_REDRAW, or a move copies stale bits. */
+        if (wParam)
+            *result = WVR_REDRAW;
         return 1;                   /* the whole window is client */
 
     /* Same reason as the frame: DefMDIChildProc does not know there is no
@@ -909,7 +1029,16 @@ int chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result)
         /* Both forms, not just wParam=TRUE. Letting DefWindowProc answer
            the FALSE one insets the rect by a frame we do not draw, the two
            answers disagree by the frame width, and the strip between them
-           belongs to nobody and never repaints. */
+           belongs to nobody and never repaints.
+
+           WVR_REDRAW on the TRUE form, not 0: 0 means "preserve the client
+           area", so Windows copies the old bits on a move and whatever it
+           does not copy is left stale - which is what notches the border
+           corners. WVR_REDRAW says redraw the lot. The rect we leave
+           untouched still defines the client area; this only changes the
+           preserve policy. */
+        if (wParam)
+            *result = WVR_REDRAW;
         return 1;
 
     case WM_NCHITTEST:
@@ -1005,6 +1134,12 @@ int chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result)
     case WM_SIZE:
         g_maxed = (wParam == SIZE_MAXIMIZED);
         return 0;               /* the app lays its children out on this */
+
+    /* Submenus, and anything the application rebuilt since it last
+       opened - MDI's window list above all. */
+    case WM_INITMENUPOPUP:
+        popup_convert((HMENU)wParam);
+        return 0;
 
     case WM_MEASUREITEM:
         popup_measure((MEASUREITEMSTRUCT FAR *)lParam);
