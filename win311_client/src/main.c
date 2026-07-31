@@ -1569,6 +1569,12 @@ static void mus_update(void)
    See mus_play_file for why an open is not simply a function call. */
 static int g_mus_opening;
 static int g_mus_pending;
+/* Closing a device mid-tune aborts its outstanding "play ... notify",
+   and MCI posts that abort as an MM_MCINOTIFY of its own. It sits in
+   the queue ahead of the next open's notification, so without this
+   flag it is read as that open failing - the "MIDI open failed" that
+   only ever appeared from the second tune on. */
+static int g_mus_stale;
 
 static void mus_mci_close(void)
 {
@@ -1579,6 +1585,8 @@ static void mus_mci_close(void)
         return;
     }
     if (g_mus_opened) {
+        if (g_mus_state)
+            g_mus_stale = 1;    /* a play notify is out; its abort is coming */
         mciSendString("close llm64mid", NULL, 0, NULL);
         g_mus_opened = 0;
     }
@@ -5565,6 +5573,14 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
     }
 
     case MM_MCINOTIFY:
+        /* The abort of a play we closed away - see g_mus_stale. It
+           precedes any notification the new open will post, so consume
+           it here or mus_open_done reads it as the open failing. */
+        if (g_mus_stale && wParam != MCI_NOTIFY_SUCCESSFUL) {
+            g_mus_stale = 0;
+            return 0;
+        }
+        g_mus_stale = 0;
         /* An open we asked for asynchronously, finishing. */
         if (g_mus_opening) {
             mus_open_done(wParam == MCI_NOTIFY_SUCCESSFUL);
