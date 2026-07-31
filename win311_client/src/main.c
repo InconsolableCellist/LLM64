@@ -2780,7 +2780,15 @@ static void frame_layout(HWND hwnd)
 long FAR PASCAL _export ConvProc(HWND hwnd, UINT msg, UINT wParam,
                                  LONG lParam)
 {
+    LONG cres;
     HINSTANCE inst;
+
+    /* The 3.1 child caption and border. chrome_child_msg declares the
+       non-client area in WM_NCCALCSIZE and paints it in WM_NCPAINT, so
+       this window's CLIENT rect is unchanged and none of the layout
+       below had to move. */
+    if (chrome_child_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
 
     switch (msg) {
     case WM_CREATE:
@@ -3009,7 +3017,15 @@ static void note_paint(HWND hwnd)
 long FAR PASCAL _export NoteProc(HWND hwnd, UINT msg, UINT wParam,
                                  LONG lParam)
 {
+    LONG cres;
     int i;
+
+    /* The 3.1 child caption and border. chrome_child_msg declares the
+       non-client area in WM_NCCALCSIZE and paints it in WM_NCPAINT, so
+       this window's CLIENT rect is unchanged and none of the layout
+       below had to move. */
+    if (chrome_child_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
 
     switch (msg) {
     case WM_CREATE:
@@ -3380,6 +3396,14 @@ static void map_paint(HWND hwnd)
 long FAR PASCAL _export MapProc(HWND hwnd, UINT msg, UINT wParam,
                                 LONG lParam)
 {
+    LONG cres;
+    /* The 3.1 child caption and border. chrome_child_msg declares the
+       non-client area in WM_NCCALCSIZE and paints it in WM_NCPAINT, so
+       this window's CLIENT rect is unchanged and none of the layout
+       below had to move. */
+    if (chrome_child_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
+
     switch (msg) {
     case WM_CREATE:
         g_map_wnd = hwnd;
@@ -3547,7 +3571,15 @@ static void pic_paint(HWND hwnd)
 long FAR PASCAL _export PicProc(HWND hwnd, UINT msg, UINT wParam,
                                 LONG lParam)
 {
+    LONG cres;
     int i;
+
+    /* The 3.1 child caption and border. chrome_child_msg declares the
+       non-client area in WM_NCCALCSIZE and paints it in WM_NCPAINT, so
+       this window's CLIENT rect is unchanged and none of the layout
+       below had to move. */
+    if (chrome_child_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
 
     switch (msg) {
     case WM_CREATE:
@@ -3742,9 +3774,17 @@ static void mus_paint(HWND hwnd)
 long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
                                 LONG lParam)
 {
+    LONG cres;
     static const char *label[3] = { "Pause", "Stop", "Next" };
     HINSTANCE inst;
     int i;
+
+    /* The 3.1 child caption and border. chrome_child_msg declares the
+       non-client area in WM_NCCALCSIZE and paints it in WM_NCPAINT, so
+       this window's CLIENT rect is unchanged and none of the layout
+       below had to move. */
+    if (chrome_child_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
 
     switch (msg) {
     case WM_CREATE:
@@ -4022,7 +4062,15 @@ done:
 long FAR PASCAL _export ChrProc(HWND hwnd, UINT msg, UINT wParam,
                                 LONG lParam)
 {
+    LONG cres;
     RECT rc;
+
+    /* The 3.1 child caption and border. chrome_child_msg declares the
+       non-client area in WM_NCCALCSIZE and paints it in WM_NCPAINT, so
+       this window's CLIENT rect is unchanged and none of the layout
+       below had to move. */
+    if (chrome_child_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
 
     switch (msg) {
     case WM_CREATE:
@@ -4103,7 +4151,15 @@ static void inv_fill(void)
 long FAR PASCAL _export InvProc(HWND hwnd, UINT msg, UINT wParam,
                                 LONG lParam)
 {
+    LONG cres;
     RECT rc;
+
+    /* The 3.1 child caption and border. chrome_child_msg declares the
+       non-client area in WM_NCCALCSIZE and paints it in WM_NCPAINT, so
+       this window's CLIENT rect is unchanged and none of the layout
+       below had to move. */
+    if (chrome_child_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
 
     switch (msg) {
     case WM_CREATE:

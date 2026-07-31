@@ -55,13 +55,10 @@ static void child_paint(HWND hwnd, HDC hdc)
                   == hwnd);
     HBRUSH w;
 
-    chrome_child_paint(hwnd, hdc, active);
-
+    /* The caption and border are non-client now, so this is just the
+       content - and the client rect is exactly it. */
     GetClientRect(hwnd, &rc);
-    r.left   = chrome_child_edge(hwnd);
-    r.right  = rc.right - r.left;
-    r.top    = chrome_child_top(hwnd);
-    r.bottom = rc.bottom - chrome_child_edge(hwnd);
+    r = rc;
     w = CreateSolidBrush(RGB(0xFF, 0xFF, 0xFF));
     FillRect(hdc, &r, w);
     DeleteObject(w);

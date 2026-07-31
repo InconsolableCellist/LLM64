@@ -909,48 +909,66 @@ void chrome_paint(HWND hwnd, HDC hdc)
 
 /* ------------------------------------------------ MDI child chrome --- */
 
-/* A child's caption is the frame's, with two differences measured off a
-   real 3.11 client: the bar glyph is 7 px wide instead of 13, and an
-   INACTIVE child caption is white rather than button grey. Its border is
-   the same 1-2-1 the frame has, and it has no corner grips. */
-static void child_btns(HWND hwnd, RECT *sys, RECT *mn, RECT *mx)
-{
-    RECT rc;
-    int f = IsZoomed(hwnd) ? 0 : FRAME;
-
-    GetClientRect(hwnd, &rc);
-    sys->left  = f;                 sys->right = f + BTN_W;
-    mx->right  = rc.right - f;      mx->left   = mx->right - BTN_W;
-    mn->right  = mx->left - 1;      mn->left   = mn->right - BTN_W;
-    sys->top = mn->top = mx->top = f;
-    sys->bottom = mn->bottom = mx->bottom = f + CAP_H;
-}
-
-int chrome_child_edge(HWND hwnd)
+/* A child keeps a REAL non-client area, unlike the frame. The frame had to
+ * give its up to be rid of the OS menu bar; a child has no menu, so it can
+ * simply declare an NC area of the size 3.1 would use and paint it in
+ * WM_NCPAINT. That is worth doing deliberately: the child's client rect
+ * then IS its content area, so not one line of the application's seven
+ * document window procedures has to move.
+ *
+ * The buttons are not handled here either. WM_NCHITTEST answers HTSYSMENU,
+ * HTMINBUTTON and HTMAXBUTTON, and DefMDIChildProc does the rest - which
+ * is how the control menu, minimise and maximise-into-frame keep behaving
+ * exactly as MDI intends.
+ */
+static int child_edge(HWND hwnd)
 {
     return IsZoomed(hwnd) ? 0 : FRAME;
 }
 
+int chrome_child_edge(HWND hwnd)
+{
+    return child_edge(hwnd);
+}
+
 int chrome_child_top(HWND hwnd)
 {
-    /* A maximised child has no caption at all - MDI hides it and the
-       glyphs move to the frame's menu bar. */
+    /* Relative to the WINDOW, for anyone laying out by hand. The client
+       rect already excludes this. */
     return IsZoomed(hwnd) ? 0 : FRAME + CAP_H + RULE;
+}
+
+/* Window-relative button rects. */
+static void child_btns(HWND hwnd, RECT *sys, RECT *mn, RECT *mx)
+{
+    RECT wr;
+    int f = child_edge(hwnd), w;
+
+    GetWindowRect(hwnd, &wr);
+    w = wr.right - wr.left;
+    sys->left  = f;             sys->right = f + BTN_W;
+    mx->right  = w - f;         mx->left   = mx->right - BTN_W;
+    mn->right  = mx->left - 1;  mn->left   = mn->right - BTN_W;
+    sys->top = mn->top = mx->top = f;
+    sys->bottom = mn->bottom = mx->bottom = f + CAP_H;
 }
 
 void chrome_child_paint(HWND hwnd, HDC hdc, int active)
 {
-    RECT rc, r, sys, mn, mx;
-    int f = chrome_child_edge(hwnd);
+    RECT wr, r, sys, mn, mx;
+    int f = child_edge(hwnd), w, h;
     char title[128];
     int n;
     HFONT of;
 
-    GetClientRect(hwnd, &rc);
     if (IsZoomed(hwnd))
-        return;                     /* nothing of ours to draw */
+        return;                 /* MDI hid the caption; the bar has it */
 
-    r = rc;
+    GetWindowRect(hwnd, &wr);
+    w = wr.right - wr.left;
+    h = wr.bottom - wr.top;
+
+    r.left = 0; r.top = 0; r.right = w; r.bottom = h;
     fill(hdc, &r, C_FACE);
     {
         HBRUSH k = CreateSolidBrush(C_FRAME);
@@ -961,19 +979,19 @@ void chrome_child_paint(HWND hwnd, HDC hdc, int active)
         DeleteObject(k);
     }
 
-    r.left = f; r.right = rc.right - f;
+    r.left = f; r.right = w - f;
     r.top = f;  r.bottom = f + CAP_H;
+    /* An INACTIVE child caption is white, where the frame's is button
+       grey. Measured; reusing the frame's colour looks almost right. */
     fill(hdc, &r, active ? C_ACTIVE : C_MENU);
-    hline(hdc, f, rc.right - f - 1, f + CAP_H, C_FRAME);
+    hline(hdc, f, w - f - 1, f + CAP_H, C_FRAME);
 
     child_btns(hwnd, &sys, &mn, &mx);
 
     n = GetWindowText(hwnd, title, sizeof(title) - 1);
     title[n < 0 ? 0 : n] = '\0';
-    r.left   = sys.right + 1;
-    r.right  = mn.left - 1;
-    r.top    = f;
-    r.bottom = f + CAP_H;
+    r.left = sys.right + 1;
+    r.right = mn.left - 1;
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, active ? C_ACTTEXT : C_INACTTEXT);
     of = SelectObject(hdc, GetStockObject(SYSTEM_FONT));
@@ -991,94 +1009,88 @@ void chrome_child_paint(HWND hwnd, HDC hdc, int active)
     vline(hdc, mx.left - 1, mx.top, mx.bottom - 1, C_FRAME);
 }
 
+/* Is this the child MDI considers active? Asked here rather than passed
+   in, so the application does not have to know. */
+static int child_is_active(HWND hwnd)
+{
+    HWND p = GetParent(hwnd);
+
+    if (!p)
+        return 0;
+    return LLM_HWND(SendMessage(p, WM_MDIGETACTIVE, 0, 0L)) == hwnd;
+}
+
+static void child_nc(HWND hwnd)
+{
+    HDC hdc = GetWindowDC(hwnd);
+
+    if (!hdc)
+        return;
+    chrome_child_paint(hwnd, hdc, child_is_active(hwnd));
+    ReleaseDC(hwnd, hdc);
+}
+
 int chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
                      LONG *result)
 {
     POINT pt;
-    RECT rc, sys, mn, mx;
-    int f;
+    RECT wr, sys, mn, mx;
+    int f, x, y, w, h;
 
     *result = 0;
     switch (msg) {
-    case WM_NCCALCSIZE:
-        /* See the frame's copy: WVR_REDRAW, or a move copies stale bits. */
+    /* Declare the non-client area 3.1 would use. Both forms: the FALSE
+       one is a bare RECT, the TRUE one an NCCALCSIZE_PARAMS whose first
+       rect is the proposed client area. */
+    case WM_NCCALCSIZE: {
+        RECT FAR *r = wParam
+                    ? &((NCCALCSIZE_PARAMS FAR *)lParam)->rgrc[0]
+                    : (RECT FAR *)lParam;
+
+        f = child_edge(hwnd);
+        r->left   += f;
+        r->right  -= f;
+        r->bottom -= f;
+        r->top    += chrome_child_top(hwnd);
         if (wParam)
-            *result = WVR_REDRAW;
-        return 1;                   /* the whole window is client */
+            *result = WVR_REDRAW;   /* or a move copies stale bits */
+        return 1;
+    }
 
-    /* Same reason as the frame: DefMDIChildProc does not know there is no
-       non-client area and paints a default frame during a drag, which
-       shows as native chrome flashing behind the window. */
     case WM_NCPAINT:
+        child_nc(hwnd);
         return 1;
 
-    case WM_ERASEBKGND:
-        *result = 1;
-        return 1;
+    case WM_NCACTIVATE:
+    case WM_MDIACTIVATE:
+        child_nc(hwnd);
+        return 0;                   /* MDI still wants both */
 
-    /* We draw the whole border every paint, but BeginPaint clips the DC to
-       the update region - and after a MOVE that region need not include
-       the corners, so the outer lines are left stale and the corner ends
-       up notched. Windows 11 does this; Wine invalidates everything and
-       hid it completely. */
-    case WM_WINDOWPOSCHANGED:
-        InvalidateRect(hwnd, NULL, TRUE);
-        return 0;
-
+    /* Answer with the codes DefMDIChildProc already knows, and it runs
+       the control menu, the minimise and the maximise itself. */
     case WM_NCHITTEST:
-        f = chrome_child_edge(hwnd);
-        pt.x = GET_X_LPARAM(lParam);
-        pt.y = GET_Y_LPARAM(lParam);
-        ScreenToClient(hwnd, &pt);
-        GetClientRect(hwnd, &rc);
-        if (f) {
-            if (pt.x < f && pt.y < f) { *result = HTTOPLEFT; return 1; }
-            if (pt.x >= rc.right - f && pt.y < f)
-                { *result = HTTOPRIGHT; return 1; }
-            if (pt.x < f && pt.y >= rc.bottom - f)
-                { *result = HTBOTTOMLEFT; return 1; }
-            if (pt.x >= rc.right - f && pt.y >= rc.bottom - f)
-                { *result = HTBOTTOMRIGHT; return 1; }
-            if (pt.x < f) { *result = HTLEFT; return 1; }
-            if (pt.x >= rc.right - f) { *result = HTRIGHT; return 1; }
-            if (pt.y < f) { *result = HTTOP; return 1; }
-            if (pt.y >= rc.bottom - f) { *result = HTBOTTOM; return 1; }
-            child_btns(hwnd, &sys, &mn, &mx);
-            if (PtInRect(&sys, pt) || PtInRect(&mn, pt) || PtInRect(&mx, pt))
-                { *result = HTCLIENT; return 1; }
-            if (pt.y < f + CAP_H) { *result = HTCAPTION; return 1; }
-        }
-        *result = HTCLIENT;
-        return 1;
-
-    case WM_LBUTTONUP:
-        pt.x = GET_X_LPARAM(lParam);
-        pt.y = GET_Y_LPARAM(lParam);
+        f = child_edge(hwnd);
+        GetWindowRect(hwnd, &wr);
+        x = GET_X_LPARAM(lParam) - wr.left;
+        y = GET_Y_LPARAM(lParam) - wr.top;
+        w = wr.right - wr.left;
+        h = wr.bottom - wr.top;
+        if (!f)
+            return 0;               /* maximised: all MDI's */
+        if (x < f && y < f)              { *result = HTTOPLEFT;     return 1; }
+        if (x >= w - f && y < f)         { *result = HTTOPRIGHT;    return 1; }
+        if (x < f && y >= h - f)         { *result = HTBOTTOMLEFT;  return 1; }
+        if (x >= w - f && y >= h - f)    { *result = HTBOTTOMRIGHT; return 1; }
+        if (x < f)      { *result = HTLEFT;   return 1; }
+        if (x >= w - f) { *result = HTRIGHT;  return 1; }
+        if (y < f)      { *result = HTTOP;    return 1; }
+        if (y >= h - f) { *result = HTBOTTOM; return 1; }
         child_btns(hwnd, &sys, &mn, &mx);
-        if (PtInRect(&mn, pt)) {
-            ShowWindow(hwnd, SW_MINIMIZE);
-            return 1;
-        }
-        if (PtInRect(&mx, pt)) {
-            /* WM_MDIMAXIMIZE, not ShowWindow: MDI has to know, or the
-               frame caption never picks up " - [Title]". */
-            SendMessage(GetParent(hwnd), WM_MDIMAXIMIZE, (UINT)hwnd, 0L);
-            return 1;
-        }
-        if (PtInRect(&sys, pt)) {
-            SendMessage(hwnd, WM_SYSCOMMAND, SC_KEYMENU, (LONG)' ');
-            return 1;
-        }
-        return 0;
-
-    case WM_LBUTTONDBLCLK:
-        pt.x = GET_X_LPARAM(lParam);
-        pt.y = GET_Y_LPARAM(lParam);
-        child_btns(hwnd, &sys, &mn, &mx);
-        if (PtInRect(&sys, pt)) {
-            SendMessage(GetParent(hwnd), WM_MDIDESTROY, (UINT)hwnd, 0L);
-            return 1;
-        }
+        pt.x = x; pt.y = y;
+        if (PtInRect(&sys, pt)) { *result = HTSYSMENU;   return 1; }
+        if (PtInRect(&mn, pt))  { *result = HTMINBUTTON; return 1; }
+        if (PtInRect(&mx, pt))  { *result = HTMAXBUTTON; return 1; }
+        if (y < f + CAP_H)      { *result = HTCAPTION;   return 1; }
         return 0;
     }
     return 0;
