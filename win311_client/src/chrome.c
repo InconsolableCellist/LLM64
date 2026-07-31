@@ -1206,12 +1206,19 @@ int chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result)
         popup_convert((HMENU)wParam);
         return 0;
 
+    /* ODT_MENU only. The application owner-draws its own controls too -
+       LLM64's launcher strip is a row of owner-drawn buttons - and
+       swallowing every WM_DRAWITEM would blank them. */
     case WM_MEASUREITEM:
+        if (((MEASUREITEMSTRUCT FAR *)lParam)->CtlType != ODT_MENU)
+            return 0;
         popup_measure((MEASUREITEMSTRUCT FAR *)lParam);
         *result = TRUE;
         return 1;
 
     case WM_DRAWITEM:
+        if (((DRAWITEMSTRUCT FAR *)lParam)->CtlType != ODT_MENU)
+            return 0;
         popup_draw((DRAWITEMSTRUCT FAR *)lParam);
         *result = TRUE;
         return 1;

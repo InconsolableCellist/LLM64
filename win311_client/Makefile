@@ -33,7 +33,7 @@ export PATH := $(OWBIN):$(PATH)
 export INCLUDE := $(WATCOM)/h/win:$(WATCOM)/h
 export EDPATH  := $(WATCOM)/eddat
 
-SRC     := src/wire.c src/scroll.c src/net.c src/main.c
+SRC     := src/wire.c src/scroll.c src/net.c src/chrome.c src/main.c
 OBJ     := $(patsubst src/%.c,build/%.obj,$(SRC))
 EXE     := build/LLM64.EXE
 RC      := src/llm64.rc

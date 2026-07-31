@@ -44,6 +44,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "llmport.h"    /* the 16-bit/32-bit seam; brings i86.h on Watcom */
+#include "chrome.h"     /* the 3.1 frame, drawn by us */
 #include "wire.h"
 #include "net.h"
 #include "scroll.h"
@@ -91,7 +92,8 @@ static View     g_conv_view;
 static View     g_paper[MAX_PAPER];
 static unsigned g_paper_seq;        /* sheets printed, for the titles */
 
-static HWND     g_frame;    /* the one top-level window */
+static HWND     g_frame;
+static HMENU    g_menubar;   /* the resource menu, detached; chrome draws it */    /* the one top-level window */
 static HWND     g_mdi;      /* MDICLIENT, between the frame and its docs */
 static HWND     g_conv;     /* the conversation document */
 static HWND     g_input;    /* the conversation's input box */
@@ -730,15 +732,21 @@ static void launch_create(HWND frame)
                                    NULL);
 }
 
+/* Defined with the frame's layout, but the launcher strip needs it
+   first: the buttons sit inside the chrome, not at the window's edge. */
+static void frame_content(HWND hwnd, RECT *r);
+
 static void launch_layout(HWND frame)
 {
     RECT rc;
-    int i, x = 4, y = 3, bh = launch_btn_h();
+    int i, x, y, bh = launch_btn_h();
 
-    GetClientRect(frame, &rc);
+    frame_content(frame, &rc);
+    x = (int)rc.left + 4;
+    y = (int)rc.top + 3;
     for (i = 0; i < LAUNCH_N; i++) {
-        if (x + g_launch_w[i] + 4 > (int)rc.right && x > 4) {
-            x = 4;
+        if (x + g_launch_w[i] + 4 > (int)rc.right && x > (int)rc.left + 4) {
+            x = (int)rc.left + 4;
             y += bh + 3;
         }
         if (g_launch[i])
@@ -2726,6 +2734,21 @@ static void layout_default(void)
 
 /* The frame gives everything except the status strip to the MDI client,
    which is what actually owns the document windows. */
+/* Where the application's own furniture goes, once the chrome has taken
+   its share off the top and the edges. Everything the frame positions or
+   paints works inside this rather than the raw client rect - which, since
+   we answer WM_NCCALCSIZE ourselves, is now the whole window. */
+static void frame_content(HWND hwnd, RECT *r)
+{
+    int e = chrome_edge(hwnd);
+
+    GetClientRect(hwnd, r);
+    r->left   += e;
+    r->right  -= e;
+    r->bottom -= e;
+    r->top     = chrome_top(hwnd);
+}
+
 static void frame_layout(HWND hwnd)
 {
     RECT rc;
@@ -2734,22 +2757,22 @@ static void frame_layout(HWND hwnd)
 
     if (!g_mdi)
         return;
-    GetClientRect(hwnd, &rc);
+    frame_content(hwnd, &rc);
     /* The strip's height depends on the width, so it has to be decided
        before the height is divided up. */
-    launch_rows_calc((int)rc.right);
-    h = rc.bottom - statush - launch_h();
+    launch_rows_calc((int)(rc.right - rc.left));
+    h = (rc.bottom - rc.top) - statush - launch_h();
     if (h < g_ch) h = g_ch;
     /* The documents get everything between the launcher strip and the
        status strip. */
-    w = (int)rc.right;
+    w = (int)(rc.right - rc.left);
     /* Resizing the workspace resizes any maximized document with it, and
        that WM_SIZE is the frame's doing, not the user's: without this
        guard one drag of the frame border made the desk "arranged" and
        every window that closed afterwards came back at its built-in
        coordinates instead of its own. */
     g_in_layout = 1;
-    MoveWindow(g_mdi, 0, launch_h(), w, h, TRUE);
+    MoveWindow(g_mdi, rc.left, rc.top + launch_h(), w, h, TRUE);
     g_in_layout = 0;
     launch_layout(hwnd);
 }
@@ -4297,7 +4320,15 @@ static void paint_status(HWND hwnd)
     int statush = g_ch + 6;
 
     hdc = BeginPaint(hwnd, &ps);
-    GetClientRect(hwnd, &rc);
+    /* The frame, caption and menu bar first; then our own furniture
+       inside what is left. */
+    chrome_paint(hwnd, hdc);
+    frame_content(hwnd, &rc);
+    /* The class background no longer runs - the chrome claims
+       WM_ERASEBKGND, because it covers every pixel it owns - so the strip
+       behind the launcher buttons is ours to fill. WS_CLIPCHILDREN keeps
+       this off the MDI client. */
+    FillRect(hdc, &rc, GetStockObject(LTGRAY_BRUSH));
     sr = rc;
     sr.top = rc.bottom - statush;
     FillRect(hdc, &sr, GetStockObject(LTGRAY_BRUSH));
@@ -4306,12 +4337,12 @@ static void paint_status(HWND hwnd)
     LineTo(hdc, sr.right, sr.top);
     /* And the same edge under the launcher strip, so it reads as a
        toolbar rather than as buttons loose on the background. */
-    MoveTo(hdc, rc.left, launch_h() - 1);
-    LineTo(hdc, rc.right, launch_h() - 1);
+    MoveTo(hdc, rc.left, rc.top + launch_h() - 1);
+    LineTo(hdc, rc.right, rc.top + launch_h() - 1);
     SetBkMode(hdc, TRANSPARENT);
     SelectObject(hdc, GetStockObject(SYSTEM_FONT));
     SetTextColor(hdc, RGB(0, 0, 0));
-    TextOut(hdc, 4, sr.top + 3, g_status, lstrlen(g_status));
+    TextOut(hdc, (int)rc.left + 4, sr.top + 3, g_status, lstrlen(g_status));
     if (g_chrome[0]) {
         int n = lstrlen(g_chrome);
         int w = LOWORD(GetTextExtent(hdc, g_chrome, n));
@@ -4978,6 +5009,15 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
     TEXTMETRIC tm;
     HDC hdc;
     CLIENTCREATESTRUCT ccs;
+    LONG cres;
+
+    /* The 3.1 frame. One line, before anything else: it owns the caption,
+       the menu bar, the sizing border and the messages that go with them,
+       and returns 0 for everything else so the application still sees it.
+       WM_DRAWITEM is only claimed for ODT_MENU, which is what leaves the
+       launcher strip's owner-drawn buttons alone. */
+    if (chrome_msg(hwnd, msg, wParam, lParam, &cres))
+        return cres;
 
     switch (msg) {
     case WM_CREATE:
@@ -5003,10 +5043,20 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         fonts_init(hdc);
         ReleaseDC(hwnd, hdc);
 
+        /* The chrome draws the menu bar, so the resource menu is read for
+           its popups and then DETACHED - leave it attached and Windows
+           draws a second, 2026-styled bar above ours. SetMenu(NULL) only
+           detaches; the HMENU stays valid, which matters because MDI is
+           about to append the window list to one of its submenus and the
+           chrome is holding that same handle. */
+        g_menubar = GetMenu(hwnd);
+        chrome_init(hwnd, g_menubar);
+        SetMenu(hwnd, NULL);
+
         /* The MDI client owns the documents. It wants the Window menu
            by handle so it can append the child list to it, and the id
            it should start numbering those entries from. */
-        ccs.hWindowMenu  = GetSubMenu(GetMenu(hwnd), WINDOW_MENU_POS);
+        ccs.hWindowMenu  = GetSubMenu(g_menubar, WINDOW_MENU_POS);
         ccs.idFirstChild = IDM_FIRSTCHILD;
         g_mdi = CreateWindow("MDICLIENT", NULL,
                              WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
@@ -5015,6 +5065,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
                              (LPSTR)&ccs);
         if (!g_mdi)
             return -1;
+        chrome_set_mdi(g_mdi);
         launch_create(hwnd);
         /* The buttons report what is open, and a window can close without
            going through them - the system menu, Ctrl+F4, the Window menu.
@@ -5432,7 +5483,7 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
     }
 
     if (!hPrev) {
-        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.style = CHROME_CLASS_STYLE;
         wc.lpfnWndProc = FrameProc;
         wc.cbClsExtra = 0;
         wc.cbWndExtra = 0;
@@ -5537,12 +5588,23 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
        non-client area happened to be invalidated. The symptom was grey
        slabs where titlebars belong, most visibly during a conversation
        load. */
-    hwnd = CreateWindow(APP_CLASS, APP_TITLE,
-                        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+    hwnd = CreateWindow(APP_CLASS, APP_TITLE, CHROME_STYLE,
                         CW_USEDEFAULT, CW_USEDEFAULT, 640, 440,
                         NULL, NULL, hInst, NULL);
     if (!hwnd)
         return 1;
+    /* One forced NC recalculation. Windows worked the client rect out at
+       creation, before the frame knew it had no non-client area, and
+       nothing recomputes it on its own - so without this the layout is a
+       frame's width out and the MDI client covers the chrome. */
+    {
+        RECT wr;
+
+        GetWindowRect(hwnd, &wr);
+        SetWindowPos(hwnd, NULL, 0, 0, wr.right - wr.left,
+                     wr.bottom - wr.top,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    }
     ShowWindow(hwnd, show);
     UpdateWindow(hwnd);
 
