@@ -1275,6 +1275,13 @@ def main():
                     # point of counting only the stages that still apply.
                     # Race and class now gate on a "(Y/n)" confirm that
                     # shows the blurb (it is off the list); answer 'y'.
+                    # The gear stage is a SHOP, not one answer, since the
+                    # kit-shop rework: a single number opens that shelf,
+                    # 'b' walks back to the shelves, 'd' brings up the
+                    # approve screen and 'y' commits the kit. This is the
+                    # same walk tests/test_advsetup.py's gear() helper
+                    # drives; the old one-'1'-and-done line predates the
+                    # shop and left the run staring at the Weapons shelf.
                     script = [
                         ('a drowned temple city', 'step 2 of 10'),
                         ('grim and wet',          'step 3 of 10'),
@@ -1284,7 +1291,17 @@ def main():
                         ('Wanderer',              'be a wanderer'),
                         ('y',                     'step 6 of 9'),
                         ('1 2',                   'step 7 of 9'),
-                        ('1',                     'step 8 of 9'),
+                        ('1',                     'page 1'),
+                        # '2 of 10', not 'of 10': the bare form is
+                        # already on the shelf header BEFORE the toggle,
+                        # so the wait passes on the stale screen and the
+                        # next keystroke's CR lands while the redraw is
+                        # still streaming - and is eaten. The spent
+                        # figure only changes when the toggle landed.
+                        ('1',                     '2 of 10 points'),
+                        ('b',                     'open a shelf'),
+                        ('d',                     'my kit'),
+                        ('y',                     'step 8 of 9'),
                         ('Bruni Ashvein',         'step 9 of 9'),
                     ]
                     for answer, expect in script:

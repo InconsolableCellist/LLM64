@@ -7,12 +7,29 @@ VICE_RUN ?= ./emu/vice-run.sh
 # Test proxy port: distinct from 6400 so a live proxy can keep running
 TESTPORT ?= 6464
 
-.PHONY: all client client-direct test-emu test-emu-hayes run-live clean
+.PHONY: all client client-direct test-emu test-emu-hayes run-live clean \
+        win proxy-bin release
 
 all: client
 
 client:
 	$(MAKE) -C c64_client
+
+# Both Windows client binaries: LLM64.EXE (16-bit) and LLM32.EXE.
+win:
+	$(MAKE) -C win311_client both
+
+# The packaged Linux proxy (PyInstaller): dist/llm64-proxy. Needs the
+# one-time .venv-build from llm64_proxy/PACKAGING.md. The Windows
+# llm64-proxy.exe CANNOT be built here - PyInstaller does not
+# cross-compile, so that one is built on a Windows box with the same
+# spec (PACKAGING.md, "Build on Windows").
+proxy-bin:
+	cd llm64_proxy && .venv-build/bin/pyinstaller llm64.spec --noconfirm
+
+# Everything shippable that THIS machine can produce: the C64 disk,
+# both Windows client EXEs, and the Linux proxy binary.
+release: all win proxy-bin
 
 # TUI builds
 client-tui-direct:
