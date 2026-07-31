@@ -150,7 +150,9 @@ preset is used.
 ```
 
 It listens on TCP **6400** by default, on all interfaces. Open the port if you
-run a firewall: `sudo ufw allow 6400/tcp`.
+run a firewall: `sudo ufw allow 6400/tcp`. On Windows the first start pops
+the Windows Firewall prompt instead -- allow it, at least on private
+networks.
 
 The [standalone binary](#standalone-binary-no-python) has no `run.sh`:
 the Start button in its window is the same thing, and `[server]`
@@ -163,6 +165,13 @@ Check that the connection opens and stays open:
 ```bash
 ss -ltn | grep 6400          # listening?
 nc <proxy-host> 6400         # reachable from elsewhere on the LAN?
+```
+
+or, when the proxy runs on Windows:
+
+```powershell
+netstat -an | findstr 6400                    # listening?
+Test-NetConnection <proxy-host> -Port 6400    # reachable from elsewhere?
 ```
 
 ## Optional features
@@ -491,11 +500,14 @@ llm64_proxy/
 **Port already in use:**
 ```bash
 # Check what's using port 6400
-sudo lsof -i :6400
+sudo lsof -i :6400              # Windows: netstat -ano | findstr 6400
 
 # Use a different port
 python -m src.main --port 6401
 ```
+
+The standalone binary takes the port from `[server] port` in
+config.toml instead (or `--port` with `--headless`).
 
 **API key not set:**
 ```bash
@@ -505,10 +517,11 @@ export OPENAI_API_KEY=sk-your-key-here
 **Can't connect from a client:**
 ```bash
 # Check if server is listening - and on 0.0.0.0, not loopback
-ss -ltn | grep 6400
+ss -ltn | grep 6400             # Windows: netstat -an | findstr 6400
 
 # Check firewall
-sudo ufw allow 6400/tcp
+sudo ufw allow 6400/tcp         # Windows: re-answer the firewall prompt in
+                                # Settings > Windows Security > Firewall
 ```
 
 Then check it from the client's own network, not from this host: a VPN or

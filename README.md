@@ -69,9 +69,9 @@ Join my Discord for support/updates, and/or my X/Twitter:
 ┌─────────────────┐  TCP over
 │  C64 / VICE /   │  a SwiftLink ACIA ┐
 │  C64 Ultimate   │  (9600-38400 bd)  │   ┌──────────────┐         ┌──────────────────┐
-└─────────────────┘                   ├──►│ Linux proxy  │  HTTPS  │ OpenAI-compatible│
-┌─────────────────┐                   │   │  (Python,    │ ◄─────► │ API (llama.cpp,  │
-│ Windows 3.1-98, │  TCP over         │   │   asyncio)   │   SSE   │ OpenAI, Ollama…) │
+└─────────────────┘                   ├──►│ LLM64 proxy  │  HTTPS  │ OpenAI-compatible│
+┌─────────────────┐                   │   │  (Linux or   │ ◄─────► │ API (llama.cpp,  │
+│ Windows 3.1-98, │  TCP over         │   │   Windows)   │   SSE   │ OpenAI, Ollama…) │
 │ 10 or 11 PC     │  Winsock 1.1/2   ─┘   └──────────────┘         └──────────────────┘
 └─────────────────┘
 ```
@@ -79,7 +79,7 @@ Join my Discord for support/updates, and/or my X/Twitter:
 
 ## Using it
 
-Start the proxy first ([installation](#installation)), then
+Start the proxy first ([installation](llm64_proxy/README.md#installation)), then
 configure the client.
 
 **On a C64**, launch the program by mounting the disk image or real disk
