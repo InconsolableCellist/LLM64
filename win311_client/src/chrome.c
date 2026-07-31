@@ -261,6 +261,24 @@ static const MItem SYSITEMS[] = {
 };
 #define NSYSITEMS ((int)(sizeof(SYSITEMS) / sizeof(SYSITEMS[0])))
 
+/* An MDI child's control menu, which is the frame's plus Next and with
+   3.1's accelerators on it. Left to DefMDIChildProc this opens the
+   HOST's system menu - on Windows 11 a rounded, shadowed, icon-bearing
+   context menu hanging off a 1993 window, and the most conspicuous thing
+   left in the program. */
+static const MItem CHILDITEMS[] = {
+    { "&Restore",   NULL,       SC_RESTORE    },
+    { "&Move",      NULL,       SC_MOVE       },
+    { "&Size",      NULL,       SC_SIZE       },
+    { "Mi&nimize",  NULL,       SC_MINIMIZE   },
+    { "Ma&ximize",  NULL,       SC_MAXIMIZE   },
+    { NULL,         NULL,       0             },
+    { "&Close",     "Ctrl+F4",  SC_CLOSE      },
+    { NULL,         NULL,       0             },
+    { "Ne&xt",      "Ctrl+F6",  SC_NEXTWINDOW },
+};
+#define NCHILDITEMS ((int)(sizeof(CHILDITEMS) / sizeof(CHILDITEMS[0])))
+
 
 /* Measured off a real 3.11 popup (the client's own Window menu, open, with
    a checkmark and accelerators in it) rather than guessed at, which is
@@ -554,6 +572,38 @@ static void sysmenu_drop(HWND hwnd)
     ClientToScreen(hwnd, &p);
     TrackPopupMenu(g_sysmenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON,
                    p.x, p.y, 0, hwnd, NULL);
+}
+
+/* The same for an MDI child, at a point already in screen coordinates -
+   because it is opened from two places: the child's own sysmenu box, and
+   the glyph a MAXIMISED child puts at the left of the frame's menu bar.
+   The owner is the CHILD, so the WM_COMMAND comes back to its window
+   procedure, where chrome_child_msg turns it into WM_SYSCOMMAND and
+   DefMDIChildProc does the work it always did. */
+static HMENU g_childmenu;
+
+static void child_sysmenu_drop(HWND child, int x, int y)
+{
+    int zoom = IsZoomed(child);
+    int icon = IsIconic(child);
+
+    if (!g_childmenu)
+        g_childmenu = popup_from(CHILDITEMS, NCHILDITEMS);
+    if (!g_childmenu)
+        return;
+    EnableMenuItem(g_childmenu, SC_RESTORE,
+                   MF_BYCOMMAND | ((zoom || icon) ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(g_childmenu, SC_MAXIMIZE,
+                   MF_BYCOMMAND | (zoom ? MF_GRAYED : MF_ENABLED));
+    EnableMenuItem(g_childmenu, SC_MINIMIZE,
+                   MF_BYCOMMAND | (icon ? MF_GRAYED : MF_ENABLED));
+    EnableMenuItem(g_childmenu, SC_SIZE,
+                   MF_BYCOMMAND | ((zoom || icon) ? MF_GRAYED : MF_ENABLED));
+    EnableMenuItem(g_childmenu, SC_MOVE,
+                   MF_BYCOMMAND | (zoom ? MF_GRAYED : MF_ENABLED));
+    TrackPopupMenu(g_childmenu,
+                   TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON,
+                   x, y, 0, child, NULL);
 }
 
 /* Item rects along the bar, laid end to end from x=1 with MENU_PAD each
@@ -1183,7 +1233,61 @@ int chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
             child_nc(hwnd);         /* show it depressed */
             return 1;
         }
+        /* And the control menu, or DefMDIChildProc opens the host's.
+           Through the same capture as the buttons, because the popup
+           has to open on the RELEASE: TrackPopupMenu called while the
+           button is still physically down sees the release that follows
+           and dismisses itself, which is the bug that made the menu bar
+           flash and vanish on real 3.11. */
+        if (wParam == HTSYSMENU) {
+            g_cdown_wnd = hwnd;
+            g_cdown_hit = (int)wParam;
+            SetCapture(hwnd);
+            return 1;
+        }
         return 0;                   /* HTCAPTION and the edges are MDI's */
+
+    /* Double-clicking the control box closes the window - 3.1, and every
+       Windows since. DefMDIChildProc would have done this, but it only
+       ever sees the box's clicks now. */
+    case WM_NCLBUTTONDBLCLK:
+        if (wParam == HTSYSMENU) {
+            PostMessage(hwnd, WM_SYSCOMMAND, SC_CLOSE, 0L);
+            return 1;
+        }
+        return 0;
+
+    /* The control menu is OURS, so the child is its owner window and
+       the owner-draw messages come here rather than to the frame.
+       Without these every item measures zero and the popup opens as a
+       window with nothing in it - which looks exactly like a menu that
+       failed to open at all. ODT_MENU only: the document windows own
+       -draw their own controls too. */
+    case WM_MEASUREITEM:
+        if (((MEASUREITEMSTRUCT FAR *)lParam)->CtlType != ODT_MENU)
+            return 0;
+        popup_measure((MEASUREITEMSTRUCT FAR *)lParam);
+        *result = TRUE;
+        return 1;
+
+    case WM_DRAWITEM:
+        if (((DRAWITEMSTRUCT FAR *)lParam)->CtlType != ODT_MENU)
+            return 0;
+        popup_draw((DRAWITEMSTRUCT FAR *)lParam);
+        *result = TRUE;
+        return 1;
+
+    /* Our control menu is a popup we own, so its items arrive as
+       WM_COMMAND rather than WM_SYSCOMMAND. Only the system range is
+       taken: a document window's own controls are numbered far below
+       0xF000 and still reach its switch. */
+    case WM_COMMAND:
+        if ((LLM_CMD_ID(wParam, lParam) & 0xFFF0) >= 0xF000) {
+            PostMessage(hwnd, WM_SYSCOMMAND,
+                        LLM_CMD_ID(wParam, lParam) & 0xFFF0, 0L);
+            return 1;
+        }
+        return 0;
 
     case WM_LBUTTONUP:
         if (g_cdown_wnd == hwnd) {
@@ -1202,7 +1306,14 @@ int chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
             ClientToScreen(hwnd, &sp);
             if (SendMessage(hwnd, WM_NCHITTEST, 0,
                             MAKELONG(sp.x, sp.y)) == was) {
-                if (was == HTMINBUTTON)
+                if (was == HTSYSMENU) {
+                    RECT sys, mn, mx, wr;
+
+                    child_btns(hwnd, &sys, &mn, &mx);
+                    GetWindowRect(hwnd, &wr);
+                    child_sysmenu_drop(hwnd, (int)wr.left + sys.left,
+                                       (int)wr.top + sys.bottom + 1);
+                } else if (was == HTMINBUTTON)
                     ShowWindow(hwnd, SW_MINIMIZE);
                 else
                     /* WM_MDIMAXIMIZE, not ShowWindow: MDI has to know, or
@@ -1865,8 +1976,9 @@ int chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result)
        documented range for system commands; an application's own menu ids
        are far below it. */
     case WM_COMMAND:
-        if ((wParam & 0xFFF0) >= 0xF000) {
-            PostMessage(hwnd, WM_SYSCOMMAND, wParam & 0xFFF0, 0L);
+        if ((LLM_CMD_ID(wParam, lParam) & 0xFFF0) >= 0xF000) {
+            PostMessage(hwnd, WM_SYSCOMMAND,
+                        LLM_CMD_ID(wParam, lParam) & 0xFFF0, 0L);
             return 1;
         }
         return 0;
@@ -1970,7 +2082,15 @@ int chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result)
                     return 1;
                 }
                 if (PtInRect(&sys, pt)) {
-                    SendMessage(mc, WM_SYSCOMMAND, SC_KEYMENU, (LONG)' ');
+                    /* Our control menu, not SC_KEYMENU: that asks the
+                       host to open the child's system menu, and the host
+                       draws it. Same popup the child's own box opens. */
+                    POINT sp;
+
+                    sp.x = sys.left;
+                    sp.y = sys.bottom + 1;
+                    ClientToScreen(hwnd, &sp);
+                    child_sysmenu_drop(mc, sp.x, sp.y);
                     return 1;
                 }
             }
