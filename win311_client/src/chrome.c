@@ -1085,9 +1085,24 @@ int chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
         child_nc(hwnd);
         return 1;
 
+    /* Setting the title is the other route to a default caption being
+       painted - the picture window renames itself as images arrive. Let
+       the text change happen, then repaint over whatever drew itself. */
+    case WM_SETTEXT:
+        PostMessage(hwnd, WM_NCPAINT, 1, 0L);
+        return 0;
+
+    /* Paint ours and CLAIM it. Returning 0 here lets DefMDIChildProc
+       paint the standard caption straight afterwards, and wherever ours
+       does not cover it the OS one shows through - which on Windows 11 is
+       Aero peeking out around the edges every time the window is clicked
+       away from and back to. TRUE means "activation handled, do not
+       draw"; the MDI bookkeeping is WM_MDIACTIVATE's job, not this
+       message's. */
     case WM_NCACTIVATE:
         child_nc(hwnd);
-        return 0;                   /* MDI still wants it */
+        *result = TRUE;
+        return 1;
 
     /* Take the answer from the message, do not go asking for it.
        WM_MDIGETACTIVE still names the OLD child while this is being
@@ -1095,6 +1110,10 @@ int chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
        active - and every window ends up with a navy caption at once. */
     case WM_MDIACTIVATE:
         child_nc_active(hwnd, LLM_MDI_ACTIVE(wParam, lParam, hwnd));
+        /* DefMDIChildProc has real work to do on this one, so it has to
+           see it - and it may repaint the frame while doing so. Queue our
+           own repaint behind it rather than trying to paint first. */
+        PostMessage(hwnd, WM_NCPAINT, 1, 0L);
         return 0;
 
     /* Clicking a child's CONTENT activates it through WM_CHILDACTIVATE,
