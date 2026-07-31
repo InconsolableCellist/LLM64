@@ -92,6 +92,12 @@ END
    because the proxy decides what is on it - so this resource holds only
    the frame and the way out. */
 LLM64ACTIONS DIALOG 20, 20, 260, 170
+/* WS_CAPTION stays, deliberately. chrome_dialog_msg answers
+   WM_NCCALCSIZE and WM_NCPAINT and should win on Windows - but it
+   cannot be verified under Wine, where the X window manager decorates
+   dialogs no matter what style they carry. Leaving the style alone
+   means that if our non-client handling ever fails to take, the host
+   still draws a caption that works rather than none at all. */
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Menu"
 BEGIN
@@ -109,6 +115,12 @@ END
    key the C64 uses. The titles arrive server-rendered (a '*' prefix
    means starred), so the box holds no opinions of its own. */
 LLM64CONVS DIALOG 16, 16, 248, 152
+/* WS_CAPTION stays, deliberately. chrome_dialog_msg answers
+   WM_NCCALCSIZE and WM_NCPAINT and should win on Windows - but it
+   cannot be verified under Wine, where the X window manager decorates
+   dialogs no matter what style they carry. Leaving the style alone
+   means that if our non-client handling ever fails to take, the host
+   still draws a caption that works rather than none at all. */
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Conversations"
 BEGIN
@@ -128,6 +140,12 @@ END
    is a paid API call, and spending the player's money is the player's
    decision. */
 LLM64PICS DIALOG 24, 24, 232, 92
+/* WS_CAPTION stays, deliberately. chrome_dialog_msg answers
+   WM_NCCALCSIZE and WM_NCPAINT and should win on Windows - but it
+   cannot be verified under Wine, where the X window manager decorates
+   dialogs no matter what style they carry. Leaving the style alone
+   means that if our non-client handling ever fails to take, the host
+   still draws a caption that works rather than none at all. */
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Pictures"
 BEGIN
@@ -146,6 +164,12 @@ END
    way to change it, which is exactly the situation in a VM: retype the
    address rather than rebuild the disk it booted from. */
 LLM64SERVER DIALOG 24, 24, 186, 84
+/* WS_CAPTION stays, deliberately. chrome_dialog_msg answers
+   WM_NCCALCSIZE and WM_NCPAINT and should win on Windows - but it
+   cannot be verified under Wine, where the X window manager decorates
+   dialogs no matter what style they carry. Leaving the style alone
+   means that if our non-client handling ever fails to take, the host
+   still draws a caption that works rather than none at all. */
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Server"
 BEGIN

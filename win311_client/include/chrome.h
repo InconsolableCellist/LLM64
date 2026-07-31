@@ -103,4 +103,27 @@ void chrome_child_paint(HWND hwnd, HDC hdc, int active);
 int  chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
                       LONG *result);
 
+/* ---- dialogs ------------------------------------------------------ */
+
+/* Same idea again for a modal dialog, whose caption is otherwise the last
+ * 2026-styled surface in the program. A DialogProc cannot return an
+ * arbitrary value, so the result goes through DWL_MSGRESULT:
+ *
+ *     LONG r;
+ *     if (chrome_dialog_msg(dlg, msg, wParam, lParam, &r)) {
+ *         SetWindowLong(dlg, DWL_MSGRESULT, r);
+ *         return TRUE;
+ *     }
+ *
+ * The client rect is left exactly as the resource template expects, so
+ * no dialog layout has to change.
+ *
+ * NOTE: unlike the caption and the menu bar, these metrics are inherited
+ * from the frame rather than measured - there is no 3.11 capture of a
+ * dialog to diff against yet.
+ */
+void chrome_dialog_paint(HWND dlg, HDC hdc, int active);
+int  chrome_dialog_msg(HWND dlg, UINT msg, UINT wParam, LONG lParam,
+                       LONG *result);
+
 #endif /* CHROME_H */

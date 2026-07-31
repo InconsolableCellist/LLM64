@@ -1178,6 +1178,150 @@ int chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
     return 0;
 }
 
+/* ---------------------------------------------------- dialog chrome --- */
+
+/* A dialog is a top-level window with a caption and no menu, so it takes
+ * the child's approach: declare the non-client area, paint it, and leave
+ * the client rect alone so the resource template's controls land exactly
+ * where they were laid out.
+ *
+ * 3.1 dialogs have a sysmenu box and nothing else on the caption - no
+ * minimise, no maximise - and a fixed border with no resize grips, since
+ * a modal frame does not size.
+ *
+ * These metrics are the frame's, reused. Unlike the caption and the menu
+ * bar there is no 3.11 capture of a DIALOG to measure against, so the
+ * caption height, the border and the glyph width are inherited rather
+ * than verified. Worth a reference shot before trusting them the way the
+ * rest of this file can be trusted.
+ */
+static void dlg_sysbox(HWND dlg, RECT *sys)
+{
+    RECT wr;
+
+    GetWindowRect(dlg, &wr);
+    (void)wr;
+    sys->left   = FRAME;
+    sys->right  = FRAME + BTN_W;
+    sys->top    = FRAME;
+    sys->bottom = FRAME + CAP_H;
+}
+
+void chrome_dialog_paint(HWND dlg, HDC hdc, int active)
+{
+    RECT wr, r, sys;
+    int w, h, n;
+    char title[128];
+    HFONT of;
+
+    GetWindowRect(dlg, &wr);
+    w = wr.right - wr.left;
+    h = wr.bottom - wr.top;
+
+    r.left = 0; r.top = 0; r.right = w; r.bottom = h;
+    fill(hdc, &r, C_FACE);
+    {
+        HBRUSH k = CreateSolidBrush(C_FRAME);
+
+        FrameRect(hdc, &r, k);
+        InflateRect(&r, -(FRAME - 1), -(FRAME - 1));
+        FrameRect(hdc, &r, k);
+        DeleteObject(k);
+    }
+
+    r.left = FRAME; r.right = w - FRAME;
+    r.top = FRAME;  r.bottom = FRAME + CAP_H;
+    fill(hdc, &r, active ? C_ACTIVE : C_INACTIVE);
+    hline(hdc, FRAME, w - FRAME - 1, FRAME + CAP_H, C_FRAME);
+
+    dlg_sysbox(dlg, &sys);
+    n = GetWindowText(dlg, title, sizeof(title) - 1);
+    title[n < 0 ? 0 : n] = '\0';
+    r.left = sys.right + 1;
+    r.right = w - FRAME;
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, active ? C_ACTTEXT : C_INACTTEXT);
+    of = SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+    DrawText(hdc, title, -1, &r,
+             DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    SelectObject(hdc, of);
+
+    sysmenu_box(hdc, &sys, BAR_FRAME);
+    vline(hdc, sys.right, sys.top, sys.bottom - 1, C_FRAME);
+}
+
+static void dlg_nc(HWND dlg, int active)
+{
+    HDC hdc = GetWindowDC(dlg);
+    RECT wr, cr;
+    POINT o;
+
+    if (!hdc)
+        return;
+    GetWindowRect(dlg, &wr);
+    GetClientRect(dlg, &cr);
+    o.x = 0; o.y = 0;
+    ClientToScreen(dlg, &o);
+    /* Exclude the client area, or this paints over every control the
+       template put there. */
+    ExcludeClipRect(hdc, o.x - wr.left, o.y - wr.top,
+                    o.x - wr.left + cr.right, o.y - wr.top + cr.bottom);
+    chrome_dialog_paint(dlg, hdc, active);
+    ReleaseDC(dlg, hdc);
+}
+
+int chrome_dialog_msg(HWND dlg, UINT msg, UINT wParam, LONG lParam,
+                      LONG *result)
+{
+    RECT wr;
+    int x, y, w;
+    POINT pt;
+    RECT sys;
+
+    *result = 0;
+    switch (msg) {
+    case WM_NCCALCSIZE: {
+        RECT FAR *r = wParam
+                    ? &((NCCALCSIZE_PARAMS FAR *)lParam)->rgrc[0]
+                    : (RECT FAR *)lParam;
+
+        r->left   += FRAME;
+        r->right  -= FRAME;
+        r->bottom -= FRAME;
+        r->top    += FRAME + CAP_H + RULE;
+        if (wParam)
+            *result = WVR_REDRAW;
+        return 1;
+    }
+
+    case WM_NCPAINT:
+        dlg_nc(dlg, GetActiveWindow() == dlg);
+        return 1;
+
+    case WM_NCACTIVATE:
+        dlg_nc(dlg, wParam != 0);
+        *result = TRUE;
+        return 1;
+
+    case WM_SETTEXT:
+        PostMessage(dlg, WM_NCPAINT, 1, 0L);
+        return 0;
+
+    case WM_NCHITTEST:
+        GetWindowRect(dlg, &wr);
+        x = GET_X_LPARAM(lParam) - wr.left;
+        y = GET_Y_LPARAM(lParam) - wr.top;
+        w = wr.right - wr.left;
+        (void)w;
+        dlg_sysbox(dlg, &sys);
+        pt.x = x; pt.y = y;
+        if (PtInRect(&sys, pt)) { *result = HTSYSMENU; return 1; }
+        if (y < FRAME + CAP_H)  { *result = HTCAPTION; return 1; }
+        return 0;
+    }
+    return 0;
+}
+
 int chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result)
 {
     POINT pt;

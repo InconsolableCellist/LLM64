@@ -4446,6 +4446,7 @@ static void save_ini(void);
 BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
                                     LONG lParam)
 {
+    LONG cres;
     int i, rows, cols, x, y, w, h;
     /* mgy clears the caption line above the buttons - the static text is
        at 6 dialog units, which is lower than it looks. */
@@ -4455,6 +4456,13 @@ BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
     char text[52];
 
     (void)lParam;
+    /* The 3.1 dialog frame. A DialogProc cannot return an arbitrary
+       value, so the result goes back through DWL_MSGRESULT. */
+    if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
+        SetWindowLong(dlg, DWL_MSGRESULT, cres);
+        return TRUE;
+    }
+
     switch (msg) {
     case WM_INITDIALOG:
         inst = LLM_INST(dlg);
@@ -4518,7 +4526,15 @@ BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
 BOOL FAR PASCAL _export PicsDlgProc(HWND dlg, UINT msg, UINT wParam,
                                     LONG lParam)
 {
+    LONG cres;
     (void)lParam;
+    /* The 3.1 dialog frame. A DialogProc cannot return an arbitrary
+       value, so the result goes back through DWL_MSGRESULT. */
+    if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
+        SetWindowLong(dlg, DWL_MSGRESULT, cres);
+        return TRUE;
+    }
+
     switch (msg) {
     case WM_INITDIALOG:
         CheckDlgButton(dlg, IDC_ROOMPICS, g_room_pics);
@@ -4618,9 +4634,17 @@ static void conv_send_id(unsigned char type, unsigned long id)
 BOOL FAR PASCAL _export ConvDlgProc(HWND dlg, UINT msg, UINT wParam,
                                     LONG lParam)
 {
+    LONG cres;
     int i;
     char q[96];
     UINT cmd;
+
+    /* The 3.1 dialog frame. A DialogProc cannot return an arbitrary
+       value, so the result goes back through DWL_MSGRESULT. */
+    if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
+        SetWindowLong(dlg, DWL_MSGRESULT, cres);
+        return TRUE;
+    }
 
     switch (msg) {
     case WM_INITDIALOG:
@@ -4724,10 +4748,18 @@ static int conv_dialog(HWND owner)
 BOOL FAR PASCAL _export ServerDlgProc(HWND dlg, UINT msg, UINT wParam,
                                       LONG lParam)
 {
+    LONG cres;
     char buf[64];
     unsigned port;
 
     (void)lParam;
+    /* The 3.1 dialog frame. A DialogProc cannot return an arbitrary
+       value, so the result goes back through DWL_MSGRESULT. */
+    if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
+        SetWindowLong(dlg, DWL_MSGRESULT, cres);
+        return TRUE;
+    }
+
     switch (msg) {
     case WM_INITDIALOG:
         SetDlgItemText(dlg, IDC_HOST, g_host);
