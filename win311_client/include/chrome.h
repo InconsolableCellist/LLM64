@@ -128,16 +128,20 @@ int  chrome_dialog_msg(HWND dlg, UINT msg, UINT wParam, LONG lParam,
 
 /* ---- controls ----------------------------------------------------- */
 
-/* Skin one BUTTON, or every BUTTON child of a window. Push buttons,
-   default push buttons and checkboxes; the control keeps its own state,
-   focus, mnemonic and click handling, and only its painting changes.
-   Dialogs get this for free - chrome_dialog_msg does it on
-   WM_INITDIALOG - so it is only worth calling by hand for buttons a
-   window creates itself.
- *
- * Call it as often as you like: a button already skinned is left alone. */
+/* Skin one BUTTON: push buttons, default push buttons and checkboxes.
+   The control keeps its own state, focus, mnemonic and click handling,
+   and only its painting changes. Call it as often as you like - a button
+   already skinned is left alone. */
 void chrome_button(HWND btn);
-void chrome_buttons(HWND parent);
+
+/* Every control of a window: skins the buttons, and takes the Windows 95
+   sunken well off the edits and lists so their WS_BORDER shows through
+   as the flat black frame 3.1 drew.
+ *
+ * Dialogs get this for free - chrome_dialog_msg does it on WM_INITDIALOG
+ * - so it is only worth calling by hand for controls a window creates
+ * itself, or for ones a dialog builds after its WM_INITDIALOG. */
+void chrome_controls(HWND parent);
 
 /* The 3.1 button face on any DC, for code that owner-draws its own:
    black outline with the corner pixels left to the parent, a two pixel

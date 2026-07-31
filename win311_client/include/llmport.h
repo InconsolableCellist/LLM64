@@ -201,6 +201,16 @@ static __inline DWORD llm_text_extent(HDC hdc, LPCSTR s, int n)
    documented them and left it there, so the 16-bit headers have the
    message but not the vocabulary. Guarded rather than branched: on the
    32-bit side these are already right and this whole block vanishes. */
+/* The 3D window edges, which are Windows 95's and do not exist in 3.1 at
+   all. Zero here rather than absent, so the code that takes them back
+   off a control compiles for both targets and does nothing on the one
+   that never had them. */
+#ifndef WS_EX_CLIENTEDGE
+#define WS_EX_CLIENTEDGE    0L
+#define WS_EX_STATICEDGE    0L
+#define WS_EX_WINDOWEDGE    0L
+#endif
+
 #ifndef BST_CHECKED
 #define BST_UNCHECKED       0x0000
 #define BST_CHECKED         0x0001

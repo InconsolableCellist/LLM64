@@ -1396,7 +1396,7 @@ int chrome_dialog_msg(HWND dlg, UINT msg, UINT wParam, LONG lParam,
        call site: the four dialog procs already route WM_INITDIALOG
        through here, and returning 0 lets their own handler run after. */
     case WM_INITDIALOG:
-        chrome_buttons(dlg);
+        chrome_controls(dlg);
         return 0;
 
     case WM_ERASEBKGND:
@@ -1654,7 +1654,39 @@ void chrome_button(HWND btn)
         g_btnproc = (LlmOldProc)old;
 }
 
-void chrome_buttons(HWND parent)
+/* An edit or a list in 3.1 has a FLAT black frame one pixel wide. The
+   sunken 3D well is Windows 95's, and on Win32 it arrives without being
+   asked for: the dialog manager promotes a template control's WS_BORDER
+   to WS_EX_CLIENTEDGE for us. Taking it back off leaves the plain
+   WS_BORDER frame, which the host still draws - in black, at one pixel,
+   which is exactly the 3.1 drawing. Nothing to paint.
+
+   A no-op on the 16-bit target, where no window has an extended style
+   worth clearing and 3.1 was already right. */
+static void flatten(HWND c)
+{
+    LONG ex = GetWindowLong(c, GWL_EXSTYLE);
+    LONG st;
+
+    if (!(ex & (WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE)))
+        return;
+    SetWindowLong(c, GWL_EXSTYLE,
+                  ex & ~(LONG)(WS_EX_CLIENTEDGE | WS_EX_STATICEDGE
+                               | WS_EX_WINDOWEDGE));
+    /* And WS_BORDER back on. The promotion is a SWAP, not an addition:
+       the dialog manager takes WS_BORDER off as it puts the 3D edge on,
+       so clearing the edge alone leaves an edit with no frame at all.
+       Only controls that asked for a border ever get here. */
+    st = GetWindowLong(c, GWL_STYLE);
+    if (!(st & WS_BORDER))
+        SetWindowLong(c, GWL_STYLE, st | WS_BORDER);
+    /* The frame is only recomputed when something asks for it. */
+    SetWindowPos(c, NULL, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE
+                 | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void chrome_controls(HWND parent)
 {
     HWND c;
 
@@ -1662,6 +1694,7 @@ void chrome_buttons(HWND parent)
          c = GetWindow(c, GW_HWNDNEXT)) {
         char cls[16];
 
+        flatten(c);
         if (GetClassName(c, cls, sizeof(cls)) > 0
             && lstrcmpi(cls, "button") == 0)
             chrome_button(c);

@@ -3807,7 +3807,7 @@ long FAR PASCAL _export MusProc(HWND hwnd, UINT msg, UINT wParam,
                                   WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                                   0, 0, 10, 10, hwnd,
                                   (HMENU)(IDC_MUSBASE + 4), inst, NULL);
-        chrome_buttons(hwnd);
+        chrome_controls(hwnd);
         mus_fill_moods();
         mus_update();
         break;
@@ -4513,7 +4513,7 @@ BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
         /* Again, and by hand: the chrome skins a dialog's buttons when
            WM_INITDIALOG reaches it, and this one's buttons did not exist
            yet - they are built from the proxy's menu a few lines up. */
-        chrome_buttons(dlg);
+        chrome_controls(dlg);
         return TRUE;
 
     case WM_COMMAND:
