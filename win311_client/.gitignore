@@ -1,3 +1,7 @@
 build/
+
+# Watcom writes the spike's objects into the working directory,
+# not into build/ - they are output, not source.
+*.o
+*.obj
 __wcl_*.lnk
-*.res
