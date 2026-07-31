@@ -277,6 +277,14 @@ fluidsynth -is -a alsa -m alsa_seq /usr/share/soundfonts/FluidR3_GM.sf2 &
 aconnect -o          # 'FLUID Synth' should appear as a client
 ```
 
+The SoundFont has to actually exist: with a missing or empty .sf2,
+events still arrive and fluidsynth prints `No preset found on channel
+N [bank=0 prog=NN]` for every instrument - routing works, silence
+anyway. `FluidR3_GM.sf2` comes from the `soundfont-fluid` package
+(Arch/Artix; `fluid-soundfont-gm` on Debian). In a pinch, any GM .sf2
+already on the disk works - GZDoom installs one at
+`/usr/share/gzdoom/soundfonts/gzdoom.sf2`.
+
 Anything that registers an ALSA sequencer port works the same way: use
 **Munt** for an MT-32, or an OPL3 emulator for Adlib and Sound Blaster FM.
 Note that with no synth running, `midiOutGetNumDevs()` still returns the
