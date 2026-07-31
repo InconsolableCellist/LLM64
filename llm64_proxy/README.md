@@ -57,7 +57,10 @@ config.toml editor with validation.
    firewall prompt so the clients can reach it.
 3. Press "Create config" in the Settings tab: it writes a `config.toml`
    next to the binary from the built-in template. Point `[api]` at
-   your model (below), then "Save & Restart".
+   your model (below), then "Save & Restart". The ↻ button beside each
+   model field asks the endpoint what it serves (`GET /v1/models`, and
+   ComfyUI's own API for checkpoints/CLIPs/VAEs), so once the base URL
+   and key are in, the model is a dropdown pick, not a guess.
 
 The rest of this README applies unchanged; where it says
 `./run.sh proxy`, press Start instead. `llm64-proxy --headless` runs
@@ -203,7 +206,11 @@ it to `""` if your ComfyUI workflow carries its own style. Backends
 - **`comfyui`** -- a local ComfyUI instance: `url` (default
   `http://127.0.0.1:8188`), `workflow` (an API-format JSON export
   containing the literal token `{PROMPT}` in a node input), `timeout`,
-  `randomize_seed`. No auth -- keep it on a trusted LAN.
+  `randomize_seed`. `workflow` unset runs the bundled
+  `workflows/flux2-klein-retro.json` (Flux 2 klein), so the backend
+  works out of the box; a bare filename also resolves against the
+  bundled set when the config dir has no such file. No auth -- keep it
+  on a trusted LAN.
 - **`fixture`** -- a fixed local image, for tests.
 
 Minimum to get pictures: install Pillow (it's in requirements.txt), set

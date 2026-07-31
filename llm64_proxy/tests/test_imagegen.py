@@ -517,6 +517,22 @@ def test_make_backend():
     check("relative workflow resolves against config dir",
           be.workflow_path == Path(TMP) / "wf.json")
 
+    # The bundled Flux workflow: the default when nothing is configured,
+    # and the fallback for a bare name the config dir does not have.
+    be = make_backend({"backend": "comfyui"}, TMP, base_dir=TMP)
+    check("unset workflow -> the bundled flux workflow, ready to run",
+          be.workflow_path.name == "flux2-klein-retro.json"
+          and be.available())
+    cfg = {"backend": "comfyui",
+           "comfyui": {"workflow": "flux2-klein-retro.json"}}
+    be = make_backend(cfg, TMP, base_dir=TMP)
+    check("bare name falls back to the bundled copy",
+          be.workflow_path.parent.name == "workflows" and be.available())
+    (Path(TMP) / "flux2-klein-retro.json").write_text("{}")
+    be = make_backend(cfg, TMP, base_dir=TMP)
+    check("a config-dir file of the same name wins over the bundle",
+          be.workflow_path == Path(TMP) / "flux2-klein-retro.json")
+
     os.environ["LLM64_IMG_FIXTURE"] = str(fixture)
     try:
         be = make_backend({"backend": "openai"}, TMP)

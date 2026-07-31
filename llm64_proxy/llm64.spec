@@ -18,6 +18,7 @@ a = Analysis(
         ('src/default_cards', 'src/default_cards'),
         ('src/adventure_rules.json', 'src'),
         ('src/sid_overrides.json', 'src'),
+        ('workflows', 'workflows'),
         ('config.toml.example', '.'),
     ],
     hiddenimports=['toml'],
