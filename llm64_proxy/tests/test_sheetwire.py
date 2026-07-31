@@ -40,9 +40,13 @@ def check(name, got, want):
 class FakeConv:
     """Just the meta store, which is all these paths touch."""
 
-    def __init__(self, meta=None):
+    def __init__(self, meta=None, msgs=None):
         self.meta = dict(meta or {})
+        self.msgs = list(msgs or [])
         self.saves = 0
+
+    def get_messages(self):
+        return self.msgs
 
     def get_meta(self, key, default=None):
         return self.meta.get(key, default)
@@ -58,10 +62,10 @@ class FakeMode:
     name = 'adventure'
 
 
-def handler(profile, meta=None, mode='adventure'):
+def handler(profile, meta=None, mode='adventure', msgs=None):
     h = ProtocolHandler.__new__(ProtocolHandler)
     h.profile = profile
-    h.conv_manager = FakeConv(meta)
+    h.conv_manager = FakeConv(meta, msgs)
     h.mode = FakeMode()
     h.mode.name = mode
     h.sent = []
@@ -315,6 +319,105 @@ check("a long state block is captured", len(f.states), 1)
 check("...and none of it leaks onto the screen",
       'hp' in shown or '{' in shown, False)
 check("...and it parses", json.loads(f.states[0].strip())['xp'], 120)
+
+# --- back-filling the static half -------------------------------------
+#
+# An adventure started with /adventure <theme> never ran chargen, so
+# 'character_sheet' meta is absent and the state block is forbidden to
+# carry those fields. This is the one path that can ever fill them.
+
+STORY = [
+    {'role': 'user', 'content': 'i push the vestry door'},
+    {'role': 'assistant',
+     'content': 'Kesh, half-elf and wizard, shoulders it open. Her oak '
+                'staff throws light across the flooded nave.'},
+]
+
+
+def backfill_handler(answer, meta=None, msgs=STORY, mode='adventure'):
+    h = handler(WIN, meta, mode=mode, msgs=msgs)
+    h.asked = []
+    h.status = []
+
+    async def ask(question, **kw):
+        h.asked.append(question)
+        return answer
+
+    async def status(text):
+        h.status.append(text)
+
+    h._ask_model = ask
+    h.send_status = status
+    h.mode.character = ''
+    h.mode.background = ''
+    return h
+
+
+GOOD = ('{"name":"Kesh","race":"Half-elf","class":"Wizard",'
+        '"skills":["Lore"],"spells":["Light"],"gear":["oak staff"]}')
+
+h = backfill_handler(GOOD)
+check("a missing sheet is back-filled",
+      asyncio.run(h._backfill_character_sheet()), True)
+check("...with one model call", len(h.asked), 1)
+check("...that carries the transcript", 'half-elf and wizard' in h.asked[0],
+      True)
+check("...and it is stored", h.conv_manager.meta['character_sheet']['name'],
+      'Kesh')
+check("...marked as told, not rolled",
+      h.conv_manager.meta['character_sheet']['derived'], True)
+check("...with no scores it never rolled",
+      h.conv_manager.meta['character_sheet']['scores'], {})
+check("...and a CHAR_SHEET frame goes out",
+      [t for t, _ in h.sent], [MessageType.CHAR_SHEET])
+check("the derived flag never reaches the wire",
+      'derived' in json.loads(h.sent[0][1][:-1].decode('ascii')), False)
+
+# The prose has to land where a rolled character's would: the illustrator
+# reads 'character', the system prompt reads 'background'.
+check("the illustrator gets the identity",
+      'Kesh' in h.conv_manager.meta['character'], True)
+check("...on the mode too", h.mode.character,
+      h.conv_manager.meta['character'])
+check("the system prompt's head gets it",
+      'Kesh' in h.conv_manager.meta['background'], True)
+check("...on the mode too", h.mode.background,
+      h.conv_manager.meta['background'])
+check("it was persisted", h.conv_manager.saves > 0, True)
+
+# Existing prep notes are joined, never replaced.
+h = backfill_handler(GOOD, meta={'background': 'Your prep notes: a flood.'})
+asyncio.run(h._backfill_character_sheet())
+check("prior background survives",
+      'a flood.' in h.conv_manager.meta['background'], True)
+check("...with the character after it",
+      h.conv_manager.meta['background'].endswith(
+          h.conv_manager.meta['character']), True)
+
+# A sheet that already exists is never overwritten, and costs nothing.
+h = backfill_handler(GOOD, meta={'character_sheet': SHEET})
+check("a rolled sheet is left alone",
+      asyncio.run(h._backfill_character_sheet()), False)
+check("...with no model call", h.asked, [])
+check("...and the rolled sheet stands",
+      h.conv_manager.meta['character_sheet'], SHEET)
+
+# Nothing to read it off yet.
+h = backfill_handler(GOOD, msgs=[])
+check("an empty conversation is not guessed at",
+      asyncio.run(h._backfill_character_sheet()), False)
+check("...with no model call", h.asked, [])
+
+# A useless answer stores NOTHING - so the next /sheet tries again rather
+# than finding a meta key and giving up forever.
+for bad, label in ((' ', 'an empty answer'),
+                   ('I could not say.', 'a prose answer'),
+                   ('{"name":"","race":"","class":""}', 'an all-blank answer')):
+    h = backfill_handler(bad)
+    check(f"{label} stores nothing",
+          (asyncio.run(h._backfill_character_sheet()),
+           'character_sheet' in h.conv_manager.meta), (False, False))
+    check(f"...{label} sends no frame", h.sent, [])
 
 # --- the printed sheet ------------------------------------------------
 

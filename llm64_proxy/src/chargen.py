@@ -139,7 +139,16 @@ def sheet(rules: dict, answers: dict) -> dict:
 def describe(rules: dict, answers: dict) -> str:
     """One block for the system prompt. Plain prose beats JSON here -
     it is background the model reads, not data it has to update."""
-    s = sheet(rules, answers)
+    return describe_sheet(rules, sheet(rules, answers))
+
+
+def describe_sheet(rules: dict, s: dict) -> str:
+    """The same block, from an already-built sheet.
+
+    Split out because a back-filled character never had any `answers` to
+    build from - the story is where it came from - and the system prompt
+    still wants the same prose either way.
+    """
     bits = []
     # A race the player typed themselves can be a whole sentence
     # ("Automaton, a clockwork person of brass gears"), which reads as
@@ -176,6 +185,125 @@ def describe(rules: dict, answers: dict) -> str:
         # player is carrying now belongs in adv_state, which the model
         # updates every turn. This block is the stable head of the
         # prompt and must never contradict it.
-        bits.append("Started the adventure carrying: "
+        bits.append(("Has carried since early in the story: "
+                     if s.get('derived') else
+                     "Started the adventure carrying: ")
                     + ", ".join(s['gear']) + ".")
     return " ".join(bits)
+
+
+# --- back-filling a sheet the dice never rolled ------------------------
+#
+# /adventure <theme> and the 'surprise me' path start play without ever
+# running the setup flow, so nothing writes the static half of the sheet
+# and the narrator is forbidden to put those fields in the state block
+# (modes.py). The window is then blank for the life of the game and no
+# refresh can ever fill it. The story does establish who the character
+# is - it just does it in prose. These two pure functions are how that
+# prose is turned back into a sheet.
+
+BACKFILL_SCHEMA = ('{"name":"...","race":"...","class":"...",'
+                   '"skills":["..."],"spells":["..."],"gear":["..."]}')
+
+BACKFILL_LIST_MAX = 6
+BACKFILL_ITEM_MAX = 40
+BACKFILL_STR_MAX = 40
+
+
+def backfill_question(convo: str, state: str = '') -> str:
+    """The one-shot that asks the narrator who the player turned out to
+    be.
+
+    The instruction that matters is the refusal: a field the story has
+    not established comes back empty. A blank line in the window is
+    honest; an invented race is a fact the game will then defend for the
+    rest of the adventure.
+    """
+    parts = [
+        "Below is a text adventure in progress. This character was "
+        "never formally created, so the game holds no record of who "
+        "they are - only what the story itself has established.",
+
+        "Recover that record. Reply with ONLY a JSON object of this "
+        "shape, on one line, and nothing else:\n" + BACKFILL_SCHEMA,
+
+        "How to fill it in:\n"
+        "- Use ONLY what the story has actually established. Leave a "
+        "string empty, or a list empty, where it has not. An empty "
+        "field is the correct answer; an invented one is not.\n"
+        "- skills and spells are abilities the character has used or "
+        "been said to have. gear is what they have carried since early "
+        "on, not what they picked up last turn.\n"
+        "- Do NOT report ability scores, hit points, gold, or where "
+        "they are. Those are tracked elsewhere and are not yours here.\n"
+        "- At most six entries per list, three words or fewer each.",
+    ]
+    if state:
+        parts.append("The game state currently tracked: " + state)
+    parts.append("Transcript:\n" + convo)
+    return "\n\n".join(parts)
+
+
+def parse_backfill(text: str, rules: dict = None) -> dict:
+    """A back-fill reply -> a sheet dict shaped exactly like sheet()'s,
+    or {} when there is nothing usable in it.
+
+    Ability scores are not accepted from the model at any price: a score
+    means four dice were rolled, and here none were - so `scores` comes
+    back empty and the window's ability line stays blank rather than
+    showing numbers no one rolled. The hit die is left out for the same
+    reason, and because describe_sheet() would otherwise announce a
+    level-1 maximum HP to a character who is already level 3.
+
+    `derived` marks the sheet as told rather than rolled. It is for this
+    side of the wire only - _char_sheet_payload names the keys it sends,
+    so the flag never reaches a client.
+    """
+    if not text:
+        return {}
+    lo, hi = text.find('{'), text.rfind('}')
+    if lo < 0 or hi <= lo:
+        return {}
+    try:
+        obj = json.loads(text[lo:hi + 1])
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(obj, dict):
+        return {}
+
+    def one(key):
+        v = obj.get(key)
+        return v.strip()[:BACKFILL_STR_MAX] if isinstance(v, str) else ''
+
+    def many(key):
+        v = obj.get(key)
+        if not isinstance(v, list):
+            return []
+        out = []
+        for item in v:
+            if len(out) >= BACKFILL_LIST_MAX:
+                break
+            if isinstance(item, str) and item.strip():
+                out.append(item.strip()[:BACKFILL_ITEM_MAX])
+        return out
+
+    s = {
+        'name': one('name'),
+        'race': one('race'),
+        'class': one('class'),
+        'scores': {},
+        'skills': many('skills'),
+        'spells': many('spells'),
+        'gear': many('gear'),
+        'hit_die': None,
+        'derived': True,
+    }
+    if not any((s['name'], s['race'], s['class'],
+                s['skills'], s['spells'], s['gear'])):
+        return {}
+    # Spell a known class the way the rules spell it, so a back-filled
+    # 'wizard' and a rolled 'Wizard' are the same word downstream.
+    found = find_class(rules, s['class']) if rules else None
+    if found:
+        s['class'] = found.get('name') or s['class']
+    return s

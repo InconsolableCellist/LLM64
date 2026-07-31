@@ -1642,7 +1642,9 @@ class ProtocolHandler:
         than trusting a malformed one - so a sheet can be several turns
         old. This is the way to ask, and it asks with the schema in hand
         instead of hoping the model remembers it. One model call, no
-        narration: the answer is JSON and nothing else."""
+        narration: the answer is JSON and nothing else - two on the one
+        refresh of a game that never rolled a character, which is what
+        _backfill_character_sheet is for."""
         # What we already know goes out first - free, and it fills the
         # window while the model is still thinking.
         await self.handle_get_sheet()
@@ -1650,6 +1652,11 @@ class ProtocolHandler:
             await self._send_canned(
                 "A character sheet only exists in an adventure.")
             return
+
+        # The static half first, and only when it is missing entirely.
+        # It is the half a refresh could never reach before, and once it
+        # is filled the state ask below has a character to talk about.
+        filled = await self._backfill_character_sheet()
 
         await self.send_status("Asking for the character sheet...")
         state = self.conv_manager.get_meta('adv_state') or '{}'
@@ -1687,8 +1694,10 @@ class ProtocolHandler:
             self.logger.warning("sheet refresh: unusable answer %.120s",
                                 answer)
             await self._send_canned(
-                "The narrator did not answer with a usable sheet - "
-                "the one on screen is the last good one.")
+                ("Who you are has been filled in from the story. " if filled
+                 else "")
+                + "The narrator did not answer with a usable sheet - "
+                "the stats on screen are the last good ones.")
             return
         # Keep only keys the block is allowed to carry, so a chatty model
         # cannot smuggle prose into the authoritative state.
@@ -1701,7 +1710,73 @@ class ProtocolHandler:
         self.conv_manager.set_meta('adv_state_turn', self._adv_turn())
         self.conv_manager.save()
         await self._send_state_json(state)
-        await self._send_canned("Character sheet brought up to date.")
+        await self._send_canned(
+            "Character sheet brought up to date."
+            + (" Who you are was filled in from the story - it was never "
+               "rolled, so the ability scores stay blank." if filled
+               else ""))
+
+    async def _backfill_character_sheet(self) -> bool:
+        """Fill the STATIC half of the sheet from the story, once, when
+        chargen never ran.
+
+        /adventure <theme> and 'surprise me' go straight into play with
+        no rolled character, so name/race/class/skills/kit are blank for
+        the life of the conversation - and no refresh could ever fix
+        that, because the state block is forbidden to carry those fields
+        (modes.py) and the only other writer is the setup flow. Ask the
+        narrator once for what the STORY has established instead.
+
+        Returns True only if a sheet was actually stored, so the caller
+        can say so. Costs one model call, and only on the first /sheet
+        of a game that needs it: after that the meta key exists and this
+        returns immediately.
+        """
+        if self.conv_manager.get_meta('character_sheet'):
+            return False
+        msgs = self.conv_manager.get_messages()
+        if not msgs:
+            return False        # nothing has happened yet to read it off
+        convo = printdoc.transcript(msgs[-12:], budget=3000)
+        if not convo.strip():
+            return False
+
+        await self.send_status("Asking who you are...")
+        rules = chargen.load_rules()
+        answer = await self._ask_model(
+            chargen.backfill_question(
+                convo, self.conv_manager.get_meta('adv_state') or ''),
+            limit=600,
+            sampling={'max_tokens': 300, 'temperature': 0.2},
+            system_prompt='')
+        sheet = chargen.parse_backfill(answer, rules)
+        if not sheet:
+            # Nothing stored, so the next /sheet tries again. A game whose
+            # story genuinely has not named the character yet SHOULD keep
+            # coming back empty.
+            self.logger.warning("sheet back-fill: unusable answer %.120s",
+                                answer)
+            return False
+
+        self.conv_manager.set_meta('character_sheet', sheet)
+        # The prose form goes where a rolled character's would have gone:
+        # `character` for the illustrator and /print (docs/13), and the
+        # system prompt's stable head so the narrator stops improvising a
+        # new race every time the early turns fall out of context.
+        text = chargen.describe_sheet(rules, sheet)
+        if text:
+            self.conv_manager.set_meta('character', text)
+            self.mode.character = text
+            prior = self.conv_manager.get_meta('background', '') or ''
+            merged = (prior + "\n\n" + text) if prior else text
+            self.conv_manager.set_meta('background', merged)
+            self.mode.background = merged
+        self.conv_manager.save()
+        self.logger.info("sheet back-fill: %s, %s %s",
+                         sheet.get('name') or '(unnamed)',
+                         sheet.get('race') or '?', sheet.get('class') or '?')
+        await self._send_char_sheet(sheet)
+        return True
 
     async def handle_get_sheet(self):
         """A window just opened and wants filling. Everything here comes

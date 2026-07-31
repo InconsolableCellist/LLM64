@@ -91,6 +91,18 @@ class MockHandler(BaseHTTPRequestHandler):
                     'with brass goggles", '
                     '"npcs": {"Mara": "a stout innkeeper in '
                     'grease-stained leathers"}, "places": {}}')
+        elif 'RECOVER THAT RECORD' in upper:
+            # The sheet back-fill: an adventure that never ran chargen has
+            # no static half, so /sheet asks the narrator who the story
+            # made this character. Up here with the other transcript-
+            # embedding questions, for the same reason. Deliberately
+            # offers scores and a hit die the parser has to refuse - the
+            # real models volunteer them too, and a window showing
+            # ability scores nobody rolled is the bug this guards.
+            text = ('{"name":"Kesh","race":"Half-elf","class":"Wizard",'
+                    '"skills":["Lore"],"spells":["Light"],'
+                    '"gear":["oak staff"],'
+                    '"scores":{"STR":18,"DEX":18},"hit_die":12}')
         elif 'CURRENT SCENE FOR AN ILLUSTRATOR' in upper:
             # Scene composition (docs/13): /pic now asks the model to WRITE
             # the image prompt from game state instead of sending a
