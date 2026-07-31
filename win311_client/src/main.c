@@ -122,6 +122,11 @@ static char     g_ini[160];     /* full path to LLM64.INI */
    change in an adventure. Off by default and persisted in the INI -
    each picture may be a paid API call, so it is the player's switch. */
 static int      g_room_pics;
+/* The frame's last placement, persisted in the INI so the desk comes
+   back the size you left it. Width 0 means the INI never said. Kept as
+   plain ints rather than a WINDOWPLACEMENT because the Watcom 3.1
+   headers do not have GetWindowPlacement. */
+static int      g_win_x, g_win_y, g_win_w, g_win_h, g_win_max;
 
 static unsigned char g_rxbuf[WIRE_MAX_PAYLOAD];
 static WireRx        g_rx;
@@ -5799,6 +5804,22 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
 
     case WM_DESTROY: {
         int i;
+        /* The desk comes back tomorrow the size it is now. A maximized
+           frame keeps the rect it would restore to, which is whatever
+           the INI already holds; an iconized one keeps everything. */
+        if (!IsIconic(hwnd)) {
+            g_win_max = IsZoomed(hwnd) ? 1 : 0;
+            if (!g_win_max) {
+                RECT wr;
+
+                GetWindowRect(hwnd, &wr);
+                g_win_x = wr.left;
+                g_win_y = wr.top;
+                g_win_w = wr.right - wr.left;
+                g_win_h = wr.bottom - wr.top;
+            }
+        }
+        save_ini();
         KillTimer(hwnd, ID_LAUNCHTIMER);
         if (g_stipple) {
             DeleteObject(g_stipple);
@@ -5871,6 +5892,12 @@ static void load_ini(void)
     g_theme = (buf[0] == 's' || buf[0] == 'S') ? THEME_SCREEN : THEME_PAPER;
     g_room_pics = GetPrivateProfileInt("Pictures", "EveryRoom", 0, g_ini)
         ? 1 : 0;
+    g_win_x   = (int)GetPrivateProfileInt("Window", "X", 0, g_ini);
+    g_win_y   = (int)GetPrivateProfileInt("Window", "Y", 0, g_ini);
+    g_win_w   = (int)GetPrivateProfileInt("Window", "Width", 0, g_ini);
+    g_win_h   = (int)GetPrivateProfileInt("Window", "Height", 0, g_ini);
+    g_win_max = GetPrivateProfileInt("Window", "Maximized", 0, g_ini)
+        ? 1 : 0;
 }
 
 static void save_ini(void)
@@ -5885,6 +5912,18 @@ static void save_ini(void)
                               g_ini);
     WritePrivateProfileString("Pictures", "EveryRoom",
                               g_room_pics ? "1" : "0", g_ini);
+    if (g_win_w > 0) {
+        wsprintf(num, "%d", g_win_x);
+        WritePrivateProfileString("Window", "X", num, g_ini);
+        wsprintf(num, "%d", g_win_y);
+        WritePrivateProfileString("Window", "Y", num, g_ini);
+        wsprintf(num, "%d", g_win_w);
+        WritePrivateProfileString("Window", "Width", num, g_ini);
+        wsprintf(num, "%d", g_win_h);
+        WritePrivateProfileString("Window", "Height", num, g_ini);
+        WritePrivateProfileString("Window", "Maximized",
+                                  g_win_max ? "1" : "0", g_ini);
+    }
 }
 
 int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
@@ -6019,9 +6058,40 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
        non-client area happened to be invalidated. The symptom was grey
        slabs where titlebars belong, most visibly during a conversation
        load. */
-    hwnd = CreateWindow(APP_CLASS, APP_TITLE, CHROME_STYLE,
-                        CW_USEDEFAULT, CW_USEDEFAULT, 640, 440,
-                        NULL, NULL, hInst, NULL);
+    {
+        /* Last session's placement, if the INI has one that still lands
+           on a screen - a desk saved on a monitor that is now unplugged
+           gets the default instead of opening out of reach. The bounds
+           are the virtual screen where there is one; 3.1 answers 0 to
+           those indices, which reads as "the one screen". */
+        int x = CW_USEDEFAULT, y = CW_USEDEFAULT, w = 640, h = 440;
+        int sl = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int st = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int sr = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int sb = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+        if (sr > 0 && sb > 0) {
+            sr += sl;
+            sb += st;
+        } else {
+            sl = st = 0;
+            sr = GetSystemMetrics(SM_CXSCREEN);
+            sb = GetSystemMetrics(SM_CYSCREEN);
+        }
+        if (g_win_w >= 200 && g_win_h >= 150
+                && g_win_x + 48 < sr && g_win_x + g_win_w > sl + 48
+                && g_win_y >= st - 8 && g_win_y + 48 < sb) {
+            x = g_win_x;
+            y = g_win_y;
+            w = g_win_w;
+            h = g_win_h;
+        }
+        if (g_win_max && show != SW_SHOWMINIMIZED
+                && show != SW_SHOWMINNOACTIVE)
+            show = SW_SHOWMAXIMIZED;
+        hwnd = CreateWindow(APP_CLASS, APP_TITLE, CHROME_STYLE,
+                            x, y, w, h, NULL, NULL, hInst, NULL);
+    }
     if (!hwnd)
         return 1;
     /* One forced NC recalculation. Windows worked the client rect out at

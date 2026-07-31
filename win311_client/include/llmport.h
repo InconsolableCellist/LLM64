@@ -214,6 +214,18 @@ static __inline DWORD llm_text_extent(HDC hdc, LPCSTR s, int n)
 
 /* ------------------------------------------------------------------ */
 
+/* The virtual screen: every monitor together, for deciding whether a
+   saved window position still lands on one. Win32 4.0 vocabulary, so
+   the 16-bit headers lack the names; 3.1's GetSystemMetrics answers 0
+   to indices it does not know, which the caller reads as "use the one
+   screen". */
+#ifndef SM_XVIRTUALSCREEN
+#define SM_XVIRTUALSCREEN   76
+#define SM_YVIRTUALSCREEN   77
+#define SM_CXVIRTUALSCREEN  78
+#define SM_CYVIRTUALSCREEN  79
+#endif
+
 /* There was no wheel in 1993, so 3.1 has neither the message nor the
    constant. Defined rather than branched on, so the scrollback's wheel
    handler compiles for both targets; the 16-bit one simply never
