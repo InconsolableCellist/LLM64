@@ -122,10 +122,6 @@ int  chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
  * from the frame rather than measured - there is no 3.11 capture of a
  * dialog to diff against yet.
  */
-/* Call from WM_INITDIALOG, before laying anything out: it restores the
-   client area to the size the resource template was designed against,
-   which our non-client area would otherwise have eaten into. */
-void chrome_dialog_init(HWND dlg);
 void chrome_dialog_paint(HWND dlg, HDC hdc, int active);
 int  chrome_dialog_msg(HWND dlg, UINT msg, UINT wParam, LONG lParam,
                        LONG *result);

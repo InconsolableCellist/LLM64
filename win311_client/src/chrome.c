@@ -1232,78 +1232,66 @@ int chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
 
 /* ---------------------------------------------------- dialog chrome --- */
 
-/* A dialog is a top-level window with a caption and no menu, so it takes
- * the child's approach: declare the non-client area, paint it, and leave
- * the client rect alone so the resource template's controls land exactly
- * where they were laid out.
+/* Dialogs take the opposite approach to everything else in this file, on
+ * purpose.
  *
- * 3.1 dialogs have a sysmenu box and nothing else on the caption - no
- * minimise, no maximise - and a fixed border with no resize grips, since
- * a modal frame does not size.
+ * The frame and the children DECLARE their non-client area and the layout
+ * is adjusted to suit. A dialog cannot: its controls come from a resource
+ * template at fixed client-relative positions, laid out against whatever
+ * client rect the host produced. Move that rect and the controls move
+ * with it, and the top row ends up under the caption. Two attempts to
+ * compute the difference and resize the window to compensate both got it
+ * wrong - the second used AdjustWindowRect, which is the right API, and
+ * it was still wrong on 3.11.
  *
- * These metrics are the frame's, reused. Unlike the caption and the menu
- * bar there is no 3.11 capture of a DIALOG to measure against, so the
- * caption height, the border and the glyph width are inherited rather
- * than verified. Worth a reference shot before trusting them the way the
- * rest of this file can be trusted.
+ * So: do not touch WM_NCCALCSIZE. Let the host reserve exactly what it
+ * always would, leave the client rect alone so no control can move, and
+ * paint OUR caption into whatever band the host set aside - measured from
+ * the window rect against the client origin rather than assumed. The
+ * caption is then the host's height, which on 3.11 is within a pixel or
+ * two of 3.1's and on Windows 11 is taller than period. That is a real
+ * fidelity cost, accepted knowingly: a dialog whose buttons are where the
+ * designer put them beats one that is two pixels more authentic and
+ * unusable.
  */
+
+/* The non-client band, in window coordinates: bx is the border width, by
+   the whole top strip (border plus caption). */
+static void dlg_nc_metrics(HWND dlg, RECT *wr, int *bx, int *by)
+{
+    RECT cr;
+    POINT o;
+
+    GetWindowRect(dlg, wr);
+    GetClientRect(dlg, &cr);
+    o.x = 0; o.y = 0;
+    ClientToScreen(dlg, &o);
+    *bx = (int)(o.x - wr->left);
+    *by = (int)(o.y - wr->top);
+    if (*bx < 1) *bx = 1;
+    if (*by < *bx + 8) *by = *bx + 8;
+}
+
 static void dlg_sysbox(HWND dlg, RECT *sys)
 {
     RECT wr;
+    int bx, by;
 
-    GetWindowRect(dlg, &wr);
-    (void)wr;
-    sys->left   = FRAME;
-    sys->right  = FRAME + BTN_W;
-    sys->top    = FRAME;
-    sys->bottom = FRAME + CAP_H;
-}
-
-/* Give the dialog back the client area its template expects.
- *
- * The template's control positions are client-relative, and Windows sized
- * the window using ITS non-client metrics before ours took over. Our
- * non-client area is a different size, so the client shrinks underneath
- * the controls: the ones near the bottom fall outside it and the rest
- * repaint against a rect that no longer matches where they are - which
- * looks like a control drawn twice, half of it painted over.
- *
- * Growing the window by the difference puts the client back. Call from
- * WM_INITDIALOG, before anything is laid out.
- */
-void chrome_dialog_init(HWND dlg)
-{
-    RECT wr, ar;
-    int host_x, host_y;
-    int ours_x = 2 * FRAME;
-    int ours_y = FRAME + CAP_H + RULE + FRAME;
-
-    /* AdjustWindowRect, not a sum of SM_ metrics. It answers for THIS
-       window's actual style on THIS host, which is the only thing that
-       can be right on both a 1993 machine and a 2026 one - the hand-rolled
-       version left out what DS_MODALFRAME adds and was wrong by several
-       pixels on 3.11, which is enough to push a dialog's top row of
-       controls up under the caption. */
-    ar.left = 0; ar.top = 0; ar.right = 100; ar.bottom = 100;
-    AdjustWindowRect(&ar, GetWindowLong(dlg, GWL_STYLE), FALSE);
-    host_x = (ar.right - ar.left) - 100;
-    host_y = (ar.bottom - ar.top) - 100;
-
-    GetWindowRect(dlg, &wr);
-    SetWindowPos(dlg, NULL, 0, 0,
-                 (wr.right - wr.left) + (ours_x - host_x),
-                 (wr.bottom - wr.top) + (ours_y - host_y),
-                 SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    dlg_nc_metrics(dlg, &wr, &bx, &by);
+    sys->left   = bx;
+    sys->right  = bx + BTN_W;
+    sys->top    = bx;
+    sys->bottom = by - 1;
 }
 
 void chrome_dialog_paint(HWND dlg, HDC hdc, int active)
 {
     RECT wr, r, sys;
-    int w, h, n;
+    int w, h, bx, by, n;
     char title[128];
     HFONT of;
 
-    GetWindowRect(dlg, &wr);
+    dlg_nc_metrics(dlg, &wr, &bx, &by);
     w = wr.right - wr.left;
     h = wr.bottom - wr.top;
 
@@ -1313,21 +1301,23 @@ void chrome_dialog_paint(HWND dlg, HDC hdc, int active)
         HBRUSH k = CreateSolidBrush(C_FRAME);
 
         FrameRect(hdc, &r, k);
-        InflateRect(&r, -(FRAME - 1), -(FRAME - 1));
-        FrameRect(hdc, &r, k);
+        if (bx >= 3) {
+            InflateRect(&r, -(bx - 1), -(bx - 1));
+            FrameRect(hdc, &r, k);
+        }
         DeleteObject(k);
     }
 
-    r.left = FRAME; r.right = w - FRAME;
-    r.top = FRAME;  r.bottom = FRAME + CAP_H;
+    r.left = bx; r.right = w - bx;
+    r.top = bx;  r.bottom = by - 1;
     fill(hdc, &r, active ? C_ACTIVE : C_INACTIVE);
-    hline(hdc, FRAME, w - FRAME - 1, FRAME + CAP_H, C_FRAME);
+    hline(hdc, bx, w - bx - 1, by - 1, C_FRAME);
 
     dlg_sysbox(dlg, &sys);
     n = GetWindowText(dlg, title, sizeof(title) - 1);
     title[n < 0 ? 0 : n] = '\0';
     r.left = sys.right + 1;
-    r.right = w - FRAME;
+    r.right = w - bx;
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, active ? C_ACTTEXT : C_INACTTEXT);
     of = SelectObject(hdc, GetStockObject(SYSTEM_FONT));
@@ -1362,27 +1352,13 @@ static void dlg_nc(HWND dlg, int active)
 int chrome_dialog_msg(HWND dlg, UINT msg, UINT wParam, LONG lParam,
                       LONG *result)
 {
-    RECT wr;
-    int x, y, w;
+    RECT wr, sys;
+    int x, y, bx, by;
     POINT pt;
-    RECT sys;
 
     *result = 0;
     switch (msg) {
-    case WM_NCCALCSIZE: {
-        RECT FAR *r = wParam
-                    ? &((NCCALCSIZE_PARAMS FAR *)lParam)->rgrc[0]
-                    : (RECT FAR *)lParam;
-
-        r->left   += FRAME;
-        r->right  -= FRAME;
-        r->bottom -= FRAME;
-        r->top    += FRAME + CAP_H + RULE;
-        if (wParam)
-            *result = WVR_REDRAW;
-        return 1;
-    }
-
+    /* Deliberately NOT WM_NCCALCSIZE - see the note above. */
     case WM_NCPAINT:
         dlg_nc(dlg, GetActiveWindow() == dlg);
         return 1;
@@ -1397,15 +1373,23 @@ int chrome_dialog_msg(HWND dlg, UINT msg, UINT wParam, LONG lParam,
         return 0;
 
     case WM_NCHITTEST:
-        GetWindowRect(dlg, &wr);
+        dlg_nc_metrics(dlg, &wr, &bx, &by);
         x = GET_X_LPARAM(lParam) - wr.left;
         y = GET_Y_LPARAM(lParam) - wr.top;
-        w = wr.right - wr.left;
-        (void)w;
         dlg_sysbox(dlg, &sys);
         pt.x = x; pt.y = y;
         if (PtInRect(&sys, pt)) { *result = HTSYSMENU; return 1; }
-        if (y < FRAME + CAP_H)  { *result = HTCAPTION; return 1; }
+        if (y < by)             { *result = HTCAPTION; return 1; }
+        return 0;
+
+    /* Double-clicking the control box closes the window - 3.1, and every
+       Windows since. A dialog closes by its cancel command, which is what
+       its Close or Cancel button sends. */
+    case WM_NCLBUTTONDBLCLK:
+        if (wParam == HTSYSMENU) {
+            PostMessage(dlg, WM_COMMAND, IDCANCEL, 0L);
+            return 1;
+        }
         return 0;
     }
     return 0;

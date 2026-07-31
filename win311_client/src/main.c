@@ -4465,10 +4465,6 @@ BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
 
     switch (msg) {
     case WM_INITDIALOG:
-        /* Before anything is laid out: our non-client area would
-           otherwise eat into the client the template was drawn
-           against, and the controls near the bottom fall off it. */
-        chrome_dialog_init(dlg);
         inst = LLM_INST(dlg);
         SetDlgItemText(dlg, IDC_MENUTITLE, g_menu_count
             ? "Choose an action:"
@@ -4541,10 +4537,6 @@ BOOL FAR PASCAL _export PicsDlgProc(HWND dlg, UINT msg, UINT wParam,
 
     switch (msg) {
     case WM_INITDIALOG:
-        /* Before anything is laid out: our non-client area would
-           otherwise eat into the client the template was drawn
-           against, and the controls near the bottom fall off it. */
-        chrome_dialog_init(dlg);
         CheckDlgButton(dlg, IDC_ROOMPICS, g_room_pics);
         return TRUE;
 
@@ -4656,10 +4648,6 @@ BOOL FAR PASCAL _export ConvDlgProc(HWND dlg, UINT msg, UINT wParam,
 
     switch (msg) {
     case WM_INITDIALOG:
-        /* Before anything is laid out: our non-client area would
-           otherwise eat into the client the template was drawn
-           against, and the controls near the bottom fall off it. */
-        chrome_dialog_init(dlg);
         g_convdlg = dlg;
         conv_fill(dlg);
         return TRUE;
@@ -4774,10 +4762,6 @@ BOOL FAR PASCAL _export ServerDlgProc(HWND dlg, UINT msg, UINT wParam,
 
     switch (msg) {
     case WM_INITDIALOG:
-        /* Before anything is laid out: our non-client area would
-           otherwise eat into the client the template was drawn
-           against, and the controls near the bottom fall off it. */
-        chrome_dialog_init(dlg);
         SetDlgItemText(dlg, IDC_HOST, g_host);
         SetDlgItemInt(dlg, IDC_PORT, g_port, FALSE);
         CheckDlgButton(dlg, IDC_RECONNECT, 1);
