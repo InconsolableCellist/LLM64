@@ -34,6 +34,12 @@ SPK_BTN = (10, 10)
 # Reference: the "Illustrate every room" box, and the spike's checked one.
 REF_CHK = (643, 572, 13, 13)
 SPK_CHK = (10, 115)
+# The scrollbar: the Conversation pane's, whose up button starts at the
+# black line above it. Its down button is the last 17 rows of the bar.
+REF_SB_UP = (614, 92, 17, 17)
+REF_SB_DN = (614, 705, 17, 17)
+SPK_SB = (150, 10)
+SPK_SB_H = 150
 
 RING = 4        # how far in the button's drawing goes on each side
 
@@ -96,6 +102,20 @@ def main(argv):
     d, n = compare("checkbox, checked",
                    crop(ref, x, y, w, h),
                    crop(spk, SPK_CHK[0], SPK_CHK[1], w, h), 0)
+    bad += d
+    total += n
+
+    x, y, w, h = REF_SB_UP
+    d, n = compare("scrollbar, up arrow",
+                   crop(ref, x, y, w, h),
+                   crop(spk, SPK_SB[0], SPK_SB[1], w, h), 0)
+    bad += d
+    total += n
+
+    x, y, w, h = REF_SB_DN
+    d, n = compare("scrollbar, down arrow",
+                   crop(ref, x, y, w, h),
+                   crop(spk, SPK_SB[0], SPK_SB[1] + SPK_SB_H - h, w, h), 0)
     bad += d
     total += n
 

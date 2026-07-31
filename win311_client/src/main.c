@@ -65,6 +65,7 @@
 
 #define ID_PANE     1000
 #define ID_INPUT    1001
+#define ID_SBAR     1002        /* the pane's own 3.1 scrollbar */
 
 /* One document's worth of text and where we are looking at it from. The
    transcript is one of these; every sheet of printed paper is another.
@@ -329,9 +330,19 @@ static int view_rows(const View *v)
     return (rc.bottom / g_ch) > 0 ? (int)(rc.bottom / g_ch) : 1;
 }
 
-static int view_cols(const View *v)
+/* The pane's width with its scrollbar taken off. The bar is a child
+   window sitting inside the pane's border, so the client rect still
+   includes it and everything that lays text out has to stop short. */
+static int pane_width(HWND pane)
 {
     RECT rc;
+
+    GetClientRect(pane, &rc);
+    return (int)rc.right - CHROME_SB_W;
+}
+
+static int view_cols(const View *v)
+{
     int c;
 
     /* A sheet of paper is already laid out by the proxy to a printer
@@ -342,8 +353,7 @@ static int view_cols(const View *v)
         return 1000;
     if (!v->pane)
         return 40;
-    GetClientRect(v->pane, &rc);
-    c = (int)((rc.right - v->margin - 2) / g_cw);
+    c = (int)((pane_width(v->pane) - v->margin - 2) / g_cw);
     if (c < 10) c = 10;
     return c;
 }
@@ -370,8 +380,8 @@ static void view_sync_scroll(View *v)
     if (v->top < 0) v->top = 0;
     if (!v->pane)
         return;
-    SetScrollRange(v->pane, SB_VERT, 0, (int)max, FALSE);
-    SetScrollPos(v->pane, SB_VERT, (int)v->top, TRUE);
+    chrome_scrollbar_set(GetDlgItem(v->pane, ID_SBAR), v->top, max,
+                         view_rows(v));
 }
 
 static void view_bottom(View *v)
@@ -500,6 +510,7 @@ static void pane_paint(HWND hwnd)
 
     hdc = BeginPaint(hwnd, &ps);
     GetClientRect(hwnd, &rc);
+    rc.right = pane_width(hwnd);        /* the scrollbar paints itself */
 
     if (!v || !v->live) {
         FillRect(hdc, &rc, g_bg_brush);
@@ -2486,6 +2497,17 @@ long FAR PASCAL _export PaneProc(HWND hwnd, UINT msg, UINT wParam,
     }
 
     case WM_SIZE:
+        /* The scrollbar first, so view_cols measures against the width
+           that is actually left for text. */
+        {
+            HWND bar = GetDlgItem(hwnd, ID_SBAR);
+            RECT rc;
+
+            GetClientRect(hwnd, &rc);
+            if (bar)
+                MoveWindow(bar, (int)rc.right - CHROME_SB_W, 0,
+                           CHROME_SB_W, (int)rc.bottom, TRUE);
+        }
         /* The whole point of the far-block transcript: a resize re-flows
            what is already on screen, because nothing was ever stored
            wrapped in the first place. Paper is the exception - it keeps
@@ -2506,13 +2528,18 @@ long FAR PASCAL _export PaneProc(HWND hwnd, UINT msg, UINT wParam,
    else. */
 static HWND pane_create(HWND parent, View *v)
 {
+    /* No WS_VSCROLL: the host would draw that one, and it has been
+       drawing it wrong since 1995. chrome_scrollbar is the 3.1 bar, and
+       it speaks the same WM_VSCROLL this window already handles. */
     HWND p = CreateWindow(PANE_CLASS, NULL,
-                          WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER,
+                          WS_CHILD | WS_VISIBLE | WS_BORDER
+                          | WS_CLIPCHILDREN,
                           0, 0, 10, 10, parent, (HMENU)ID_PANE,
                           LLM_INST(parent),
                           NULL);
     if (!p)
         return NULL;
+    chrome_scrollbar(p, ID_SBAR);
     SetWindowLong(p, 0, (LONG)v);
     v->pane = p;
     return p;
@@ -2701,7 +2728,9 @@ long FAR PASCAL _export EditProc(HWND hwnd, UINT msg, UINT wParam,
     case WM_KEYDOWN:
         if (wParam == VK_PRIOR || wParam == VK_NEXT) {
             SendMessage(g_conv_view.pane, WM_VSCROLL,
-                        wParam == VK_PRIOR ? SB_PAGEUP : SB_PAGEDOWN, 0L);
+                        LLM_SCROLL_WP(wParam == VK_PRIOR
+                                      ? SB_PAGEUP : SB_PAGEDOWN, 0),
+                        LLM_SCROLL_LP(0, 0));
             return 0;
         }
         break;
@@ -5960,6 +5989,10 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
         if (!RegisterClass(&wc))
             return 1;
         wc.cbWndExtra = 0;
+
+        /* And the scrollbar the pane wears instead of WS_VSCROLL. */
+        if (!chrome_scrollbar_init(hInst))
+            return 1;
     }
 
     /* WS_CLIPCHILDREN is not decoration on an MDI frame: without it the

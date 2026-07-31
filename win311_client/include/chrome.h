@@ -174,4 +174,44 @@ void chrome_checkbox_face(HDC hdc, int x, int y, int checked, int disabled);
  * In a plain window procedure there is no such problem - return it. */
 int  chrome_ctlcolor(UINT msg, UINT wParam, LONG lParam, LONG *result);
 
+/* ---- the scrollbar ------------------------------------------------ */
+
+/* A window's own WS_VSCROLL is drawn by the host, and the host has been
+ * drawing it wrong since 1995: Windows 95 put a 50% dither in the trough
+ * and reshaped the arrows, and Windows 11 draws something flat and thin
+ * that shares no pixels with either. A 3.1 scrollbar is solid #C0C0C0 in
+ * the trough, and its arrow is a triangle with a STEM - an arrow, not
+ * the bare triangle every later Windows uses.
+ *
+ * So this is a control of our own. It is the only piece of chrome here
+ * that has to handle behaviour as well as pixels - auto-repeat on the
+ * arrows and the trough, and a draggable thumb - because unlike a menu
+ * or a caption button there is no system component left underneath to
+ * do it.
+ *
+ * It talks to its parent in exactly the vocabulary a real scrollbar
+ * uses: WM_VSCROLL with SB_LINEUP, SB_PAGEDOWN, SB_THUMBTRACK and the
+ * rest, packed per target. A window that already handles WM_VSCROLL
+ * needs no change to accept one.
+ *
+ * NOTE this covers OUR panes only. The scrollbars inside a LISTBOX or a
+ * COMBOBOX belong to those controls and cannot be replaced without
+ * owner-drawing the whole control, which is not worth it - they appear
+ * one at a time and rarely beside one of these.
+ */
+#define CHROME_SB_W 17      /* measured: 1 black + 15 interior + 1 black */
+
+/* Register the window class. Once, before any are created. */
+int  chrome_scrollbar_init(HINSTANCE inst);
+
+/* One vertical scrollbar, as a child of `parent`. Position it yourself:
+   it does not choose where it goes. */
+HWND chrome_scrollbar(HWND parent, int id);
+
+/* What it should show. `page` is how much one screenful is, in the same
+   units as pos and max, and it sets the thumb's size the way a real
+   scrollbar's page does. Cheap to call on every repaint - it does
+   nothing at all if none of the three changed. */
+void chrome_scrollbar_set(HWND sb, long pos, long max, long page);
+
 #endif /* CHROME_H */

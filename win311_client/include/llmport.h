@@ -65,6 +65,10 @@
 /* WM_VSCROLL/WM_HSCROLL: code in wParam, thumb position in lParam. */
 #define LLM_SCROLL_CODE(w, l)   (w)
 #define LLM_SCROLL_POS(w, l)    LOWORD(l)
+/* And the same packing from the sending side, for a scrollbar of our
+   own. lParam carries the control's handle, which is a word here. */
+#define LLM_SCROLL_WP(code, pos)    (UINT)(code)
+#define LLM_SCROLL_LP(pos, ctl)     MAKELONG((pos), (ctl))
 
 /* WM_MDIACTIVATE: wParam is a flag saying whether THIS child is the one
    being activated, which is the only thing either caller wants. */
@@ -134,6 +138,10 @@ typedef FARPROC LlmOldProc;
 
 #define LLM_SCROLL_CODE(w, l)   LOWORD(w)
 #define LLM_SCROLL_POS(w, l)    HIWORD(w)
+/* Win32 moved the position up beside the code and gave lParam the
+   handle whole - the same reshuffle it did to WM_COMMAND. */
+#define LLM_SCROLL_WP(code, pos)    (UINT)MAKELONG((code), (pos))
+#define LLM_SCROLL_LP(pos, ctl)     ((LONG)(ctl))
 
 /* Win32 split WM_CTLCOLOR into six messages, one per kind of control,
    and they are consecutive and in the same order as 3.1's CTLCOLOR_*

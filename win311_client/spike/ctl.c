@@ -40,6 +40,10 @@
 #define GAP      10
 #define CHK_X    10
 #define CHK_Y    (BTN_Y + 3 * (BTN_H + GAP))
+/* A scrollbar tall enough to hold both arrows and a thumb between. */
+#define SB_X     150
+#define SB_Y     10
+#define SB_H     150
 
 static int save_bmp(HBITMAP bmp, const char *path)
 {
@@ -129,6 +133,25 @@ int PASCAL WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     }
     chrome_checkbox_face(dc, CHK_X, CHK_Y, 1, 0);
     chrome_checkbox_face(dc, CHK_X + 20, CHK_Y, 0, 0);
+    /* The scrollbar draws through a real window, so it needs one. Off
+       screen and never shown: the pixels are what is being measured,
+       and WM_PAINT does not care whether anybody could have seen it. */
+    {
+        HWND sb;
+
+        chrome_scrollbar_init(inst);
+        sb = CreateWindow("LLM64Scroll", NULL, WS_POPUP,
+                          -2000, -2000, CHROME_SB_W, SB_H,
+                          NULL, NULL, inst, NULL);
+        if (sb) {
+            chrome_scrollbar_set(sb, 40, 100, 30);
+            /* It draws at its own origin, so move the DC's instead. */
+            SetViewportOrgEx(dc, SB_X, SB_Y, NULL);
+            SendMessage(sb, WM_PAINT, (WPARAM)dc, 0L);
+            SetViewportOrgEx(dc, 0, 0, NULL);
+            DestroyWindow(sb);
+        }
+    }
 
     SelectObject(dc, old);
     if (!save_bmp(bmp, path))

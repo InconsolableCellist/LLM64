@@ -2147,3 +2147,343 @@ int chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result)
     }
     return 0;
 }
+
+/* ---- the scrollbar --------------------------------------------------
+ *
+ * Measured off the Conversation pane's bar in the reference capture,
+ * and it differs from every later Windows in three ways that show:
+ *
+ *   - the trough is SOLID #C0C0C0. The 50% dither everyone remembers
+ *     is Windows 95's.
+ *   - the arrow has a STEM. Four rows of triangle 1-3-5-7 wide, then
+ *     three rows of a 3 px stem. Later Windows draw a bare triangle.
+ *   - the bevel is ONE pixel of highlight and TWO of shadow, inside a
+ *     black outline - not the two-and-two a push button gets.
+ *
+ * Every element is 17 px: a black line, 15 px of interior, a black
+ * line, with neighbours sharing the black between them. The thumb is
+ * drawn exactly like an arrow button with no glyph in it.
+ *
+ * Behaviour is ours too, which is what makes this the longest piece of
+ * chrome in the file. There is no system scrollbar left underneath to
+ * do the auto-repeat or the drag.
+ */
+
+#define SB_UNIT     17          /* button, thumb: black + 15 + black */
+#define SB_MINTHUMB 9           /* or it cannot be grabbed */
+#define SB_TIMER    1
+#define SB_DELAY    400         /* before the first repeat */
+#define SB_REPEAT   80          /* and between them after that */
+
+/* Window extra bytes. Three longs, because a scrollbar is three
+   numbers and nothing else. */
+#define SBX_POS     0
+#define SBX_MAX     4
+#define SBX_PAGE    8
+#define SBX_BYTES   12
+
+#define SBP_NONE     0
+#define SBP_UP       1
+#define SBP_DOWN     2
+#define SBP_PAGEUP   3
+#define SBP_PAGEDOWN 4
+#define SBP_THUMB    5
+
+static const char SB_CLASS[] = "LLM64Scroll";
+
+/* One bar tracks at a time - it holds the capture, so there cannot be
+   a second. */
+static HWND g_sb_track;
+static int  g_sb_part;
+static int  g_sb_grab;          /* where in the thumb it was grabbed */
+
+static long sb_get(HWND h, int x)   { return GetWindowLong(h, x); }
+
+/* Where everything is. `thumb` comes back empty when there is nothing
+   to scroll, which is how 3.1 shows a full window: arrows still there,
+   trough bare. */
+static void sb_geom(HWND h, RECT *up, RECT *dn, RECT *tr, RECT *th)
+{
+    RECT rc;
+    long max = sb_get(h, SBX_MAX), pos = sb_get(h, SBX_POS);
+    long page = sb_get(h, SBX_PAGE);
+    int run, size;
+
+    GetClientRect(h, &rc);
+    SetRect(up, 0, 0, CHROME_SB_W, SB_UNIT);
+    SetRect(dn, 0, (int)rc.bottom - SB_UNIT, CHROME_SB_W, (int)rc.bottom);
+    SetRect(tr, 0, up->bottom, CHROME_SB_W, dn->top);
+    SetRect(th, 0, 0, 0, 0);
+    if (tr->bottom <= tr->top || max <= 0)
+        return;
+
+    /* The thumb is as much of the trough as the page is of everything,
+       floored so it stays grabbable. */
+    run = tr->bottom - tr->top;
+    if (page < 1)
+        page = 1;
+    size = (int)((long)run * page / (max + page));
+    if (size < SB_MINTHUMB)
+        size = SB_MINTHUMB;
+    if (size > run)
+        size = run;
+    th->left = 0;
+    th->right = CHROME_SB_W;
+    th->top = tr->top + (int)((long)(run - size) * pos / max);
+    th->bottom = th->top + size;
+}
+
+/* One 15 px interior with its black line under it: an arrow button, or
+   the thumb. `pressed` sinks it, which is all 3.1 did to show a held
+   arrow. */
+static void sb_block(HDC hdc, const RECT *b, int pressed)
+{
+    /* The interior, INSIDE the black lines the bar's outline supplies:
+       columns 1..15 of the 17, and rows one in from each end. */
+    int l = b->left + 1, r = b->right - 2;
+    int t = b->top + 1, bo = b->bottom - 2;
+    RECT in;
+
+    if (bo < t)
+        return;
+    SetRect(&in, l, t, r + 1, bo + 1);
+    fill(hdc, &in, C_FACE);
+    if (pressed) {
+        hline(hdc, l, r, t, C_SHADOW);
+        hline(hdc, l, r, t + 1, C_SHADOW);
+        vline(hdc, l, t, bo, C_SHADOW);
+        vline(hdc, l + 1, t, bo, C_SHADOW);
+        return;
+    }
+    /* Highlight first, shadow second, and the corners mitre themselves
+       where the two meet - the same ordering the caption buttons use,
+       and measured the same way. One pixel of highlight, two of shadow;
+       a push button gets two and two. */
+    hline(hdc, l, r, t, C_HILIGHT);
+    vline(hdc, l, t, bo, C_HILIGHT);
+    hline(hdc, l, r, bo, C_SHADOW);
+    vline(hdc, r, t, bo, C_SHADOW);
+    hline(hdc, l + 1, r, bo - 1, C_SHADOW);
+    vline(hdc, r - 1, t + 1, bo, C_SHADOW);
+}
+
+/* Triangle then stem: 1-3-5-7 wide over four rows, then three rows of
+   three. Reversed for the down arrow, which is the same shape upside
+   down and not a separate drawing. */
+static void sb_arrow(HDC hdc, const RECT *b, int up, int pressed)
+{
+    int cx = b->left + 1 + 7;           /* centre of the 15 px interior */
+    int y0 = b->top + 5 + (pressed ? 1 : 0);
+    int i;
+
+    for (i = 0; i < 7; i++) {
+        int row = up ? i : 6 - i;
+        int w = row < 4 ? 1 + row * 2 : 3;
+
+        hline(hdc, cx - w / 2 + (pressed ? 1 : 0),
+              cx + w / 2 + (pressed ? 1 : 0), y0 + i, C_FRAME);
+    }
+}
+
+static void sb_paint(HWND h, HDC hdc)
+{
+    RECT rc, up, dn, tr, th;
+    int held = (g_sb_track == h) ? g_sb_part : SBP_NONE;
+
+    GetClientRect(h, &rc);
+    sb_geom(h, &up, &dn, &tr, &th);
+
+    /* The trough first, then everything that sits on it. */
+    fill(hdc, &tr, C_FACE);
+
+    sb_block(hdc, &up, held == SBP_UP);
+    sb_arrow(hdc, &up, 1, held == SBP_UP);
+    sb_block(hdc, &dn, held == SBP_DOWN);
+    sb_arrow(hdc, &dn, 0, held == SBP_DOWN);
+    if (th.bottom > th.top) {
+        sb_block(hdc, &th, 0);
+        /* A black line at each end of it, exactly as the arrow buttons
+           have - where they meet, the two share one. */
+        hline(hdc, 0, CHROME_SB_W - 1, th.top, C_FRAME);
+        hline(hdc, 0, CHROME_SB_W - 1, th.bottom - 1, C_FRAME);
+    }
+
+    /* And the black outline the whole column sits in. Last, so the
+       blocks cannot paint over it. */
+    vline(hdc, 0, 0, (int)rc.bottom - 1, C_FRAME);
+    vline(hdc, CHROME_SB_W - 1, 0, (int)rc.bottom - 1, C_FRAME);
+    hline(hdc, 0, CHROME_SB_W - 1, 0, C_FRAME);
+    hline(hdc, 0, CHROME_SB_W - 1, (int)rc.bottom - 1, C_FRAME);
+    hline(hdc, 0, CHROME_SB_W - 1, up.bottom - 1, C_FRAME);
+    hline(hdc, 0, CHROME_SB_W - 1, dn.top, C_FRAME);
+}
+
+static int sb_hit(HWND h, POINT pt)
+{
+    RECT up, dn, tr, th;
+
+    sb_geom(h, &up, &dn, &tr, &th);
+    if (PtInRect(&up, pt)) return SBP_UP;
+    if (PtInRect(&dn, pt)) return SBP_DOWN;
+    if (th.bottom > th.top && PtInRect(&th, pt)) return SBP_THUMB;
+    if (PtInRect(&tr, pt))
+        return (th.bottom > th.top && pt.y >= th.bottom)
+               ? SBP_PAGEDOWN : SBP_PAGEUP;
+    return SBP_NONE;
+}
+
+/* Speak to the parent the way a real scrollbar does, so a window that
+   already handles WM_VSCROLL takes one of these without changing. */
+static void sb_notify(HWND h, int code, long pos)
+{
+    SendMessage(GetParent(h), WM_VSCROLL,
+                LLM_SCROLL_WP(code, (int)pos),
+                LLM_SCROLL_LP((int)pos, h));
+}
+
+static void sb_act(HWND h, int part)
+{
+    switch (part) {
+    case SBP_UP:       sb_notify(h, SB_LINEUP, 0);   break;
+    case SBP_DOWN:     sb_notify(h, SB_LINEDOWN, 0); break;
+    case SBP_PAGEUP:   sb_notify(h, SB_PAGEUP, 0);   break;
+    case SBP_PAGEDOWN: sb_notify(h, SB_PAGEDOWN, 0); break;
+    }
+}
+
+/* Where the thumb has been dragged to, in the parent's units. */
+static long sb_from_point(HWND h, int y)
+{
+    RECT up, dn, tr, th;
+    long max = sb_get(h, SBX_MAX);
+    int run, size, top;
+
+    sb_geom(h, &up, &dn, &tr, &th);
+    size = th.bottom - th.top;
+    run = (tr.bottom - tr.top) - size;
+    if (run <= 0 || max <= 0)
+        return 0;
+    top = y - g_sb_grab - tr.top;
+    if (top < 0) top = 0;
+    if (top > run) top = run;
+    return (long)top * max / run;
+}
+
+LONG FAR PASCAL _export chrome_sbproc(HWND hwnd, UINT msg, UINT wParam,
+                                      LONG lParam)
+{
+    PAINTSTRUCT ps;
+    POINT pt;
+
+    switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;                       /* WM_PAINT covers every pixel */
+
+    case WM_PAINT:
+        /* A DC in wParam means "draw yourself here" - the convention
+           WM_PAINT has always had, and how spike/ctl.c photographs one
+           of these without a screen to put it on. */
+        if (wParam) {
+            sb_paint(hwnd, (HDC)wParam);
+            return 0;
+        }
+        BeginPaint(hwnd, &ps);
+        sb_paint(hwnd, ps.hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
+
+    case WM_LBUTTONDOWN:
+        pt.x = GET_X_LPARAM(lParam);
+        pt.y = GET_Y_LPARAM(lParam);
+        g_sb_part = sb_hit(hwnd, pt);
+        if (g_sb_part == SBP_NONE)
+            return 0;
+        g_sb_track = hwnd;
+        SetCapture(hwnd);
+        if (g_sb_part == SBP_THUMB) {
+            RECT up, dn, tr, th;
+
+            sb_geom(hwnd, &up, &dn, &tr, &th);
+            g_sb_grab = pt.y - th.top;
+        } else {
+            InvalidateRect(hwnd, NULL, FALSE);
+            sb_act(hwnd, g_sb_part);
+            /* Held, not clicked: the first repeat waits, the rest do
+               not. Which is what every scrollbar has always done. */
+            SetTimer(hwnd, SB_TIMER, SB_DELAY, NULL);
+        }
+        return 0;
+
+    case WM_MOUSEMOVE:
+        if (g_sb_track == hwnd && g_sb_part == SBP_THUMB)
+            sb_notify(hwnd, SB_THUMBTRACK,
+                      sb_from_point(hwnd, GET_Y_LPARAM(lParam)));
+        return 0;
+
+    case WM_TIMER:
+        if (g_sb_track != hwnd || g_sb_part == SBP_THUMB)
+            return 0;
+        KillTimer(hwnd, SB_TIMER);
+        SetTimer(hwnd, SB_TIMER, SB_REPEAT, NULL);
+        /* Only while the pointer is still on the part it went down on -
+           sliding off a repeating arrow has to stop it. */
+        GetCursorPos(&pt);
+        ScreenToClient(hwnd, &pt);
+        if (sb_hit(hwnd, pt) == g_sb_part)
+            sb_act(hwnd, g_sb_part);
+        return 0;
+
+    case WM_LBUTTONUP:
+        if (g_sb_track != hwnd)
+            return 0;
+        KillTimer(hwnd, SB_TIMER);
+        ReleaseCapture();
+        if (g_sb_part == SBP_THUMB)
+            sb_notify(hwnd, SB_THUMBPOSITION,
+                      sb_from_point(hwnd, GET_Y_LPARAM(lParam)));
+        g_sb_track = NULL;
+        g_sb_part = SBP_NONE;
+        InvalidateRect(hwnd, NULL, FALSE);
+        return 0;
+    }
+    return DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+int chrome_scrollbar_init(HINSTANCE inst)
+{
+    WNDCLASS wc;
+
+    memset(&wc, 0, sizeof(wc));
+    wc.style         = CS_HREDRAW | CS_VREDRAW;
+    wc.lpfnWndProc   = (WNDPROC)chrome_sbproc;
+    wc.hInstance     = inst;
+    wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
+    wc.hbrBackground = NULL;        /* sb_paint owns every pixel */
+    wc.cbWndExtra    = SBX_BYTES;
+    wc.lpszClassName = (LPCSTR)SB_CLASS;
+    return RegisterClass(&wc) != 0;
+}
+
+HWND chrome_scrollbar(HWND parent, int id)
+{
+    return CreateWindow((LPCSTR)SB_CLASS, NULL, WS_CHILD | WS_VISIBLE,
+                        0, 0, CHROME_SB_W, CHROME_SB_W, parent,
+                        (HMENU)id, LLM_INST(parent), NULL);
+}
+
+void chrome_scrollbar_set(HWND sb, long pos, long max, long page)
+{
+    if (!sb)
+        return;
+    if (max < 0)  max = 0;
+    if (page < 1) page = 1;
+    if (pos < 0)  pos = 0;
+    if (pos > max) pos = max;
+    if (sb_get(sb, SBX_POS) == pos && sb_get(sb, SBX_MAX) == max
+        && sb_get(sb, SBX_PAGE) == page)
+        return;                     /* nothing moved - do not flicker */
+    SetWindowLong(sb, SBX_POS, pos);
+    SetWindowLong(sb, SBX_MAX, max);
+    SetWindowLong(sb, SBX_PAGE, page);
+    InvalidateRect(sb, NULL, FALSE);
+}
