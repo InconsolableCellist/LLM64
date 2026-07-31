@@ -94,6 +94,11 @@
 /* The Music window's playback controls. */
 #define IDC_MUSBASE     1600
 
+/* Help > About. One button on it does something: the web address is a
+   pushbutton rather than a blue underlined hyperlink, because a link you
+   click in running text is a 1996 idea and this program is 1993. */
+#define IDC_ABOUTWWW    1801
+
 /* The Conversations browser. */
 #define IDC_CONVLIST    1701
 #define IDC_CONVLOAD    1702

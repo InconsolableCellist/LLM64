@@ -51,7 +51,7 @@ W32OBJ  := $(patsubst src/%.c,build/w32/%.o,$(SRC))
 EXE32   := build/LLM32.EXE
 # -mwindows picks the GUI subsystem, so no console appears behind it.
 W32CFLAGS := -std=gnu89 -O2 -Wall -Iinclude -mwindows
-W32LIBS   := -lcomdlg32 -lwinmm -lws2_32 -lgdi32 -luser32 -lkernel32
+W32LIBS   := -lcomdlg32 -lwinmm -lws2_32 -lgdi32 -luser32 -lkernel32 -lshell32
 
 # -bt=windows  16-bit Windows target      -ml  large model (far code+data)
 # -zW          Windows API prologue        -zu  DS != SS, as callbacks need
@@ -221,7 +221,7 @@ build/%.obj: src/%.c | build
 	$(OWBIN)/wcc $(CFLAGS) -fo=$@ $<
 
 $(EXE): $(OBJ) $(RC) | build
-	$(OWBIN)/wcl $(LFLAGS) -fe=$@ $(OBJ) winsock.lib commdlg.lib mmsystem.lib
+	$(OWBIN)/wcl $(LFLAGS) -fe=$@ $(OBJ) winsock.lib commdlg.lib mmsystem.lib shell.lib
 	$(OWBIN)/wrc -q -bt=windows -i=$(WATCOM)/h/win -i=include -fo=build/llm64.res $(RC) $@
 	@rm -f __wcl_*.lnk
 

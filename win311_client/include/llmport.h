@@ -104,6 +104,10 @@
    it WNDPROC; each rejects the other's spelling outright. */
 typedef FARPROC LlmOldProc;
 
+/* ShellExecute answers a fake HINSTANCE, and anything above 32 means it
+   worked. A handle is a word here, so the compare is one cast wide. */
+#define LLM_SHELL_OK(h)     ((UINT)(h) > 32)
+
 #else
 /* ---------------------------------------------------------------- 32 */
 
@@ -176,6 +180,11 @@ typedef FARPROC LlmOldProc;
     } while (0)
 
 typedef WNDPROC LlmOldProc;     /* see the Watcom branch above */
+
+/* The same fake HINSTANCE, 32 bits wide. Casting straight to UINT would
+   warn about a pointer losing precision on the way, so it goes through
+   an integer of pointer width first. */
+#define LLM_SHELL_OK(h)     ((UINT)(UINT_PTR)(h) > 32)
 
 /* Removed from Win32 in favour of the ...Ex forms. The return value of
    MoveTo was the previous position and no caller here wants it. */

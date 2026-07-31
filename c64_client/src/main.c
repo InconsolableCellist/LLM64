@@ -1384,7 +1384,7 @@ static void handle_key(uint8_t k) {
 #define RETRY_HINT_PING    "No server response - any key retries."
 #endif
 
-/* One coloured line of the shareware banner. The break is emitted as a
+/* One coloured line of the donationware banner. The break is emitted as a
    raw 0x0A rather than a '\n' literal: cc65's C64 charmap folds '\n' to
    CR, which chat_append_ascii_char ignores. Passing s=="" just breaks a
    blank line at the current colour. */
@@ -1477,22 +1477,28 @@ int main(void) {
     chat_append_petscii("Type /help for more help, or F1 for the main menu");
     chat_finish();
 
-    /* Shareware banner. Client-side and unconditional so it greets every
-       fresh connect regardless of proxy version. Colours are per line
-       (soft-80 renders them; the 40-col build shows one base colour). */
+    /* Donationware banner. Client-side and unconditional so it greets
+       every fresh connect regardless of proxy version. Colours are per
+       line (soft-80 renders them; the 40-col build shows one base
+       colour), and no line may exceed 40 columns - the 40-col build has
+       nowhere to put the rest.
+
+       The wording and the amount are the README's and the Windows
+       client's About box: donationware, $10. Three places say this and
+       they have to say the same thing. */
     chat_start(2);
     welcome_line(COLOR_YELLOW,     "Welcome to LLM64");
     welcome_line(COLOR_GRAY2,      "(C) Foxipso 2026");
     welcome_line(COLOR_LIGHTBLUE,  "foxipso.com");
     welcome_line(COLOR_GRAY2,      "");
-    welcome_line(COLOR_WHITE,      "LLM64 is Shareware, however...");
+    welcome_line(COLOR_WHITE,      "LLM64 is donationware, however...");
     welcome_line(COLOR_LIGHTGREEN, "I'd greatly appreciate it if you'd");
     welcome_line(COLOR_LIGHTGREEN, "support my work!");
     welcome_line(COLOR_GRAY2,      "");
     welcome_line(COLOR_CYAN,       "ko-fi.com/foxipso");
     welcome_line(COLOR_CYAN,       "patreon.com/c/foxipso");
     welcome_line(COLOR_GRAY2,      "");
-    welcome_line(COLOR_YELLOW,     "Recommended Shareware Price: $7");
+    welcome_line(COLOR_YELLOW,     "Recommended donation: $10");
     welcome_line(COLOR_LIGHTGREEN, "Have fun!");
     chat_finish();
 

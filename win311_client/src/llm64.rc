@@ -183,6 +183,38 @@ BEGIN
     PUSHBUTTON      "Cancel",            IDCANCEL, 128, 64,  50, 14
 END
 
+/* Help > About: what this program is, who wrote it, and what it costs.
+   The same three things the C64 client says on its welcome screen, and
+   for the same reason - a shareware program has to tell you it is one,
+   and it is the only place in the program that can.
+
+   Every block is allotted at least one line more than the text needs at
+   3.1's dialog font. Dialog units scale with the font, so the widths
+   carry across to a modern host, but a wider face wraps a paragraph at
+   different words and can spill a line - the slack absorbs it. */
+LLM64ABOUT DIALOG 30, 24, 232, 190
+/* WS_CAPTION stays, deliberately - see the note on LLM64ACTIONS. */
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "About LLM64"
+BEGIN
+    /* SS_NOPREFIX throughout: '&' is a literal ampersand in prose, and
+       without it "D&D" prints as "DD" with the second D underlined. */
+    LTEXT   "LLM64 for Windows", -1, 12, 10, 208, 10, SS_NOPREFIX
+    LTEXT   "An infinite D&D-style text adventure, an AI assistant and a \
+chat client, played against a local or remote Large Language Model \
+through the LLM64 proxy.",
+            -1, 12, 24, 208, 40, SS_NOPREFIX
+    LTEXT   "(C) Foxipso 2026", -1, 12, 70, 208, 10, SS_NOPREFIX
+    LTEXT   "foxipso.com",      -1, 12, 82, 208, 10, SS_NOPREFIX
+    LTEXT   "LLM64 is donationware. If you enjoy it, please consider \
+supporting my work - the recommended donation is $10.",
+            -1, 12, 100, 208, 30, SS_NOPREFIX
+    LTEXT   "ko-fi.com/foxipso",     -1, 12, 134, 208, 10, SS_NOPREFIX
+    LTEXT   "patreon.com/c/foxipso", -1, 12, 146, 208, 10, SS_NOPREFIX
+    PUSHBUTTON      "&Visit foxipso.com", IDC_ABOUTWWW, 46, 168, 80, 14
+    DEFPUSHBUTTON   "OK",                 IDOK,        136, 168, 50, 14
+END
+
 /* The message box, ours.
  *
  * MessageBox() draws the host's, and on Windows 11 that is the one

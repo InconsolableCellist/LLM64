@@ -41,6 +41,7 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <mmsystem.h>   /* MCI: the sequencer plays our .MIDs */
+#include <shellapi.h>   /* ShellExecute, for the address in the About box */
 #include <string.h>
 #include <stdlib.h>
 #include "llmport.h"    /* the 16-bit/32-bit seam; brings i86.h on Watcom */
@@ -5072,6 +5073,72 @@ static int llm_message(HWND owner, LPCSTR text, LPCSTR title, UINT type)
     return (type & MB_TYPEMASK) == MB_YESNO ? IDYES : IDOK;
 }
 
+/* ---------------------------------------------------------------- */
+/* About: what this program is, and who to thank for it              */
+/* ---------------------------------------------------------------- */
+
+/* Hand a web address to whatever the host opens one with. Windows 95
+   and later have a browser associated with "http:" and this works;
+   3.11 has no such association and ShellExecute just fails, so the
+   fallback says the address out loud - which is all a 1993 About box
+   could have done anyway. */
+static void open_url(HWND owner, LPCSTR url)
+{
+    char msg[160];
+
+    if (LLM_SHELL_OK(ShellExecute(owner, "open", url, NULL, NULL,
+                                  SW_SHOWNORMAL)))
+        return;
+    wsprintf(msg, "No browser is set up on this machine.\n\n"
+                  "The address is %s", (LPSTR)url);
+    llm_message(owner, msg, "About LLM64", MB_OK | MB_ICONINFORMATION);
+}
+
+BOOL FAR PASCAL _export AboutDlgProc(HWND dlg, UINT msg, UINT wParam,
+                                     LONG lParam)
+{
+    LONG cres;
+    (void)lParam;
+
+    /* The 3.1 palette for the controls, then the 3.1 dialog frame -
+       same order and same reasons as every other box here. */
+    if (LLM_IS_CTLCOLOR(msg) && chrome_ctlcolor(msg, wParam, lParam, &cres))
+        return (BOOL)cres;
+    if (chrome_dialog_msg(dlg, msg, wParam, lParam, &cres)) {
+        SetWindowLong(dlg, DWL_MSGRESULT, cres);
+        return TRUE;
+    }
+
+    switch (msg) {
+    case WM_INITDIALOG:
+        return TRUE;
+
+    case WM_COMMAND:
+        switch (LLM_CMD_ID(wParam, lParam)) {
+        case IDC_ABOUTWWW:
+            open_url(dlg, "https://foxipso.com");
+            return TRUE;
+
+        case IDOK:
+        case IDCANCEL:
+            EndDialog(dlg, 0);
+            return TRUE;
+        }
+        break;
+    }
+    return FALSE;
+}
+
+/* Help > About. */
+static void about_dialog(HWND owner)
+{
+    HINSTANCE inst = LLM_INST(owner);
+    FARPROC fn = MakeProcInstance((FARPROC)AboutDlgProc, inst);
+
+    DialogBox(inst, "LLM64ABOUT", owner, (DLGPROC)fn);
+    FreeProcInstance(fn);
+}
+
 static void new_conversation(void)
 {
     send_frame(MSG_NEW_CONVERSATION, NULL, 0);
@@ -5515,11 +5582,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         case IDM_CANCEL:     send_frame(MSG_CANCEL_REQUEST, NULL, 0);
                              input_enable(1); return 0;
         case IDM_ABOUT:
-            llm_message(hwnd,
-                        "LLM64 for Windows\n\n"
-                        "A Windows 3.1 client for the LLM64 proxy.\n"
-                        "Phase 1.",
-                        "About LLM64", MB_OK | MB_ICONINFORMATION);
+            about_dialog(hwnd);
             return 0;
         case IDM_EXIT:
             PostMessage(hwnd, WM_CLOSE, 0, 0L);
