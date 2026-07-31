@@ -59,15 +59,17 @@ model = "gemini-2.5-flash-image"
 # ComfyUI has NO authentication: keep it on localhost or a trusted
 # LAN/tailnet.
 #
-# workflows/flux2-klein-retro.json ships ready to use. To adapt your own,
-# export it in API format (Workflow -> Export (API)) and put {PROMPT} in
-# the positive-prompt box; the tokens below work anywhere in any node
-# input, and a box holding EXACTLY one token keeps that token's type, so
-# "width": "{WIDTH}" arrives as an integer.
+# workflows/flux2-klein-retro.json ships ready to use and is the default
+# when `workflow` is unset - backend = "comfyui" alone is a working
+# setup. To adapt your own, export it in API format (Workflow -> Export
+# (API)) and put {PROMPT} in the positive-prompt box; the tokens below
+# work anywhere in any node input, and a box holding EXACTLY one token
+# keeps that token's type, so "width": "{WIDTH}" arrives as an integer.
 #
 # [images.comfyui]
 # url = "http://127.0.0.1:8188"
-# workflow = "./workflows/flux2-klein-retro.json"  # relative to this file
+# workflow = "my-workflow.json"   # relative to this file; a bare name
+#                                 # also matches the bundled workflows
 # timeout = 300           # seconds; raise on slow GPUs
 # randomize_seed = true   # off = identical prompts return ComfyUI's cache
 # seed = 12345            # pin it to compare prompts; omit to vary
@@ -87,8 +89,11 @@ model = "gemini-2.5-flash-image"
 # steps = 8
 # cfg = 1.0
 #
-# {MODEL} {CLIP} {VAE} - checkpoint filenames as ComfyUI sees them.
+# {MODEL} {CLIP} {VAE} - checkpoint filenames as ComfyUI sees them. The
+#   launcher's ↻ buttons list what the running instance actually has.
 # model = "flux-2-klein-9b-fp8.safetensors"
+# clip = "qwen_3_8b_fp8mixed.safetensors"
+# vae = "flux2-vae.safetensors"
 #
 # {NEGATIVE} - see the cfg note above before tuning this.
 # negative = "text, watermark, border, blurry"

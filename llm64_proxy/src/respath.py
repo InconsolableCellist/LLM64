@@ -21,3 +21,10 @@ def resource_dir() -> Path:
             base = Path(sys.executable).resolve().parent
         return Path(base) / 'src'
     return Path(__file__).resolve().parent
+
+
+def bundled_workflows_dir() -> Path:
+    """The ComfyUI workflows that ship with the proxy (workflows/ sits
+    beside src/ in a checkout, and the spec bundles it at the same
+    level, so it is resource_dir()'s sibling in both layouts)."""
+    return resource_dir().parent / 'workflows'

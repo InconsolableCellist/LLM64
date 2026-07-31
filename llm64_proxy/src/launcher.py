@@ -35,10 +35,11 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 
 import tomlkit
 
+from . import discovery
 from .config import Config
 from .api_client import APIClient
 from .tcp_server import C64Server
-from .respath import resource_dir
+from .respath import resource_dir, bundled_workflows_dir
 
 logger = logging.getLogger('launcher')
 
@@ -213,7 +214,10 @@ def _setup_logging(ui_queue):
 # Config schema for the form editor
 #
 # (dotted section, tab-visible title, [(key, type, label, help), ...]).
-# type is str | secret | int | float | bool:<default> | choice:a,b,c.
+# type is str | secret | int | float | bool:<default> | choice:a,b,c
+# | pick:<source>. pick is a free-text combobox whose ↻ button asks the
+# endpoint what it actually serves (see _discover for the sources); the
+# field stays hand-editable because discovery needs the server up.
 # The help strings are the config.toml.example comments, shortened.
 
 CONFIG_SCHEMA = [
@@ -229,7 +233,8 @@ CONFIG_SCHEMA = [
          'OpenAI-compatible endpoint, e.g. http://localhost:8080/v1'),
         ('key', 'secret', 'API key',
          'Blank is fine for local servers. OPENAI_API_KEY env overrides.'),
-        ('model', 'str', 'Model', ''),
+        ('model', 'pick:llm', 'Model',
+         '↻ lists what the endpoint serves (GET /models)'),
         ('temperature', 'float', 'Temperature',
          '0.0 - 2.0, lower = more focused (default 0.7)'),
         ('max_tokens', 'int', 'Max reply tokens',
@@ -273,14 +278,16 @@ CONFIG_SCHEMA = [
          'unset = the built-in dark-fantasy text.'),
     ]),
     ('images.gemini', 'Images: Gemini', [
-        ('model', 'str', 'Model', 'default gemini-2.5-flash-image'),
+        ('model', 'pick:gemini', 'Model',
+         'default gemini-2.5-flash-image; ↻ needs the key set'),
         ('key', 'secret', 'API key',
          'GEMINI_API_KEY env is the recommended place instead'),
     ]),
     ('images.openai', 'Images: OpenAI-style', [
         ('base_url', 'str', 'Base URL',
          'Anything serving POST /v1/images/generations'),
-        ('model', 'str', 'Model', 'e.g. dall-e-3'),
+        ('model', 'pick:openai_images', 'Model',
+         'e.g. dall-e-3; ↻ lists what the endpoint serves'),
         ('size', 'str', 'Size',
          'landscape suits the 320x200 frame; 1024x1024 is the safe choice'),
         ('key', 'secret', 'API key', 'or the LLM64_IMAGES_KEY env var'),
@@ -288,15 +295,19 @@ CONFIG_SCHEMA = [
     ('images.comfyui', 'Images: ComfyUI', [
         ('url', 'str', 'URL', 'e.g. http://127.0.0.1:8188 - ComfyUI has '
          'no auth, keep it on a trusted network'),
-        ('workflow', 'str', 'Workflow JSON',
+        ('workflow', 'pick:workflows', 'Workflow JSON',
          'API-format export with {PROMPT} in the positive prompt; '
-         'relative to config.toml'),
+         'relative to config.toml. Empty = the bundled Flux workflow.'),
         ('timeout', 'int', 'Timeout (s)', 'raise on slow GPUs'),
         ('width', 'int', 'Width', 'keep ~1.6:1 or the letterbox eats it'),
         ('height', 'int', 'Height', ''),
         ('steps', 'int', 'Steps', ''),
         ('cfg', 'float', 'CFG', 'cfg 1 disables the negative prompt'),
-        ('model', 'str', 'Checkpoint', 'filename as ComfyUI sees it'),
+        ('model', 'pick:comfy_model', 'Checkpoint',
+         'filename as ComfyUI sees it; ↻ asks the running instance'),
+        ('clip', 'pick:comfy_clip', 'CLIP',
+         'fills {CLIP} - only Flux-style split workflows use it'),
+        ('vae', 'pick:comfy_vae', 'VAE', 'fills {VAE}, same deal'),
         ('negative', 'str', 'Negative prompt', ''),
         ('style', 'str', 'Style', ''),
     ]),
@@ -404,6 +415,7 @@ class LauncherApp(tk.Tk):
         self._file_handler_path = None
         self._fields = {}       # (section, key) -> (widget var, type, initial)
         self._doc = None        # tomlkit document behind the form
+        self._discover_queue = queue.Queue()   # (combo, btn, list or exc)
 
         self._build_ui()
         self._load_editor()
@@ -573,6 +585,18 @@ class LauncherApp(tk.Tk):
                         box, textvariable=var, state='readonly',
                         values=[''] + ftype.split(':')[1].split(','))
                     initial = var.get()
+                elif ftype.startswith('pick:'):
+                    # Free-text combobox; ↻ fills the dropdown with what
+                    # the endpoint reports. Typing stays possible because
+                    # discovery needs the server up and configured.
+                    var = tk.StringVar(value='' if raw is None else str(raw))
+                    source = ftype.split(':')[1]
+                    w = ttk.Combobox(box, textvariable=var)
+                    btn = ttk.Button(box, text='↻', width=3)
+                    btn.configure(command=lambda s=source, c=w, b=btn:
+                                  self._discover(s, c, b))
+                    btn.grid(row=row * 2, column=2, padx=(4, 0))
+                    initial = var.get()
                 else:
                     var = tk.StringVar(value='' if raw is None else str(raw))
                     show = '*' if ftype == 'secret' else ''
@@ -589,6 +613,115 @@ class LauncherApp(tk.Tk):
                     hint.grid(row=row * 2 + 1, column=1, sticky='w',
                               pady=(0, 3))
                 self._fields[(section, key)] = (var, ftype, initial, present)
+
+    # ---- model discovery ----
+
+    def _field_value(self, section, key, env=None, default=''):
+        """What the user has in a form field right now (not what is
+        saved), falling back to an env var and then a default - the same
+        precedence the server applies at start."""
+        entry = self._fields.get((section, key))
+        val = entry[0].get().strip() if entry else ''
+        if not val and env:
+            val = os.environ.get(env, '').strip()
+        return val or default
+
+    def _discover(self, source, combo, btn):
+        """↻ pressed: fill the combobox's dropdown with live choices.
+        Network sources run on a throwaway thread and come back through
+        _discover_queue; the workflows source is a local scan."""
+        if source == 'workflows':
+            combo['values'] = self._workflow_choices()
+            combo.focus_set()
+            combo.event_generate('<Down>')
+            return
+        try:
+            fetch = self._discover_fetch(source)
+        except discovery.DiscoveryError as e:
+            messagebox.showerror('Discovery failed', str(e))
+            return
+        btn.state(['disabled'])
+        threading.Thread(
+            target=lambda: self._discover_queue.put(
+                (combo, btn, self._discover_run(fetch))),
+            name='llm64-discover', daemon=True).start()
+
+    @staticmethod
+    def _discover_run(fetch):
+        try:
+            return fetch()
+        except Exception as e:
+            return e
+
+    def _discover_fetch(self, source):
+        """A zero-arg callable for the worker thread, with everything it
+        needs captured here on the UI thread (tk vars are not for other
+        threads to read)."""
+        if source == 'llm':
+            base = self._field_value('api', 'base_url', 'OPENAI_API_BASE',
+                                     'https://api.openai.com/v1')
+            key = self._field_value('api', 'key', 'OPENAI_API_KEY')
+            return lambda: discovery.openai_models(base, key)
+        if source == 'openai_images':
+            base = self._field_value('images.openai', 'base_url', None,
+                                     'https://api.openai.com/v1')
+            key = self._field_value('images.openai', 'key',
+                                    'LLM64_IMAGES_KEY')
+            return lambda: discovery.openai_models(base, key)
+        if source == 'gemini':
+            key = self._field_value('images.gemini', 'key',
+                                    'GEMINI_API_KEY')
+            if not key:
+                raise discovery.DiscoveryError(
+                    'Set the Gemini API key (or GEMINI_API_KEY) first')
+            return lambda: discovery.gemini_image_models(key)
+        url = self._field_value('images.comfyui', 'url', None,
+                                'http://127.0.0.1:8188')
+        nodes = {'comfy_model': discovery.COMFY_MODEL_NODES,
+                 'comfy_clip': discovery.COMFY_CLIP_NODES,
+                 'comfy_vae': discovery.COMFY_VAE_NODES}[source]
+        return lambda: discovery.comfy_model_choices(url, nodes)
+
+    def _workflow_choices(self):
+        """Workflow files a config can point at: bundled ones by bare
+        name (imagegen falls back to the bundle for those, which also
+        holds inside a frozen binary), plus JSON next to config.toml and
+        in its workflows/ folder, as config-relative paths."""
+        config_dir = Path(self.config_path.get()).resolve().parent
+        choices = {}    # label -> resolved path, first one wins
+        for label, path in (
+                [(p.name, p)
+                 for p in sorted(bundled_workflows_dir().glob('*.json'))]
+                + [(f'workflows/{p.name}', p)
+                   for p in sorted((config_dir / 'workflows').glob('*.json'))]
+                + [(p.name, p) for p in sorted(config_dir.glob('*.json'))]):
+            resolved = path.resolve()
+            if resolved not in choices.values() and label not in choices:
+                choices[label] = resolved
+        return list(choices)
+
+    def _drain_discovery(self):
+        while True:
+            try:
+                combo, btn, result = self._discover_queue.get_nowait()
+            except queue.Empty:
+                return
+            # The form may have been rebuilt (Reload) since the fetch
+            # started; stale widgets just drop their result.
+            if btn.winfo_exists():
+                btn.state(['!disabled'])
+            if not combo.winfo_exists():
+                continue
+            if isinstance(result, discovery.DiscoveryError):
+                messagebox.showerror('Discovery failed', str(result))
+            elif isinstance(result, Exception):
+                messagebox.showerror(
+                    'Discovery failed',
+                    f'{type(result).__name__}: {result}')
+            else:
+                combo['values'] = result
+                combo.focus_set()
+                combo.event_generate('<Down>')
 
     # ---- form -> toml ----
 
@@ -750,6 +883,7 @@ class LauncherApp(tk.Tk):
 
     def _tick(self):
         self._drain_log()
+        self._drain_discovery()
         snap = self.ctl.snapshot()
         self._update_status(snap)
         self._ensure_file_log(snap)

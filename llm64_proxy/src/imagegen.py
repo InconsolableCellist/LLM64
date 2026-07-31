@@ -42,11 +42,14 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
+from .respath import bundled_workflows_dir
+
 logger = logging.getLogger(__name__)
 
 MAX_BYTES = 16 * 1024 * 1024
 LEGACY_DIR = Path.home() / "Pictures" / "nano-banana"
 PROMPT_TOKEN = "{PROMPT}"
+DEFAULT_WORKFLOW = "flux2-klein-retro.json"
 
 # Everything else a ComfyUI workflow may template, and what it defaults to.
 #
@@ -331,9 +334,8 @@ class ComfyUIBackend(ImageBackend):
 
     def __init__(self, cfg, data_dir, base_dir="."):
         self.url = (cfg.get("url") or "http://127.0.0.1:8188").rstrip("/")
-        wf = Path(os.path.expanduser(
-            cfg.get("workflow") or "./comfyui_workflow_api.json"))
-        self.workflow_path = wf if wf.is_absolute() else Path(base_dir) / wf
+        self.workflow_path = self._resolve_workflow(
+            cfg.get("workflow"), base_dir)
         self.timeout = float(cfg.get("timeout", 300))
         self.randomize_seed = bool(cfg.get("randomize_seed", True))
         self.data_dir = data_dir
@@ -373,6 +375,26 @@ class ComfyUIBackend(ImageBackend):
         extra = cfg.get("vars") or {}
         if isinstance(extra, dict):
             self.values.update({str(k).upper(): v for k, v in extra.items()})
+
+    @staticmethod
+    def _resolve_workflow(configured, base_dir):
+        """The workflow file to run. A relative path resolves against
+        config.toml's directory as always; if nothing is there but a
+        bundled workflow has that name, the bundled copy is used - which
+        is also what makes the bare default work in a frozen binary,
+        where the bundle unpacks somewhere unknowable at config-write
+        time. No workflow configured at all means the shipped Flux one,
+        so backend = "comfyui" alone is a working setup."""
+        wf = Path(os.path.expanduser(configured or DEFAULT_WORKFLOW))
+        if wf.is_absolute():
+            return wf
+        local = Path(base_dir) / wf
+        if local.exists():
+            return local
+        bundled = bundled_workflows_dir() / wf
+        if bundled.exists():
+            return bundled
+        return local
 
     @staticmethod
     def _node_inputs(graph):
