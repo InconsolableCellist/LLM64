@@ -104,6 +104,13 @@ static int   g_active = 1;
    can say which child that is. Measured off a real 3.11 client. */
 static HWND  g_mdi;
 
+/* A caption button being held. 3.1 shows the button depressed for as long
+   as the mouse is down and acts on the RELEASE, and only if the pointer is
+   still on it - acting on the press instead is both wrong and unforgiving,
+   since there is no way to change your mind. */
+static HWND  g_cdown_wnd;
+static int   g_cdown_hit;
+
 /* The maximised child, or NULL. IsZoomed rather than WM_MDIGETACTIVE's
    maximised flag, because that flag is reported differently on the two
    targets and this is not. */
@@ -1000,8 +1007,8 @@ void chrome_child_paint(HWND hwnd, HDC hdc, int active)
     SelectObject(hdc, of);
 
     sysmenu_box(hdc, &sys, BAR_CHILD);
-    raised_box(hdc, &mn, 0);
-    raised_box(hdc, &mx, 0);
+    raised_box(hdc, &mn, g_cdown_wnd == hwnd && g_cdown_hit == HTMINBUTTON);
+    raised_box(hdc, &mx, g_cdown_wnd == hwnd && g_cdown_hit == HTMAXBUTTON);
     arrow(hdc, mn.left + 8, mn.top + 7, 0);
     arrow(hdc, mx.left + 8, mx.top + 7, 1);
     vline(hdc, sys.right, sys.top, sys.bottom - 1, C_FRAME);
@@ -1095,17 +1102,43 @@ int chrome_child_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam,
        nothing, because the window it is drawing on is not the one it
        thinks. Claiming the click stops the tracking before it starts. */
     case WM_NCLBUTTONDOWN:
-        if (wParam == HTMINBUTTON) {
-            ShowWindow(hwnd, SW_MINIMIZE);
-            return 1;
-        }
-        if (wParam == HTMAXBUTTON) {
-            /* WM_MDIMAXIMIZE, not ShowWindow: MDI has to know, or the
-               frame caption never picks up " - [Title]". */
-            SendMessage(GetParent(hwnd), WM_MDIMAXIMIZE, (UINT)hwnd, 0L);
+        if (wParam == HTMINBUTTON || wParam == HTMAXBUTTON) {
+            g_cdown_wnd = hwnd;
+            g_cdown_hit = (int)wParam;
+            SetCapture(hwnd);
+            child_nc(hwnd);         /* show it depressed */
             return 1;
         }
         return 0;                   /* HTCAPTION and the edges are MDI's */
+
+    case WM_LBUTTONUP:
+        if (g_cdown_wnd == hwnd) {
+            int was = g_cdown_hit;
+            POINT sp;
+
+            g_cdown_wnd = NULL;
+            g_cdown_hit = 0;
+            ReleaseCapture();
+            child_nc(hwnd);         /* let it back up */
+            /* Only act if the pointer is still on the button it went down
+               on - the release comes here through the capture wherever it
+               happens. */
+            sp.x = GET_X_LPARAM(lParam);
+            sp.y = GET_Y_LPARAM(lParam);
+            ClientToScreen(hwnd, &sp);
+            if (SendMessage(hwnd, WM_NCHITTEST, 0,
+                            MAKELONG(sp.x, sp.y)) == was) {
+                if (was == HTMINBUTTON)
+                    ShowWindow(hwnd, SW_MINIMIZE);
+                else
+                    /* WM_MDIMAXIMIZE, not ShowWindow: MDI has to know, or
+                       the frame caption never picks up " - [Title]". */
+                    SendMessage(GetParent(hwnd), WM_MDIMAXIMIZE,
+                                (UINT)hwnd, 0L);
+            }
+            return 1;
+        }
+        return 0;
 
     case WM_SETTEXT:
         PostMessage(hwnd, WM_NCPAINT, 1, 0L);
@@ -1240,12 +1273,21 @@ static void dlg_sysbox(HWND dlg, RECT *sys)
  */
 void chrome_dialog_init(HWND dlg)
 {
-    RECT wr;
-    int host_x = 2 * GetSystemMetrics(SM_CXDLGFRAME);
-    int host_y = GetSystemMetrics(SM_CYCAPTION)
-               + 2 * GetSystemMetrics(SM_CYDLGFRAME);
+    RECT wr, ar;
+    int host_x, host_y;
     int ours_x = 2 * FRAME;
     int ours_y = FRAME + CAP_H + RULE + FRAME;
+
+    /* AdjustWindowRect, not a sum of SM_ metrics. It answers for THIS
+       window's actual style on THIS host, which is the only thing that
+       can be right on both a 1993 machine and a 2026 one - the hand-rolled
+       version left out what DS_MODALFRAME adds and was wrong by several
+       pixels on 3.11, which is enough to push a dialog's top row of
+       controls up under the caption. */
+    ar.left = 0; ar.top = 0; ar.right = 100; ar.bottom = 100;
+    AdjustWindowRect(&ar, GetWindowLong(dlg, GWL_STYLE), FALSE);
+    host_x = (ar.right - ar.left) - 100;
+    host_y = (ar.bottom - ar.top) - 100;
 
     GetWindowRect(dlg, &wr);
     SetWindowPos(dlg, NULL, 0, 0,
