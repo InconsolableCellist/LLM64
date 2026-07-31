@@ -197,10 +197,18 @@ static __inline DWORD llm_text_extent(HDC hdc, LPCSTR s, int n)
 
 /* ------------------------------------------------------------------ */
 
-/* What BM_GETSTATE answers with. Win32 gave the bits names; 3.1
-   documented them and left it there, so the 16-bit headers have the
-   message but not the vocabulary. Guarded rather than branched: on the
-   32-bit side these are already right and this whole block vanishes. */
+/* There was no wheel in 1993, so 3.1 has neither the message nor the
+   constant. Defined rather than branched on, so the scrollback's wheel
+   handler compiles for both targets; the 16-bit one simply never
+   receives it. 0x020A is unused in 3.1, so nothing else can arrive
+   wearing this number. */
+#ifndef WM_MOUSEWHEEL
+#define WM_MOUSEWHEEL   0x020A
+#endif
+#ifndef WHEEL_DELTA
+#define WHEEL_DELTA     120
+#endif
+
 /* The 3D window edges, which are Windows 95's and do not exist in 3.1 at
    all. Zero here rather than absent, so the code that takes them back
    off a control compiles for both targets and does nothing on the one
@@ -211,6 +219,10 @@ static __inline DWORD llm_text_extent(HDC hdc, LPCSTR s, int n)
 #define WS_EX_WINDOWEDGE    0L
 #endif
 
+/* What BM_GETSTATE answers with. Win32 gave the bits names; 3.1
+   documented them and left it there, so the 16-bit headers have the
+   message but not the vocabulary. Guarded rather than branched: on the
+   32-bit side these are already right and this whole block vanishes. */
 #ifndef BST_CHECKED
 #define BST_UNCHECKED       0x0000
 #define BST_CHECKED         0x0001

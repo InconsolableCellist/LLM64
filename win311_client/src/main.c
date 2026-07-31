@@ -2463,6 +2463,27 @@ long FAR PASCAL _export PaneProc(HWND hwnd, UINT msg, UINT wParam,
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
 
+    /* The one modern nicety in here, and it is worth the anachronism:
+       nobody in 2026 reads a scrollback without turning the wheel, and
+       a window that ignores it feels broken rather than old. Three lines
+       a notch, which is what Windows has meant by a wheel click since
+       the Intellimouse.
+
+       Nothing arrives here on 3.11 - there was no wheel to send it - so
+       the period build is unaffected and the message number is simply
+       never seen. */
+    case WM_MOUSEWHEEL: {
+        int notches = (int)(short)HIWORD(wParam) / WHEEL_DELTA;
+
+        if (!notches)
+            return 0;
+        v->top -= (long)notches * 3;
+        view_sync_scroll(v);
+        v->follow = (v->top >= view_max_top(v));
+        InvalidateRect(hwnd, NULL, TRUE);
+        return 0;
+    }
+
     case WM_SIZE:
         /* The whole point of the far-block transcript: a resize re-flows
            what is already on screen, because nothing was ever stored
@@ -5381,6 +5402,23 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         if (g_input)
             SetFocus(g_input);
         return 0;
+
+    /* The wheel goes to the FOCUSED window, which in this program is
+       almost always the input line, and DefWindowProc walks it up the
+       parent chain until something takes it - so it arrives here having
+       passed the scrollback without stopping. Hand it to the active
+       document's pane, which is what the reader meant.
+
+       Windows 10 and 11 also send it to whatever is under the pointer,
+       and PaneProc takes that one directly; this is the other half. */
+    case WM_MOUSEWHEEL: {
+        HWND c = LLM_HWND(SendMessage(g_mdi, WM_MDIGETACTIVE, 0, 0L));
+        HWND p = c ? GetDlgItem(c, ID_PANE) : NULL;
+
+        if (p)
+            return SendMessage(p, msg, wParam, lParam);
+        return 0;
+    }
 
     case WM_PAINT:
         paint_status(hwnd);
