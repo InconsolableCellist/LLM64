@@ -40,6 +40,10 @@ The modules are linked against the PRG they were built with, so keep them
 together on one disk. Mixing builds crashes the machine as soon as the F1
 menu loads a module.
 
+`make disk` in the repository root runs those three lines for you, and
+`make release` builds this disk along with the Windows clients and the
+proxy binaries.
+
 `make -C c64_client info` prints the sources, objects, and the FTP path it
 would upload to.
 

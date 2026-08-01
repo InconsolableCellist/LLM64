@@ -1,4 +1,13 @@
 # LLM64 - top-level targets
+#
+# To build everything shippable, one command:
+#
+#     make release
+#
+# It produces the C64 disk, both Windows clients and their floppy
+# image, the Linux proxy binary and - if the Wine Python is set up -
+# the Windows proxy exe, then prints what it made. See the `release`
+# rule below for the artifact list and how to point them at a proxy.
 
 PYTHON ?= python3
 # VICE tools (x64sc, c1541): native install if present, net.sf.VICE flatpak
@@ -8,28 +17,102 @@ VICE_RUN ?= ./emu/vice-run.sh
 TESTPORT ?= 6464
 
 .PHONY: all client client-direct test-emu test-emu-hayes run-live clean \
-        win proxy-bin release
+        win win-floppy proxy-bin proxy-bin-win release disk manifest dirty-check
 
+# The bare client PRG, 40-column and unbundled: the quick compile check,
+# not a shippable. `make release` is the one that builds artifacts.
 all: client
 
 client:
 	$(MAKE) -C c64_client
 
+# ---------------------------------------------------------------------
+# release: every artifact this machine can produce, in one command.
+#
+#   c64_client/build/llm64.d64          C64 boot disk (client + overlays)
+#   win311_client/build/LLM64.EXE       Windows 3.x client, 16-bit NE
+#   win311_client/build/LLM32.EXE       Windows 10/11 client, 32-bit PE
+#   win311_client/build/llm64.img       1.44 MB floppy: LLM64.EXE + INI
+#   llm64_proxy/dist/llm64-proxy        Linux proxy, self-contained
+#   llm64_proxy/dist/llm64-proxy.exe    Windows proxy, self-contained
+#
+# The proxy address baked into the C64 disk and the floppy's INI comes
+# from C64_PROXY_IP/C64_PROXY_PORT (below) and WIN_PROXY_IP/PORT; both
+# are only defaults, since the C64 disk ships cfg-free and reads its
+# NetConfig from the editor on first boot, and the Windows client reads
+# the INI beside itself.
+#
+# The Windows proxy exe is the one soft failure here: it needs the Wine
+# Python from llm64_proxy/tools/win-build-setup.sh, and without it the
+# rest of the release still completes. Nothing else is allowed to fail
+# quietly.
+release: dirty-check disk win win-floppy proxy-bin
+	@$(MAKE) --no-print-directory proxy-bin-win || \
+	    echo "*** llm64-proxy.exe SKIPPED - everything else was built"
+	@$(MAKE) --no-print-directory manifest
+
+# The C64 title bar carries the git hash, with a '+' for a dirty tree,
+# so a release built from uncommitted work is stamped as one. A warning
+# rather than a refusal: test builds are the normal case here.
+dirty-check:
+	@if [ -n "$$(git status --porcelain 2>/dev/null)" ]; then \
+	    echo; echo "*** working tree is dirty - the build hash will be stamped '+'"; \
+	    echo "*** commit first if this is a real release"; echo; fi
+
+RELEASE_ARTIFACTS = c64_client/build/llm64.d64 \
+                    win311_client/build/LLM64.EXE \
+                    win311_client/build/LLM32.EXE \
+                    win311_client/build/llm64.img \
+                    llm64_proxy/dist/llm64-proxy \
+                    llm64_proxy/dist/llm64-proxy.exe
+
+# What actually landed, with its age: a stale artifact from an earlier
+# run looks exactly like a fresh one in an `ls`, so the timestamp is
+# the point of this.
+manifest:
+	@echo; echo "Release artifacts:"
+	@for f in $(RELEASE_ARTIFACTS); do \
+	    if [ -f "$$f" ]; then \
+	        printf '  %-36s %7s  %s\n' "$$f" \
+	            "$$(du -h "$$f" | cut -f1)" \
+	            "$$(date -r "$$f" '+%Y-%m-%d %H:%M')"; \
+	    else printf '  %-36s %7s\n' "$$f" "-- missing"; fi; \
+	done; echo
+
+# The C64 boot disk. MODE80=1 is not optional: the overlay modules
+# (llm64.prg.1 .. .5) exist only because c64-soft80.cfg declares them,
+# and that config is only linked in under MODE80 - a plain build emits
+# no modules and the disk rule refuses to run. The clean is there
+# because the objects carry no dependency on the flags that made them.
+disk:
+	$(MAKE) -C c64_client clean
+	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) SERVER_PORT=$(C64_PROXY_PORT) MODE80=1
+	$(MAKE) -C c64_client disk
+
 # Both Windows client binaries: LLM64.EXE (16-bit) and LLM32.EXE.
 win:
 	$(MAKE) -C win311_client both
 
+# The 1.44 MB floppy, for a VM or a real diskette. Its INI points at the
+# same proxy the C64 disk dials; override for a QEMU guest, where the
+# host is 10.0.2.2 through slirp:
+#   make win-floppy WIN_PROXY_IP=10.0.2.2 WIN_PROXY_PORT=6410
+WIN_PROXY_IP   ?= $(C64_PROXY_IP)
+WIN_PROXY_PORT ?= $(C64_PROXY_PORT)
+win-floppy: win
+	$(MAKE) -C win311_client floppy VMHOST=$(WIN_PROXY_IP) VMPORT=$(WIN_PROXY_PORT)
+
 # The packaged Linux proxy (PyInstaller): dist/llm64-proxy. Needs the
-# one-time .venv-build from llm64_proxy/PACKAGING.md. The Windows
-# llm64-proxy.exe CANNOT be built here - PyInstaller does not
-# cross-compile, so that one is built on a Windows box with the same
-# spec (PACKAGING.md, "Build on Windows").
+# one-time .venv-build from llm64_proxy/PACKAGING.md.
 proxy-bin:
 	cd llm64_proxy && .venv-build/bin/pyinstaller llm64.spec --noconfirm
 
-# Everything shippable that THIS machine can produce: the C64 disk,
-# both Windows client EXEs, and the Linux proxy binary.
-release: all win proxy-bin
+# The packaged Windows proxy: dist/llm64-proxy.exe. PyInstaller does
+# not cross-compile, so this is a Windows Python doing the work - one
+# installed under Wine by llm64_proxy/tools/win-build-setup.sh (run it
+# once; it downloads CPython and pip-installs the dependencies).
+proxy-bin-win:
+	cd llm64_proxy && ./tools/win-build.sh
 
 # TUI builds
 client-tui-direct:

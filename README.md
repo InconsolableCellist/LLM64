@@ -192,6 +192,52 @@ n-key rollover and typing speed of around 150 WPM.
 The Windows client takes the same slash commands, and you can also use `Ctrl+1..7` to toggle the desk's windows, F1 is the server-fed menu as
 a box of buttons, F5 the conversation browser.
 
+## Building it all
+
+Pre-compiled binaries are on the Releases page. To build them yourself,
+run one command in the repository root:
+
+```
+make release
+```
+
+That gives you every shippable artifact, and prints the list with sizes
+and timestamps when it finishes:
+
+| Artifact | What it is |
+|---|---|
+| `c64_client/build/llm64.d64` | the C64 boot disk: 80-column client plus its overlay modules |
+| `win311_client/build/LLM64.EXE` | the Windows 3.x client (16-bit, Open Watcom) |
+| `win311_client/build/LLM32.EXE` | the Windows 10/11 client (32-bit, mingw-w64) |
+| `win311_client/build/llm64.img` | a 1.44 MB floppy holding `LLM64.EXE` and its INI |
+| `llm64_proxy/dist/llm64-proxy` | the Linux proxy, one self-contained file |
+| `llm64_proxy/dist/llm64-proxy.exe` | the same for Windows |
+
+You need cc65 for the C64 client, [Open Watcom
+V2](win311_client/README.md#build) and mingw-w64 for the two Windows
+clients, mtools for the floppy image, VICE's `c1541` for the disk image,
+and the proxy's [PyInstaller venv](llm64_proxy/PACKAGING.md). The
+Windows proxy exe additionally needs a Windows Python under Wine
+([one-time setup](llm64_proxy/PACKAGING.md#build-the-exe-on-linux-with-wine));
+without it, `make release` builds everything else and tells you it
+skipped that one.
+
+The disk and the floppy are stamped with a default proxy address, which
+you can override:
+
+```
+make release C64_PROXY_IP=192.168.1.21 C64_PROXY_PORT=6400
+```
+
+Neither is binding -- the C64 disk ships without a config file, so the
+first boot opens the address editor, and the Windows client reads the
+`LLM64.INI` sitting beside it.
+
+To build only one piece, the pieces are targets too: `make disk`,
+`make win`, `make win-floppy`, `make proxy-bin`, `make proxy-bin-win`.
+Plain `make` builds just the 40-column C64 client, which is a compile
+check rather than something to ship.
+
 ## Repository layout
 
 ```
