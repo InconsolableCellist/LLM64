@@ -212,20 +212,81 @@ it to `""` if your ComfyUI workflow carries its own style. Backends
   `randomize_seed`. `workflow` unset runs the bundled
   `workflows/flux2-klein-retro.json` (Flux 2 klein), so the backend
   works out of the box; a bare filename also resolves against the
-  bundled set when the config dir has no such file. No auth -- keep it
-  on a trusted LAN.
+  bundled set when the config dir has no such file. Four ship: the Flux
+  pair (`flux2-klein-retro.json`, `flux2-klein-lora.json`) and an SDXL
+  pair (`novafurryxl.json`, `novafurryxl-lora.json`) for Illustrious /
+  Pony / SDXL checkpoints. A workflow may carry a `"_defaults"` table
+  naming the checkpoint, steps, cfg and geometry it needs, so selecting
+  it is enough to get a working run; `[images.comfyui]` and style
+  presets still override those. No auth -- keep it on a trusted LAN.
 - **`fixture`** -- a fixed local image, for tests.
 
 **Style presets.** Set `[images] style` to a named look instead of
 hand-writing a prefix: `cinematic` (moody film still, runs the
 MovieClips LoRA through the bundled `flux2-klein-lora.json` workflow),
-`oil-chiaroscuro` (Rembrandt-style night oil painting), or
-`painted-noir` (film-noir lit dark fantasy). Define your own as an
-`[images.styles.<name>]` table -- see config.toml.example. To use your
-own LoRA: drop the `.safetensors` file in ComfyUI's `models/loras`,
-open the launcher's Settings tab, set Style preset to `custom`, hit the
-custom section's refresh button to list the server's LoRAs, and pick
-yours.
+`oil-chiaroscuro` (Rembrandt-style night oil painting), `painted-noir`
+(film-noir lit dark fantasy), or `nova-furry` (below). Define your own
+as an `[images.styles.<name>]` table -- see config.toml.example. A
+preset can carry the whole stack, not just the prefix: `workflow`,
+`model`, `steps`, `cfg`, `sampler`, `scheduler`, `width`, `height`,
+`lora`, `lora_strength`. To use your own LoRA: drop the `.safetensors`
+file in ComfyUI's `models/loras`, open the launcher's Settings tab, set
+Style preset to `custom`, hit the custom section's refresh button to
+list the server's LoRAs, and pick yours.
+
+**Anthro characters (`nova-furry`).** A general-purpose model draws a
+beast-person by drawing a person and hoping, which is why animal races
+come out rough. The fix is a checkpoint that was trained on them: put
+[NovaFurryXL](https://civitai.com/models/503815) (Illustrious-based) in
+ComfyUI's `models/checkpoints` and set `[images] style = "nova-furry"`.
+The preset selects an SDXL workflow that carries the checkpoint name
+and the sampler settings that family needs -- the bare
+`[images.comfyui]` defaults are Flux's and would run SDXL at 8 steps
+and cfg 1. Those live in the workflow rather than the preset on
+purpose, so `[images.comfyui] steps` and the launcher's Steps and
+Width fields still override them.
+
+Generation size is 1280x800: 1.6:1 exactly, so the C64 letterbox
+throws nothing away, at about the megapixel SDXL was trained for. Going
+higher is tempting because the short edge is under 1024, and it
+measured worse -- at 1344x896 and above this checkpoint duplicates
+characters and pushes the subject toward the horizon.
+
+It also changes how the scene itself is written. `[images]
+prompt_format = "tags"` (which the preset sets) switches the
+composition step from one prose sentence to a Danbooru/e621 tag list --
+cast, species, action, framing, place, light. That is not cosmetic:
+
+- `solo` keeps the rest of the party out of a portrait, which no
+  amount of prose ever managed. A `/pic` naming one character also
+  narrows the visual canon to that character, so nobody else is even
+  described to the model.
+- A framing tag (`upper body`, `cowboy shot`, `wide shot`) is obeyed
+  where prose camera language is ignored, which is what stops the
+  subject ending up the size of an ant.
+- An action named in the request (`/pic bruc drawing his sword`)
+  becomes `drawing sword` instead of being dropped.
+
+`prompt_format` stays `"prose"` for everything else, so Flux, Gemini
+and OpenAI configs are untouched.
+
+Two more things about the preset are deliberate. Its prefix asks for
+flat colour, cel shading and thick outlines, because that is what
+survives 16 colours at 160x200 -- airbrushed detail becomes dither
+mush. And it carries no "keep them anthro" clause, unlike the other
+presets: this checkpoint needs no convincing, and on fixed seeds that
+clause put a beast in an explicitly unpeopled scene and dragged
+unrelated scenes toward the same picture. Judge changes to it in the
+Illustrations tab, not from the prose.
+
+What still misses: two characters in one frame sometimes swap their
+clothing (SDXL attribute binding -- a roll of the dice, not a prompt
+bug), and the composer still reaches for a wide shot more often than
+the subject deserves.
+
+Using a different checkpoint is `[images.comfyui] model`; using a LoRA
+with it means pointing a preset at `novafurryxl-lora.json` -- the file's
+own comment has the six lines to copy.
 
 Minimum to get pictures: install Pillow (it's in requirements.txt), set
 `mode = "ask"`, and supply a Gemini key. Then type `/pic a snake-like
@@ -239,7 +300,7 @@ slow way to find out is to boot a client, play into a scene, type
 click instead.
 
 1. Open the tab and type a scene, or pick one from **Sample scene** --
-   those are shaped like the ones the model composes at runtime.
+   those are shaped like the sentences the model composes at runtime.
 2. Check **Final prompt**. That is the exact text the backend will
    receive: your style prefix (or the preset's, or the client's) plus
    your scene. The line under it says which of those the prefix came

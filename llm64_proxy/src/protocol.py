@@ -26,7 +26,7 @@ from . import printcups
 from . import printpic
 from .scenecomp import (compose_question, canon_build_question,
                         canon_update_question, canon_stale,
-                        parse_canon_reply)
+                        parse_canon_reply, tidy_tags, TAG_SCENE_LIMIT)
 from .markup import colorize_for_wire, split_safe, UNICODE_TO_ASCII
 from .profiles import C64 as PROFILE_C64, from_hello
 from .markup import prompt_snippet as color_prompt_snippet
@@ -251,7 +251,8 @@ class ProtocolHandler:
             backend=make_backend(images_cfg, self.config.data_dir,
                                  getattr(self.config, 'config_dir', '.')),
             style_prefix=images_cfg.get('style_prefix'),
-            dib_period=images_cfg.get('dib_style', 'period') != 'clean')
+            dib_period=images_cfg.get('dib_style', 'period') != 'clean',
+            prompt_format=images_cfg.get('prompt_format', 'prose'))
         if self.images.available:
             self.logger.info(f"Images enabled (backend: "
                              f"{self.images.backend.name}, "
@@ -1966,10 +1967,22 @@ class ProtocolHandler:
         # amended only when the narrative contradicts it. Rides inside
         # the "Studying the scene..." heartbeat the caller already runs.
         canon = await self._ensure_canon(convo, adv_state, character)
+        # The shape follows the image model: a tag-trained checkpoint
+        # gets tags from here, not a sentence (scenecomp, docs/13).
+        fmt = getattr(self.images, 'prompt_format', 'prose')
         question = compose_question(
             convo, priors, adv_state, room, character,
-            instructions=instructions, directive=directive, canon=canon)
-        return await self._ask_model(question, limit=400)
+            instructions=instructions, directive=directive, canon=canon,
+            fmt=fmt)
+        # 400 chars is two sentences of prose, and about two thirds of a
+        # 30-tag list - which arrives cut off mid-tag. Tag mode gets the
+        # room it needs, and any fragment the cap still leaves is
+        # trimmed rather than shipped to the image model.
+        limit = TAG_SCENE_LIMIT if fmt == 'tags' else 400
+        scene = await self._ask_model(question, limit=limit)
+        if fmt != 'tags':
+            return scene
+        return tidy_tags(scene, truncated=len(scene) >= limit - 2)
 
     @staticmethod
     def _state_appearance(adv_state) -> str:

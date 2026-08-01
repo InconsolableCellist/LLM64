@@ -69,10 +69,18 @@ DEFAULT_STYLE_PREFIX = (
 
 class ImageService:
     def __init__(self, data_dir: Path, mode: str = "ask", backend=None,
-                 style_prefix: str = None, dib_period: bool = True):
+                 style_prefix: str = None, dib_period: bool = True,
+                 prompt_format: str = "prose"):
         self.dir = Path(data_dir) / "images"
         self.mode = mode
         self.backend = backend
+        # What SHAPE the scene description should be written in, which
+        # is a property of the checkpoint rather than of this service:
+        # "prose" for Flux and the API backends, "tags" for a
+        # Danbooru-lineage SDXL one. protocol.py reads it back when it
+        # builds the composition question (scenecomp.compose_question).
+        self.prompt_format = prompt_format if prompt_format in (
+            "prose", "tags") else "prose"
         # The 1993 treatment on the Windows client's DIBs: 320x200, the
         # levels crunch, and a dither against a fixed VGA palette
         # (imaging.convert_to_dib8). [images] dib_style = "clean" turns it
