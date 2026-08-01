@@ -46,8 +46,10 @@ python3 -m venv .venv
 ### Standalone binary (no Python)
 
 One file, and a launcher window instead of a terminal: Start/Stop
-buttons, live status (connections, LLM calls), the log, and a
-config.toml editor with validation.
+buttons, live status (connections, LLM calls), the log, a config.toml
+editor with validation, and an
+[illustration preview](#previewing-illustrations) that turns your image
+settings into an actual picture without booting a client.
 
 1. Build `llm64-proxy` (Linux) or `llm64-proxy.exe` (Windows) with
    [PACKAGING.md](PACKAGING.md) -- four commands on the platform you
@@ -228,6 +230,49 @@ yours.
 Minimum to get pictures: install Pillow (it's in requirements.txt), set
 `mode = "ask"`, and supply a Gemini key. Then type `/pic a snake-like
 green dragon with one arm lover a burningi village` on the C64 to test.
+
+#### Previewing illustrations
+
+Nothing above tells you what a picture will actually look like, and the
+slow way to find out is to boot a client, play into a scene, type
+`/pic`, and squint. The launcher's **Illustrations** tab does it in one
+click instead.
+
+1. Open the tab and type a scene, or pick one from **Sample scene** --
+   those are shaped like the ones the model composes at runtime.
+2. Check **Final prompt**. That is the exact text the backend will
+   receive: your style prefix (or the preset's, or the client's) plus
+   your scene. The line under it says which of those the prefix came
+   from.
+3. **Prompt for** picks whose prefix that is. The C64 gets the
+   dark-fantasy default; the Windows client asks for 1993 VGA pixel art
+   instead. An `[images] style_prefix` or a style preset overrides both,
+   for every client -- and the tab says so when it does.
+4. Press **Generate**. Set **Count** above 1 to get several takes of the
+   same scene; **Stop** ends the batch after the picture already in
+   flight.
+
+You get three views of one generation: what the backend drew, the C64
+multicolor conversion (16 colours, with the caption band burned in), and
+the Windows 320x200 one. The original is there to tell the two failure
+modes apart -- a picture that is wrong in the original is a prompt
+problem, one that is fine there and mud on the C64 is a subject problem.
+
+The tab reads the Settings form **as it stands**, including edits you
+have not saved, so the loop is edit -> Generate -> look. Press **Reread
+settings** after changing anything in the Settings tab. The server does
+not need to be running.
+
+Every preview is saved under `data/previews/` -- the original, both
+conversions, and a JSON file recording the prompt, the style preset, and
+the ComfyUI settings that produced it. They show up in the strip at the
+bottom of the tab, newest first; click one to bring it back into the
+panels along with the scene and caption that made it. Nothing deletes
+them, so clear that folder out yourself when you are done comparing.
+
+Previews cost exactly what an illustration costs, and are logged in
+`data/images/usage.tsv` as `llm64/preview`. Local ComfyUI is free;
+Gemini and OpenAI are not.
 
 ### Building the SID music library (the C64's music)
 
@@ -502,6 +547,9 @@ llm64_proxy/
 │   ├── modes.py             # chat / adventure / roleplay / code prompts
 │   ├── advmap.py advsetup.py advtemplates.py chargen.py dice.py
 │   ├── images.py imagegen.py imaging.py scenecomp.py printpic.py
+│   ├── imgstyles.py preview.py
+│   ├── launcher.py          # the desktop window; preview.py is its
+│   │                        #   Illustrations tab, minus the widgets
 │   ├── music.py midi_library.py sid_ranking.py sid_overrides.py
 │   ├── printdoc.py printcups.py
 │   ├── claude_session.py    # /code mode

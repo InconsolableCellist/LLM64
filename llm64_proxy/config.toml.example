@@ -32,6 +32,11 @@ data_dir = "./data"
 # Originals and converted blobs land in <data_dir>/images/<conv_id>/.
 # See docs/12-image-backends.md for the full guide.
 [images]
+# Nothing in this section can be judged by reading it. The launcher's
+# Illustrations tab generates one picture from these settings as they
+# stand - unsaved edits included - and shows what each client would
+# display; see README "Previewing illustrations".
+#
 # ask  - the model suggests a scene, you confirm with /pic (default)
 # auto - striking scenes illustrate themselves (rate-limited)
 # off  - never

@@ -36,6 +36,7 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 import tomlkit
 
 from . import discovery
+from . import preview
 from .config import Config
 from .api_client import APIClient
 from .tcp_server import C64Server
@@ -46,6 +47,12 @@ logger = logging.getLogger('launcher')
 POLL_MS = 400          # UI refresh cadence
 LOG_PANE_MAX_LINES = 4000
 STOP_TIMEOUT_S = 8     # give a wedged server thread this long, then report
+
+# Illustration preview tab
+PANEL_W, PANEL_H = 320, 200    # one render, at the size the C64 draws it
+THUMB_W, THUMB_H = 112, 70
+HISTORY_MAX = 24               # saved previews the strip goes back through
+PREVIEW_MAX_BATCH = 8
 
 
 # --------------------------------------------------------------------------
@@ -458,7 +465,9 @@ class LauncherApp(tk.Tk):
     def __init__(self, config_path):
         super().__init__()
         self.title('LLM64 Proxy')
-        self.geometry('860x620')
+        # Tall enough for the illustration tab's two rows of 320x200
+        # renders; every tab scrolls, so a smaller screen still works.
+        self.geometry('980x760')
         self.minsize(640, 420)
 
         self.ctl = ServerController()
@@ -475,6 +484,17 @@ class LauncherApp(tk.Tk):
         self._fields = {}       # (section, key) -> (widget var, type, initial)
         self._doc = None        # tomlkit document behind the form
         self._discover_queue = queue.Queue()   # (combo, btn, list or exc)
+
+        # Illustration preview: a worker thread generates, the tick loop
+        # draws. _preview_photos holds every tk image the tab is showing -
+        # tk keeps no reference of its own, and a garbage-collected
+        # PhotoImage paints as an empty box.
+        self._preview_queue = queue.Queue()
+        self._preview_busy = False
+        self._preview_cancel = False
+        self._preview_photos = {}
+        self._preview_history = []
+        self._preview_prefix = {}   # target -> (style prefix, its source)
 
         self._build_ui()
         self._load_editor()
@@ -520,6 +540,7 @@ class LauncherApp(tk.Tk):
         nb.pack(fill='both', expand=True, padx=8, pady=(0, 8))
         self._build_log_tab(nb)
         self._build_settings_tab(nb)
+        self._build_preview_tab(nb)
         self._build_raw_tab(nb)
 
     def _build_log_tab(self, nb):
@@ -540,21 +561,27 @@ class LauncherApp(tk.Tk):
             foot, text='Log file: (created when the server starts)')
         self.logfile_label.pack(side='right')
 
-    def _build_settings_tab(self, nb):
-        tab = ttk.Frame(nb)
-        nb.add(tab, text='Settings')
+    @staticmethod
+    def _scroll_host(parent):
+        """A vertically scrolling frame filling `parent`. Returns
+        (inner frame, wheel handler) - the handler has to be bound to
+        each child as it is built, because a child with its own bindings
+        swallows the wheel event before the canvas sees it.
 
-        canvas = tk.Canvas(tab, highlightthickness=0)
-        vsb = ttk.Scrollbar(tab, orient='vertical', command=canvas.yview)
+        Pack the tab's fixed furniture (a button row) BEFORE calling
+        this: the canvas takes every pixel the earlier packs left.
+        """
+        canvas = tk.Canvas(parent, highlightthickness=0)
+        vsb = ttk.Scrollbar(parent, orient='vertical', command=canvas.yview)
         canvas.configure(yscrollcommand=vsb.set)
         vsb.pack(side='right', fill='y')
         canvas.pack(side='top', fill='both', expand=True)
-        self.form = ttk.Frame(canvas, padding=8)
-        form_id = canvas.create_window((0, 0), window=self.form, anchor='nw')
-        self.form.bind('<Configure>', lambda e: canvas.configure(
+        inner = ttk.Frame(canvas, padding=8)
+        inner_id = canvas.create_window((0, 0), window=inner, anchor='nw')
+        inner.bind('<Configure>', lambda e: canvas.configure(
             scrollregion=canvas.bbox('all')))
         canvas.bind('<Configure>', lambda e: canvas.itemconfigure(
-            form_id, width=e.width))
+            inner_id, width=e.width))
 
         def _wheel(event):
             if event.num == 4 or event.delta > 0:
@@ -563,11 +590,31 @@ class LauncherApp(tk.Tk):
                 canvas.yview_scroll(3, 'units')
         # bind on the canvas subtree only, not the whole app, so the log
         # and raw tabs keep their own wheel behaviour
-        for w in (canvas, self.form):
+        for w in (canvas, inner):
             w.bind('<MouseWheel>', _wheel)
             w.bind('<Button-4>', _wheel)
             w.bind('<Button-5>', _wheel)
-        self._form_wheel = _wheel   # applied to children as they are built
+        return inner, _wheel
+
+    def _bind_wheel(self, widget, wheel):
+        """Hand the page's wheel handler down a finished subtree.
+
+        Skipped: text boxes, which scroll themselves, and the value
+        widgets whose Tk bindings read the wheel as "change me" - a
+        scroll over a combobox must not silently pick a different style
+        preset.
+        """
+        for child in widget.winfo_children():
+            if not isinstance(child, (tk.Text, ttk.Combobox, ttk.Spinbox,
+                                      ttk.Scrollbar)):
+                child.bind('<MouseWheel>', wheel)
+                child.bind('<Button-4>', wheel)
+                child.bind('<Button-5>', wheel)
+            self._bind_wheel(child, wheel)
+
+    def _build_settings_tab(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text='Settings')
 
         foot = ttk.Frame(tab, padding=(0, 6, 0, 0))
         foot.pack(side='bottom', fill='x')
@@ -582,6 +629,8 @@ class LauncherApp(tk.Tk):
         self.btn_create = ttk.Button(foot, text='Create config',
                                      command=self._create_config)
         self.btn_create.pack(side='right')
+
+        self.form, self._form_wheel = self._scroll_host(tab)
 
     def _build_raw_tab(self, nb):
         tab = ttk.Frame(nb)
@@ -672,10 +721,32 @@ class LauncherApp(tk.Tk):
                     hint.grid(row=row * 2 + 1, column=1, sticky='w',
                               pady=(0, 3))
                 self._fields[(section, key)] = (var, ftype, initial, present)
+            if section == 'images':
+                self._build_images_note()
             if section == 'storage':
                 # Music lives under data_dir, so its status box goes
                 # right below the field that decides where to look
                 self._build_music_box()
+        self._preview_reload()
+
+    def _build_images_note(self):
+        """A pointer rather than a setting: none of the fields above can
+        be judged by reading them, and the tab that turns them into a
+        picture is one click away."""
+        box = ttk.Frame(self.form, padding=(6, 0, 6, 6))
+        box.pack(fill='x')
+        lbl = ttk.Label(
+            box, foreground='#777', wraplength=560, justify='left',
+            font=('TkDefaultFont', 8),
+            text='Try these on a real scene in the Illustrations tab: it '
+                 'generates one picture using the form as it stands - '
+                 'unsaved edits included - and shows what the C64 and the '
+                 'Windows client would each display.')
+        lbl.pack(anchor='w')
+        for w in (box, lbl):
+            w.bind('<MouseWheel>', self._form_wheel)
+            w.bind('<Button-4>', self._form_wheel)
+            w.bind('<Button-5>', self._form_wheel)
 
     def _build_music_box(self):
         """Music status: there are no music config keys (both library
@@ -715,6 +786,488 @@ class LauncherApp(tk.Tk):
         for lbl, line in zip(self._music_labels,
                              music_status_lines(data_dir)):
             lbl.configure(text=line)
+
+    # ---- illustration preview ----
+    #
+    # The settings that decide what a picture looks like - a style
+    # preset, a LoRA, a workflow's steps and CFG, the style prefix
+    # itself - are the ones you cannot judge by reading them. This tab
+    # runs the real path (src/preview.py) against the form as it stands
+    # RIGHT NOW, unsaved edits included, so the loop is edit -> Generate
+    # -> look, not edit -> save -> restart -> boot a C64 -> play into a
+    # scene -> /pic.
+
+    def _build_preview_tab(self, nb):
+        outer = ttk.Frame(nb)
+        nb.add(outer, text='Illustrations')
+        # Two 320x200 renders plus their controls are taller than a
+        # laptop's share of this window, so the whole tab scrolls.
+        tab, wheel = self._scroll_host(outer)
+        self._preview_wheel = wheel
+
+        self.preview_scene = tk.StringVar()
+        self.preview_caption = tk.StringVar(value=preview.SAMPLE_CAPTION)
+        self.preview_target = tk.StringVar(value=preview.TARGETS[0][1])
+        self.preview_count = tk.StringVar(value='1')
+
+        ctl = ttk.Frame(tab)
+        ctl.pack(fill='x')
+        ctl.columnconfigure(1, weight=1)
+
+        ttk.Label(ctl, text='Scene').grid(row=0, column=0, sticky='w',
+                                          padx=(0, 6))
+        entry = ttk.Entry(ctl, textvariable=self.preview_scene)
+        entry.grid(row=0, column=1, columnspan=5, sticky='ew')
+        # The prompt box is a plain concatenation of a cached prefix and
+        # this text, so it can follow every keystroke for free.
+        self.preview_scene.trace_add('write',
+                                     lambda *_: self._preview_show_prompt())
+
+        ttk.Label(ctl, text='Sample scene').grid(row=1, column=0, sticky='w',
+                                                 padx=(0, 6), pady=(4, 0))
+        samples = ttk.Combobox(
+            ctl, state='readonly', width=18,
+            values=[name for name, _ in preview.SAMPLE_SCENES])
+        samples.grid(row=1, column=1, sticky='w', pady=(4, 0))
+        samples.bind('<<ComboboxSelected>>',
+                     lambda e, c=samples: self.preview_scene.set(
+                         dict(preview.SAMPLE_SCENES)[c.get()]))
+        ttk.Label(ctl, text='Caption').grid(row=1, column=2, sticky='e',
+                                            padx=(8, 6), pady=(4, 0))
+        ttk.Entry(ctl, textvariable=self.preview_caption).grid(
+            row=1, column=3, columnspan=3, sticky='ew', pady=(4, 0))
+
+        ttk.Label(ctl, text='Prompt for').grid(row=2, column=0, sticky='w',
+                                               padx=(0, 6), pady=(4, 0))
+        target = ttk.Combobox(
+            ctl, state='readonly', width=18,
+            textvariable=self.preview_target,
+            values=[label for _, label in preview.TARGETS])
+        target.grid(row=2, column=1, sticky='w', pady=(4, 0))
+        target.bind('<<ComboboxSelected>>',
+                    lambda e: self._preview_show_prompt())
+        ttk.Label(ctl, text='Count').grid(row=2, column=2, sticky='e',
+                                          padx=(8, 6), pady=(4, 0))
+        ttk.Spinbox(ctl, from_=1, to=PREVIEW_MAX_BATCH, width=4,
+                    textvariable=self.preview_count).grid(
+                        row=2, column=3, sticky='w', pady=(4, 0))
+        self.btn_preview = ttk.Button(ctl, text='Generate',
+                                      command=self._preview_generate)
+        self.btn_preview.grid(row=2, column=4, padx=(8, 0), pady=(4, 0))
+        self.btn_preview_stop = ttk.Button(ctl, text='Stop', state='disabled',
+                                           command=self._preview_stop)
+        self.btn_preview_stop.grid(row=2, column=5, padx=(4, 0), pady=(4, 0))
+
+        prompt_box = ttk.LabelFrame(tab, text='Final prompt', padding=6)
+        prompt_box.pack(fill='x', pady=(8, 0))
+        self.preview_prompt = tk.Text(prompt_box, height=4, wrap='word',
+                                      state='disabled',
+                                      font=('TkFixedFont', 8))
+        self.preview_prompt.pack(fill='x')
+        line = ttk.Frame(prompt_box)
+        line.pack(fill='x', pady=(4, 0))
+        self.preview_source = ttk.Label(line, text='', foreground='#777',
+                                        font=('TkDefaultFont', 8))
+        self.preview_source.pack(side='left')
+        ttk.Button(line, text='Reread settings',
+                   command=self._preview_refresh).pack(side='right')
+        self.preview_status = ttk.Label(line, text='')
+        self.preview_status.pack(side='right', padx=8)
+
+        self._build_preview_panels(tab)
+        self._build_preview_strip(tab)
+        self._bind_wheel(tab, wheel)
+        # No refresh here: the form this reads has not been loaded yet
+        # (__init__ builds the UI first). _load_editor calls it.
+
+    def _build_preview_panels(self, tab):
+        """The three views of one generation: what the backend drew, and
+        what each client would actually display. All three matter - a
+        picture that is wrong in the original is a prompt problem, and one
+        that is fine there but mud on the C64 is a subject problem."""
+        panels = ttk.Frame(tab)
+        panels.pack(fill='both', expand=True, pady=(8, 0))
+        panels.columnconfigure(0, weight=1)
+        panels.columnconfigure(1, weight=1)
+
+        self.preview_panels = {}
+        for i, (key, title) in enumerate((
+                ('original', 'Generated original'),
+                ('c64', 'C64 multicolor (160x200, 16 colours)'),
+                ('vga', 'Windows 3.11 (320x200, 256 colours)'))):
+            box = ttk.LabelFrame(panels, text=title, padding=4)
+            box.grid(row=i // 2, column=i % 2, sticky='nsew',
+                     padx=(0, 6) if i % 2 == 0 else 0, pady=(0, 6))
+            # A canvas, not a Label: its width/height are pixels whether
+            # it is holding a picture or the placeholder text, and it
+            # centres a render that came out shorter than the frame.
+            cv = tk.Canvas(box, width=PANEL_W, height=PANEL_H,
+                           background='#222', highlightthickness=0)
+            cv.pack()
+            cv.create_text(PANEL_W // 2, PANEL_H // 2, fill='#888',
+                           text='(nothing generated yet)')
+            self.preview_panels[key] = cv
+
+        box = ttk.LabelFrame(panels, text='This picture', padding=4)
+        box.grid(row=1, column=1, sticky='nsew', pady=(0, 6))
+        self.preview_detail = tk.Text(box, height=11, width=44, wrap='word',
+                                      state='disabled',
+                                      font=('TkFixedFont', 8))
+        self.preview_detail.pack(fill='both', expand=True)
+
+    def _build_preview_strip(self, tab):
+        """Previous previews, newest first. Every generation is written to
+        <data_dir>/previews/ with the settings that made it, so the strip
+        survives a restart and the comparison you care about - this LoRA
+        against last night's - is still there tomorrow."""
+        box = ttk.LabelFrame(tab, text='Previous previews', padding=4)
+        box.pack(fill='x')
+        # tk.Canvas takes its colour from the X defaults, not the ttk
+        # theme, so an unstyled one is a dark slab in the middle of the
+        # tab. Borrow the frame colour it is sitting on.
+        canvas = tk.Canvas(box, height=THUMB_H + 34, highlightthickness=0,
+                           background=ttk.Style().lookup('TFrame',
+                                                         'background'))
+        hsb = ttk.Scrollbar(box, orient='horizontal', command=canvas.xview)
+        canvas.configure(xscrollcommand=hsb.set)
+        hsb.pack(side='bottom', fill='x')
+        canvas.pack(side='top', fill='x')
+        self.preview_strip = ttk.Frame(canvas)
+        canvas.create_window((0, 0), window=self.preview_strip, anchor='nw')
+        self.preview_strip.bind('<Configure>', lambda e: canvas.configure(
+            scrollregion=canvas.bbox('all')))
+        foot = ttk.Frame(box)
+        foot.pack(side='bottom', fill='x')
+        ttk.Button(foot, text='Reload', command=self._preview_load_history
+                   ).pack(side='left', pady=(4, 0))
+        self.preview_strip_note = ttk.Label(
+            foot, text='', foreground='#777', font=('TkDefaultFont', 8))
+        self.preview_strip_note.pack(side='left', padx=8)
+
+    # ---- preview: settings and prompt ----
+
+    def _preview_target_key(self):
+        label = self.preview_target.get()
+        for key, text in preview.TARGETS:
+            if text == label:
+                return key
+        return preview.TARGETS[0][0]
+
+    def _preview_config_text(self, quiet=False):
+        """The config as the form has it, unsaved edits included. Returns
+        None when the form cannot produce one - with a dialog when the
+        user asked for this directly, quietly when it is a background
+        refresh."""
+        problem = None
+        text = None
+        if self._doc is None:
+            problem = ('config.toml has a syntax error - fix it in the Raw '
+                       'config tab, then Reload.')
+        else:
+            text, errors = self._collect_form()
+            if errors:
+                problem, text = '\n'.join(errors), None
+        if problem is None:
+            return text
+        if quiet:
+            self._preview_set_status(problem.replace('\n', '; '), ok=False)
+        else:
+            messagebox.showerror('Config invalid', problem)
+        return None
+
+    def _preview_data_dir(self):
+        """Where previews are written and read, resolved exactly as
+        _refresh_music resolves the music libraries."""
+        data_dir = Path(self._field_value('storage', 'data_dir',
+                                          'LLM64_DATA_DIR', './data'))
+        if not data_dir.is_absolute():
+            data_dir = Path(self.config_path.get()).resolve().parent \
+                / data_dir
+        return data_dir
+
+    def _preview_reload(self):
+        """What a (re)loaded config means for this tab. Called from
+        _load_editor, so opening the launcher, saving, and Reload all
+        leave the prompt and the strip current."""
+        self._preview_refresh(deep=False)
+        self._preview_load_history()
+
+    def _preview_refresh(self, deep=True):
+        """Reread the form: which style prefix each client would get, and
+        (deep) whether the configured backend could run at all. The
+        backend check builds a real Config, which re-logs the server's
+        startup warnings - so it belongs on a button, not on every
+        reload."""
+        text = self._preview_config_text(quiet=not deep)
+        if text is None:
+            return
+        try:
+            images_cfg = preview.images_table(text)
+        except preview.PreviewError as e:
+            self._preview_set_status(str(e), ok=False)
+            return
+        self._preview_prefix = {
+            key: preview.resolve_prefix(images_cfg, key)
+            for key, _ in preview.TARGETS}
+        self._preview_show_prompt()
+        if not deep:
+            return
+        try:
+            cfg = preview.config_from_text(text, self.config_path.get())
+            _, label, problem = preview.backend_status(
+                images_cfg, cfg, self.config_path.get())
+        except preview.PreviewError as e:
+            self._preview_set_status(str(e), ok=False)
+            return
+        if problem:
+            self._preview_set_status(problem, ok=False)
+        else:
+            self._preview_set_status(f'Backend: {label}', ok=True)
+
+    def _preview_set_status(self, text, ok=True):
+        self.preview_status.configure(
+            text=text if len(text) < 90 else text[:87] + '...',
+            foreground='#2a7' if ok else '#cc2222')
+        if not ok:
+            logger.warning(f'preview: {text}')
+
+    def _preview_show_prompt(self):
+        """Prefix + scene, exactly as the backend would receive it."""
+        prefix, source = self._preview_prefix.get(
+            self._preview_target_key(), ('', 'settings not read yet'))
+        self.preview_prompt.configure(state='normal')
+        self.preview_prompt.delete('1.0', 'end')
+        self.preview_prompt.insert('1.0', prefix + self.preview_scene.get())
+        self.preview_prompt.configure(state='disabled')
+        self.preview_source.configure(text=f'Style prefix from {source}')
+
+    # ---- preview: generating ----
+
+    def _preview_generate(self):
+        if self._preview_busy:
+            return
+        scene = self.preview_scene.get().strip()
+        if not scene:
+            messagebox.showerror('Nothing to illustrate',
+                                 'Type a scene, or pick a sample one.')
+            return
+        text = self._preview_config_text()
+        if text is None:
+            return
+        try:
+            count = max(1, min(PREVIEW_MAX_BATCH,
+                               int(self.preview_count.get())))
+        except ValueError:
+            count = 1
+        self.preview_count.set(str(count))
+        self._preview_busy = True
+        self._preview_cancel = False
+        self.btn_preview.state(['disabled'])
+        self.btn_preview_stop.state(['!disabled'])
+        args = (text, self.config_path.get(), scene, self._preview_target_key(),
+                self.preview_caption.get(), count)
+        threading.Thread(target=self._preview_worker, args=args,
+                         name='llm64-preview', daemon=True).start()
+
+    def _preview_stop(self):
+        """Cancel the rest of a batch. The generation already in flight
+        finishes - a backend call is not interruptible, and an image that
+        has been paid for should at least be shown."""
+        self._preview_cancel = True
+        self._preview_queue.put(('status', 'Stopping after this one...'))
+
+    def _preview_worker(self, text, config_path, scene, target, caption,
+                        count):
+        """Off the UI thread: generate, convert, save, post back. Every
+        result travels through the queue; nothing here touches a widget."""
+        for i in range(count):
+            if self._preview_cancel:
+                break
+            self._preview_queue.put(
+                ('status', f'Generating {i + 1} of {count}...'))
+            try:
+                result = preview.generate_preview(
+                    text, config_path, scene, target=target, caption=caption)
+                self._preview_queue.put(('done', result))
+            except preview.PreviewError as e:
+                # The next attempt would fail the same way, so stop.
+                self._preview_queue.put(('error', str(e)))
+                break
+            except Exception as e:
+                self._preview_queue.put(
+                    ('error', f'{type(e).__name__}: {e}'))
+                break
+        self._preview_queue.put(('finished', None))
+
+    def _drain_preview(self):
+        while True:
+            try:
+                kind, payload = self._preview_queue.get_nowait()
+            except queue.Empty:
+                return
+            if kind == 'status':
+                self.preview_status.configure(text=payload,
+                                              foreground='#777')
+            elif kind == 'done':
+                self._preview_show(payload)
+                self._preview_history.insert(0, {
+                    'meta': payload.meta,
+                    'images': {'original': payload.original,
+                               'c64': payload.c64, 'vga': payload.vga},
+                    'paths': {}})
+                del self._preview_history[HISTORY_MAX:]
+                self._preview_fill_strip()
+            elif kind == 'error':
+                self._preview_set_status(payload, ok=False)
+                messagebox.showerror('Preview failed', payload)
+            else:
+                self._preview_busy = False
+                self.btn_preview.state(['!disabled'])
+                self.btn_preview_stop.state(['disabled'])
+
+    # ---- preview: drawing ----
+
+    def _photo(self, img, box=None):
+        """A tk image from a PIL one. Encoded as PNG and handed to Tk's
+        own decoder rather than going through PIL.ImageTk: one fewer
+        optional Pillow component to be missing from a frozen build, and
+        Tk has read PNG since 8.6."""
+        import base64
+        import io
+        from PIL import Image
+        if box and (img.width > box[0] or img.height > box[1]):
+            img = img.copy()
+            img.thumbnail(box, Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, 'PNG')
+        return tk.PhotoImage(
+            data=base64.b64encode(buf.getvalue()).decode('ascii'),
+            master=self)
+
+    def _preview_show(self, result):
+        """Put one preview in the panels. `result` is a preview.Preview
+        (freshly generated) or a history entry loaded from disk."""
+        images = (result['images'] if isinstance(result, dict)
+                  else {'original': result.original, 'c64': result.c64,
+                        'vga': result.vga})
+        meta = result['meta'] if isinstance(result, dict) else result.meta
+        for key, canvas in self.preview_panels.items():
+            canvas.delete('all')
+            img = images.get(key)
+            if img is None:
+                canvas.create_text(PANEL_W // 2, PANEL_H // 2, fill='#888',
+                                   text='(this render was not saved)')
+                self._preview_photos.pop(key, None)
+                continue
+            photo = self._photo(img, (PANEL_W, PANEL_H))
+            self._preview_photos[key] = photo    # tk holds no reference
+            canvas.create_image(PANEL_W // 2, PANEL_H // 2, image=photo)
+        self._preview_detail(meta)
+        self._preview_set_status('Done', ok=True)
+
+    def _preview_detail(self, meta):
+        stamp = time.strftime('%Y-%m-%d %H:%M:%S',
+                              time.localtime(meta.get('time', 0)))
+        lines = [
+            f"when     {stamp}",
+            f"prompt   written for the {meta.get('target', '?')} client",
+            f"prefix   {meta.get('prefix_source', '?')}",
+            f"backend  {meta.get('backend', '?')}",
+            f"style    {meta.get('style') or '(none)'}",
+            f"caption  {meta.get('caption') or '(none)'}",
+        ]
+        comfy = meta.get('comfyui') or {}
+        if comfy:
+            lines.append('comfyui  ' + ', '.join(
+                f'{k}={v}' for k, v in sorted(comfy.items())))
+        for k, v in sorted((meta.get('vars') or {}).items()):
+            lines.append(f'{k.lower():<8} {v}')
+        lines += ['', 'scene', meta.get('scene', '')]
+        self.preview_detail.configure(state='normal')
+        self.preview_detail.delete('1.0', 'end')
+        self.preview_detail.insert('1.0', '\n'.join(lines))
+        self.preview_detail.configure(state='disabled')
+
+    def _preview_load_history(self):
+        """Rebuild the strip from disk. Anything generated this session is
+        already saved there, so this is also how the strip recovers if a
+        preview was written by a different launcher window."""
+        entries = preview.list_previews(self._preview_data_dir(),
+                                        limit=HISTORY_MAX)
+        self._preview_history = [
+            {'meta': e['meta'], 'images': {},
+             'paths': {k: e[k] for k in ('original', 'c64', 'vga')}}
+            for e in entries]
+        self._preview_fill_strip()
+
+    def _preview_fill_strip(self):
+        from PIL import Image
+        for child in self.preview_strip.winfo_children():
+            child.destroy()
+        for entry in self._preview_history:
+            # Cached on the entry, which the history list keeps alive:
+            # the strip is rebuilt after every generation, and re-reading
+            # two dozen PNGs each time to redraw the same thumbnails is
+            # work for nothing.
+            photo = entry.get('thumb')
+            if photo is None:
+                img = entry['images'].get('c64')
+                if img is None:
+                    path = entry['paths'].get('c64')
+                    if path is None or not path.exists():
+                        continue
+                    try:
+                        with Image.open(path) as opened:
+                            img = opened.convert('RGB')
+                    except OSError:
+                        continue
+                photo = entry['thumb'] = self._photo(img, (THUMB_W, THUMB_H))
+            cell = ttk.Frame(self.preview_strip)
+            cell.pack(side='left', padx=(0, 6))
+            btn = tk.Button(cell, image=photo, bd=1,
+                            command=lambda e=entry: self._preview_open(e))
+            btn.pack()
+            meta = entry['meta']
+            ttk.Label(cell, font=('TkDefaultFont', 8), foreground='#777',
+                      text=(time.strftime('%H:%M',
+                                          time.localtime(meta.get('time', 0)))
+                            + f" {meta.get('target', '')}")).pack()
+        # The thumbnails are built after the tab was, so they need the
+        # page's wheel handler handed to them here.
+        self._bind_wheel(self.preview_strip, self._preview_wheel)
+        note = (f'{len(self._preview_history)} in '
+                f'{self._preview_data_dir() / preview.PREVIEW_SUBDIR} '
+                f'- click one to bring it back')
+        self.preview_strip_note.configure(
+            text=note if self._preview_history else
+            f'Nothing yet. Generated previews are saved in '
+            f'{self._preview_data_dir() / preview.PREVIEW_SUBDIR}.')
+
+    def _preview_open(self, entry):
+        """A thumbnail was clicked: load its full renders (from memory if
+        it is from this session, from disk otherwise) and show it."""
+        from PIL import Image
+        if not entry['images']:
+            for key, path in entry['paths'].items():
+                if path is None or not path.exists():
+                    continue
+                try:
+                    with Image.open(path) as opened:
+                        entry['images'][key] = opened.convert('RGB')
+                except OSError as e:
+                    logger.warning(f'preview {path}: {e}')
+        self._preview_show(entry)
+        # Restore the settings that made it, so "make it a bit darker"
+        # starts from the picture you liked rather than from whatever was
+        # last typed.
+        meta = entry['meta']
+        if meta.get('scene'):
+            self.preview_scene.set(meta['scene'])
+        self.preview_caption.set(meta.get('caption', ''))
+        for key, label in preview.TARGETS:
+            if key == meta.get('target'):
+                self.preview_target.set(label)
+        self._preview_show_prompt()
 
     # ---- model discovery ----
 
@@ -1007,6 +1560,7 @@ class LauncherApp(tk.Tk):
     def _tick(self):
         self._drain_log()
         self._drain_discovery()
+        self._drain_preview()
         snap = self.ctl.snapshot()
         self._update_status(snap)
         self._ensure_file_log(snap)
