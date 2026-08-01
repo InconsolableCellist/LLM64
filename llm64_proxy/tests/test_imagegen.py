@@ -727,6 +727,33 @@ def test_style_presets():
     check("prefixless preset leaves style_prefix unset",
           "style_prefix" not in cfg)
 
+    # A preset may carry its own negative - a look and the things that
+    # ruin it are one decision (COMFY_KEYS).
+    cfg = {"style": "anthro-illustrious", "comfyui": {"negative": "blurry"}}
+    apply_style(cfg)
+    check("preset negative overrides the comfyui table",
+          "macro" in cfg["comfyui"]["negative"])
+    check("preset sdxl sampler settings land",
+          cfg["comfyui"]["cfg"] == 5.0 and cfg["comfyui"]["steps"] == 28)
+    check("a prefixless-LoRA preset is not implied",
+          "workflow" not in cfg["comfyui"])
+
+    # THE regression this file exists to catch. A style_prefix rides on
+    # EVERY prompt, including one for an empty room, so it may describe
+    # the medium and the light and never the cast. "muzzle, fur and tail
+    # visible" in the cinematic prefix put a giant beast in every
+    # unpeopled crypt a furry-tuned checkpoint was asked for.
+    from src.images import DEFAULT_STYLE_PREFIX
+    subject_words = ("beast-person", "muzzle", "anthropomorphic", "fur and",
+                     "creature", "figure", "character", "person")
+    prefixes = {name: preset.get("style_prefix") or ""
+                for name, preset in PRESETS.items()}
+    prefixes["<default>"] = DEFAULT_STYLE_PREFIX
+    for name, prefix in prefixes.items():
+        offenders = [w for w in subject_words if w in prefix.lower()]
+        check(f"{name} prefix names no subject", not offenders,
+              f"found {offenders}")
+
     # Unknown name: a warning and today's behavior, never a crash.
     records = []
     handler = logging.Handler()

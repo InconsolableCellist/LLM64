@@ -217,13 +217,31 @@ it to `""` if your ComfyUI workflow carries its own style. Backends
 **Style presets.** Set `[images] style` to a named look instead of
 hand-writing a prefix: `cinematic` (moody film still, runs the
 MovieClips LoRA through the bundled `flux2-klein-lora.json` workflow),
-`oil-chiaroscuro` (Rembrandt-style night oil painting), or
-`painted-noir` (film-noir lit dark fantasy). Define your own as an
-`[images.styles.<name>]` table -- see config.toml.example. To use your
-own LoRA: drop the `.safetensors` file in ComfyUI's `models/loras`,
-open the launcher's Settings tab, set Style preset to `custom`, hit the
-custom section's refresh button to list the server's LoRAs, and pick
-yours.
+`oil-chiaroscuro` (Rembrandt-style night oil painting),
+`painted-noir` (film-noir lit dark fantasy), or `anthro-illustrious`
+(for an Illustrious/Pony-family SDXL checkpoint such as NovaFurryXL).
+Define your own as an `[images.styles.<name>]` table -- see
+config.toml.example. To use your own LoRA: drop the `.safetensors` file
+in ComfyUI's `models/loras`, open the launcher's Settings tab, set Style
+preset to `custom`, hit the custom section's refresh button to list the
+server's LoRAs, and pick yours.
+
+The first three presets are written for Flux, which follows prose. An
+SDXL checkpoint does not: it reads tags, weights the front of the
+prompt hardest, and splits the text into 77-token chunks, so a long
+prose preamble can spend the whole first chunk before the scene is
+mentioned. `anthro-illustrious` is tags, short, and ships the negative
+prompt that family needs. Don't pair it with a Flux LoRA -- a Flux LoRA
+loads zero keys onto an SDXL checkpoint (ComfyUI logs several hundred
+`lora key not loaded` lines and carries on).
+
+**A style prefix must never name a subject.** It is prepended to every
+prompt, including the one for a room the story says is empty, so an
+image model reads "an anthropomorphic beast-person, muzzle and tail
+visible" as an instruction to draw one -- in the empty room too. Keep
+the prefix to medium, light and palette. Species fidelity is handled a
+layer down, in the sentence the chat model composes for each scene,
+which can only say it about a character the scene actually has.
 
 Minimum to get pictures: install Pillow (it's in requirements.txt), set
 `mode = "ask"`, and supply a Gemini key. Then type `/pic a snake-like

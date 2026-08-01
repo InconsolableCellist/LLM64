@@ -26,7 +26,7 @@ from . import printcups
 from . import printpic
 from .scenecomp import (compose_question, canon_build_question,
                         canon_update_question, canon_stale,
-                        parse_canon_reply)
+                        parse_canon_reply, trim_scene)
 from .markup import colorize_for_wire, split_safe, UNICODE_TO_ASCII
 from .profiles import C64 as PROFILE_C64, from_hello
 from .markup import prompt_snippet as color_prompt_snippet
@@ -1969,7 +1969,10 @@ class ProtocolHandler:
         question = compose_question(
             convo, priors, adv_state, room, character,
             instructions=instructions, directive=directive, canon=canon)
-        return await self._ask_model(question, limit=400)
+        # A generous hard guard on the model, then the real cap - which
+        # protects the roster line the cast rules put at the end, and
+        # cuts on a word boundary rather than mid-word (scenecomp).
+        return trim_scene(await self._ask_model(question, limit=4000))
 
     @staticmethod
     def _state_appearance(adv_state) -> str:
@@ -1993,10 +1996,15 @@ class ProtocolHandler:
         if canon and not canon_stale(canon, appearance):
             return canon
         at = len(self.conv_manager.get_messages())
+        # The reply is a JSON object of up to 17 entries; normalize_canon
+        # caps each of them, so the cap here only has to be wide enough
+        # that the object CLOSES. At 400 it did not: the parse failed,
+        # the prose fallback stored the JSON scaffolding itself as the
+        # player description, and npcs/places were lost every time.
         if canon:
             self.logger.info("Visual canon: appearance changed, amending")
             reply = await self._ask_model(
-                canon_update_question(canon, convo, appearance), limit=400)
+                canon_update_question(canon, convo, appearance), limit=4000)
             got = parse_canon_reply(reply, prev=canon)
             if not got:
                 # A failed amendment keeps the old ledger: stale canon
@@ -2006,7 +2014,7 @@ class ProtocolHandler:
         else:
             reply = await self._ask_model(
                 canon_build_question(convo, appearance, character),
-                limit=400)
+                limit=4000)
             got = parse_canon_reply(reply)
             if not got:
                 self.logger.warning("Visual canon: build yielded nothing")

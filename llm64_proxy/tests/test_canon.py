@@ -97,6 +97,19 @@ check("marker stays out of the injected block (mock keys on it)",
 
 # --- the questions' load-bearing phrases ------------------------------
 
+# A reply that opened the object and never closed it - what a length cap
+# produces. The prose fallback used to store the scaffolding itself, so a
+# live conversation's canon literally began '{\n  "player": "'.
+cut = ('{\n  "player": "Young Khajiit woman, lithe and athletic, short '
+       'golden fur with darker stripes, worn leather jerkin')
+salvaged = parse_canon_reply(cut)
+check("truncated json salvages the player entry",
+      salvaged['player'].startswith('Young Khajiit woman'), True)
+check("no json scaffolding in the salvaged entry",
+      '"player"' in salvaged['player'], False)
+check("truncated json still normalizes",
+      isinstance(salvaged['npcs'], dict), True)
+
 q = canon_build_question('user: hello', 'a wiry traveler', 'sheet text')
 check("build question carries the marker", CANON_MARKER in q, True)
 check("build sees the state appearance", 'a wiry traveler' in q, True)

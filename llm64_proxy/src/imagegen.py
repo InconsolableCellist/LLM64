@@ -177,9 +177,15 @@ class ImageBackend:
         """Cheap, local, no network. See the module docstring."""
         return False
 
-    def generate(self, prompt: str, purpose: str) -> bytes:
+    def generate(self, prompt: str, purpose: str,
+                 negative: str = "") -> bytes:
         """Raw image bytes in any format PIL can open - the converter
-        letterboxes and quantizes, so size and format are free."""
+        letterboxes and quantizes, so size and format are free.
+
+        `negative` is what this ONE image additionally must not contain
+        (images.py derives it from the scene's cast). Only backends with
+        a negative-prompt input can honor it; the hosted ones have none
+        and ignore it, which is a quality difference, not a failure."""
         raise ImageGenError(f"backend {self.name} cannot generate")
 
 
@@ -211,7 +217,7 @@ class GeminiBackend(ImageBackend):
     def available(self):
         return bool(self._key())
 
-    def generate(self, prompt, purpose):
+    def generate(self, prompt, purpose, negative=""):
         key = self._key()
         if not key:
             raise ImageGenError("no Gemini API key configured")
@@ -279,7 +285,7 @@ class OpenAIImagesBackend(ImageBackend):
         )
         return _http(req, 300, "images API")
 
-    def generate(self, prompt, purpose):
+    def generate(self, prompt, purpose, negative=""):
         key = self._key()
         if not key:
             raise ImageGenError("no images API key configured")
@@ -437,9 +443,18 @@ class ComfyUIBackend(ImageBackend):
     def available(self):
         return self._load() is not None
 
-    def _tokens(self, prompt):
-        """{TOKEN} -> value, for this one run."""
+    def _tokens(self, prompt, negative=""):
+        """{TOKEN} -> value, for this one run.
+
+        A per-image `negative` is APPENDED to the configured one rather
+        than replacing it: the config's entry is the operator's standing
+        list (watermarks, borders), the caller's is about this scene's
+        cast, and both have to hold."""
         tokens = {"{%s}" % k: v for k, v in self.values.items()}
+        if negative:
+            standing = str(self.values.get("NEGATIVE") or "").strip()
+            tokens["{NEGATIVE}"] = (f"{standing}, {negative}" if standing
+                                    else negative)
         tokens[PROMPT_TOKEN] = prompt
         tokens["{SEED}"] = (self.seed if self.seed is not None
                             else random.randrange(2 ** 31))
@@ -463,14 +478,14 @@ class ComfyUIBackend(ImageBackend):
     def _is_node(value):
         return isinstance(value, dict) and "class_type" in value
 
-    def _prepare(self, workflow, prompt):
+    def _prepare(self, workflow, prompt, negative=""):
         # Only nodes are submitted. A workflow file is a thing a human has
         # to read and edit, so it is allowed a "_comment" key explaining
         # its tokens - and ComfyUI validates every top-level entry as a
         # node, so that key has to be dropped rather than passed on.
         graph = {k: deepcopy(v) for k, v in workflow.items()
                  if self._is_node(v)}
-        tokens = self._tokens(prompt)
+        tokens = self._tokens(prompt, negative)
         seen = set()
         for inputs in self._node_inputs(graph):
             for key, value in list(inputs.items()):
@@ -553,14 +568,14 @@ class ComfyUIBackend(ImageBackend):
         return _fetch_image(f"{self.url}/view?{query}", "ComfyUI image fetch",
                             timeout=60)
 
-    def generate(self, prompt, purpose):
+    def generate(self, prompt, purpose, negative=""):
         workflow = self._load()
         if workflow is None:
             raise ImageGenError(
                 f"ComfyUI workflow {self.workflow_path} is missing, "
                 f"unparseable, or has no {PROMPT_TOKEN} token")
         data = self._fetch(self._poll(self._submit(
-            self._prepare(workflow, prompt))))
+            self._prepare(workflow, prompt, negative))))
         _log_usage(self.data_dir, "comfyui", purpose)
         return data
 
@@ -587,7 +602,7 @@ class FixtureBackend(ImageBackend):
     def available(self):
         return bool(self.path) and self.path.is_file()
 
-    def generate(self, prompt, purpose):
+    def generate(self, prompt, purpose, negative=""):
         if not self.path:
             raise ImageGenError("no fixture path configured")
         try:

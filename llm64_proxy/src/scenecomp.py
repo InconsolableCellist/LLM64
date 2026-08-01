@@ -109,12 +109,116 @@ def compose_question(convo: str, priors, adv_state, room, character,
         "current scene in the transcript explicitly puts them there.\n"
         "- Include props and scenery named in the scene or the location "
         "note (keys, doors, altars).\n"
+        "- If a character you DO show is not human (beast-folk, "
+        "anthropomorphic, alien), say so plainly where you name them - "
+        "their species and its visible features. Never say this about a "
+        "scene with no characters in it.\n"
         "- End your description with an explicit list of who is present, "
         + _ROSTER_EXAMPLE + ".")
 
     parts.append("Transcript:\n" + convo)
 
     return "\n\n".join(parts)
+
+
+# --- keeping the roster ------------------------------------------------
+#
+# The roster line the cast rules demand is the one part of the composed
+# sentence that must survive to the image model: it is what keeps a
+# crypt stairwell from acquiring a monster. It also lands at the very
+# END, which is exactly where a character cap bites - the old 400-char
+# cap cut it off every time the prose ran long, mid-word.
+
+# The composed scene's budget. Two sentences of scene plus a roster
+# line fit comfortably; more than this is prose the image model dilutes
+# itself with anyway.
+SCENE_CHARS = 700
+
+
+def _cut_words(text, limit):
+    """`text` capped at `limit`, on a word boundary when there is one
+    to find in the back half."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    space = cut.rfind(' ')
+    if space > limit // 2:
+        cut = cut[:space]
+    return cut.rstrip().rstrip(',;:-').rstrip()
+
+
+def _is_roster(line):
+    """Does this last line look like the who-is-present list?"""
+    low = line.strip().lower()
+    return bool(low) and (low.startswith('-')
+                          or 'present' in low
+                          or 'figure' in low)
+
+
+def trim_scene(text, limit=SCENE_CHARS):
+    """The composed scene, capped WITHOUT losing the roster.
+
+    A scene over budget loses the tail of its prose, not its cast list:
+    the roster is dropped only when there is no room for it at all."""
+    text = (text or '').strip()
+    if len(text) <= limit:
+        return text
+    body, sep, last = text.rpartition('\n')
+    roster = last.strip()
+    if sep and _is_roster(roster) and len(roster) <= limit // 2:
+        return _cut_words(body, limit - len(roster) - 1) + "\n" + roster
+    return _cut_words(text, limit)
+
+
+# --- cast tags (docs/13) ----------------------------------------------
+#
+# What the roster is FOR, once it has survived. SDXL/Illustrious-family
+# models (the anthro-illustrious preset's target) are trained on
+# danbooru tags and obey the subject-count ones - `solo`, `no humans` -
+# far more reliably than any sentence about who is present. So the
+# roster is read once, here, and turned into that vocabulary: a tag on
+# the front of the positive prompt and a matching push on the negative.
+#
+# Only the two unambiguous cases are claimed. A busier roster ("the
+# player and the drowned priest") yields nothing and the prompt travels
+# exactly as it did before, which is also what a truncated or missing
+# roster gets.
+
+# `anthro` but not `furry`: on an anthro-trained checkpoint the first is
+# the subject tag and the second is closer to a style tag, and negating
+# the style of the model you chose is how an empty room comes back ugly
+# as well as empty.
+CAST_EMPTY = (
+    "no humans, no characters, empty scenery, environment only",
+    "1girl, 1boy, solo, person, people, character, anthro, "
+    "creature, monster, animal, macro, giant",
+)
+CAST_SOLO = (
+    "solo, single character",
+    "2girls, 2boys, multiple girls, multiple boys, crowd, extra people, "
+    "monster, creature, beast, macro, giant, size difference",
+)
+
+_EMPTY_WORDS = ("unpeopled", "no figures", "no one", "no-one", "nobody",
+                "no people", "no characters", "no living", "empty of")
+_SOLO_WORDS = ("only figure", "only person", "only character",
+               "single figure", "one figure")
+
+
+def cast_tags(scene):
+    """(positive, negative) tag additions for a composed scene's roster.
+
+    ('', '') whenever the roster is missing, truncated, or names more
+    than one figure - the caller then sends what it always sent."""
+    last = (scene or '').strip().rpartition('\n')[2].lower()
+    if not _is_roster(last):
+        return '', ''
+    if any(w in last for w in _EMPTY_WORDS):
+        return CAST_EMPTY
+    if any(w in last for w in _SOLO_WORDS):
+        return CAST_SOLO
+    return '', ''
 
 
 # --- the visual canon (docs/17) ---------------------------------------
@@ -194,6 +298,16 @@ def parse_canon_reply(text, prev=None):
                 return got
         except (ValueError, TypeError):
             pass
+    # A reply that opened a JSON object and never closed it - cut short
+    # by a length cap, or by the model simply stopping. Salvage the one
+    # field that matters rather than storing the scaffolding itself as
+    # the player's description, which is what the prose fallback below
+    # would otherwise do.
+    m = re.search(r'"player"\s*:\s*"(.+?)(?:"\s*[,}]|$)', text, re.DOTALL)
+    if m:
+        salvaged = m.group(1).replace('\\"', '"').replace('\\n', ' ').strip()
+        if salvaged:
+            return normalize_canon({'player': salvaged}, prev)
     return normalize_canon({'player': text.strip()}, prev)
 
 

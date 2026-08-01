@@ -14,7 +14,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.scenecomp import compose_question
+from src.scenecomp import (compose_question, trim_scene, cast_tags,
+                           SCENE_CHARS)
 
 CONVO = ("user: I push open the door.\n"
          "assistant: The hinges shriek and dust drifts down.")
@@ -142,6 +143,68 @@ def test_canon():
                                  canon=None))
 
 
+def test_trim_scene():
+    """The cap must not eat the roster - it used to, every time.
+
+    The 400-char cap this replaces cut the composed sentence mid-word
+    and took the who-is-present line with it, which is precisely the
+    line that keeps extra creatures out of the picture."""
+    print("trim_scene")
+    body = ("A narrow spiral stone stair descends into darkness, rough-cut "
+            "walls closing in, a cracked funeral urn with dusty bones in a "
+            "wall niche, cold air and a faint damp gleam on the steps, lit "
+            "by the warm orange glow of a torch held by a young Khajiit "
+            "woman in a worn leather jerkin over a simple tunic, a holy "
+            "symbol on a cord around her neck, a shortsword and pouch at "
+            "her belt, her short golden fur striped with darker markings, "
+            "her tail low and still, breath faintly visible in the cold, "
+            "the stair curving away below her into a blackness the torch "
+            "cannot reach, salt crusting the mortar between the stones, "
+            "the air tasting of brine and wet lime, and somewhere far "
+            "below the slow drip of water into standing water.")
+    roster = "- the only figure present is the young Khajiit woman"
+    out = trim_scene(body + "\n" + roster)
+    check("over-budget scene is capped", len(out) <= SCENE_CHARS,
+          f"got {len(out)}")
+    check("the roster survives the cap", out.endswith(roster))
+    check("the prose is what gave way", len(out.rpartition('\n')[0])
+          < len(body))
+    check("no mid-word cut", not out.rpartition('\n')[0].endswith(" "))
+
+    short = "A cold stair.\n" + roster
+    check("a scene inside budget is untouched", trim_scene(short) == short)
+    # No roster to protect: cap the whole thing, still on a word boundary.
+    plain = trim_scene(body, 100)
+    check("rosterless scene still capped", len(plain) <= 100)
+    check("rosterless cut lands on a word", not plain.endswith("rough-c"))
+
+
+def test_cast_tags():
+    """The roster, once it survives, in the vocabulary image models obey."""
+    print("cast_tags")
+    solo_pos, solo_neg = cast_tags(
+        "A stair.\n- the only figure present is the Khajiit woman")
+    check("one figure -> solo", "solo" in solo_pos)
+    check("one figure pushes crowds away", "multiple girls" in solo_neg)
+    check("one figure pushes beasts away",
+          has(solo_neg, "monster", "macro", "giant"))
+
+    empty_pos, empty_neg = cast_tags(
+        "A cold crypt corridor.\n- an empty, unpeopled scene")
+    check("empty scene -> no humans", "no humans" in empty_pos)
+    check("empty scene pushes people away", has(empty_neg, "1girl", "solo"))
+    check("empty scene pushes creatures away",
+          has(empty_neg, "creature", "monster"))
+
+    # Anything it cannot read confidently must change nothing at all.
+    check("a crowded roster claims nothing",
+          cast_tags("The hall.\n- present are the player, Marja and the "
+                    "drowned priest") == ('', ''))
+    check("no roster claims nothing",
+          cast_tags("just some prose about a room") == ('', ''))
+    check("empty input claims nothing", cast_tags('') == ('', ''))
+
+
 if __name__ == "__main__":
     test_full()
     test_instructions()
@@ -149,6 +212,8 @@ if __name__ == "__main__":
     test_degradation()
     test_partial_room()
     test_canon()
+    test_trim_scene()
+    test_cast_tags()
 
     print()
     if failures:

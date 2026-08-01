@@ -277,13 +277,16 @@ CONFIG_SCHEMA = [
          'illustrate themselves. off = never.'),
         ('backend', 'choice:gemini,openai,comfyui,fixture', 'Backend', ''),
         ('style', 'pick:styles', 'Style preset',
-         'A named look: cinematic, oil-chiaroscuro and painted-noir ship '
+         'A named look: cinematic, oil-chiaroscuro, painted-noir and '
+         'anthro-illustrious (for an SDXL/Illustrious checkpoint) ship '
          'built in; ↻ also lists [images.styles.*] tables from this '
          'config. Empty = the default look. When set, the preset\'s '
          'prefix wins over Style prefix below.'),
         ('style_prefix', 'str', 'Style prefix',
          'Prepended to every scene description. Empty string = none; '
-         'unset = the built-in dark-fantasy text.'),
+         'unset = the built-in dark-fantasy text. Describe the medium '
+         'and the light only - naming a subject here puts it in scenes '
+         'that have no characters.'),
     ]),
     ('images.gemini', 'Images: Gemini', [
         ('model', 'pick:gemini', 'Model',

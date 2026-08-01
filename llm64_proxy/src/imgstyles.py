@@ -1,10 +1,11 @@
 """Named image style presets: [images] style = "cinematic".
 
 A preset is one table of settings - a style_prefix plus optional
-ComfyUI overrides (model, sampler, a LoRA) - selected by name, so a
-user can switch the whole look of the illustrations without editing
-workflow JSON. Three presets ship built in (PRESETS below); a config
-can add its own or override a built-in with [images.styles.<name>].
+ComfyUI overrides (model, sampler, a negative, a LoRA) - selected by
+name, so a user can switch the whole look of the illustrations without
+editing workflow JSON. Four presets ship built in (PRESETS below); a
+config can add its own or override a built-in with
+[images.styles.<name>].
 
 Resolution runs ONCE, at config load (config.py calls apply_style on
 the raw [images] table), and works by folding the preset into the keys
@@ -13,7 +14,8 @@ the rest of the proxy already reads:
   style_prefix       -> [images].style_prefix (ImageService reads it),
                         REPLACING the profile/default prefix - picking
                         a named style is the more specific choice
-  model, clip, vae, steps, cfg, sampler, scheduler
+  model, clip, vae, steps, cfg, sampler, scheduler, negative,
+  width, height, shift
                      -> [images.comfyui].<key>, overriding what the
                         table had (only meaningful for that backend)
   workflow           -> [images.comfyui].workflow
@@ -40,23 +42,33 @@ logger = logging.getLogger(__name__)
 LORA_WORKFLOW = "flux2-klein-lora.json"
 
 # Preset keys that map 1:1 onto [images.comfyui] settings (which map
-# 1:1 onto workflow tokens - see imagegen.COMFY_DEFAULTS).
+# 1:1 onto workflow tokens - see imagegen.COMFY_DEFAULTS). `negative`
+# is here because a look and the things that ruin it are one decision:
+# a preset that specifies a sampler but has to borrow the default
+# negative is only half a preset.
 COMFY_KEYS = ("model", "clip", "vae", "steps", "cfg",
-              "sampler", "scheduler")
+              "sampler", "scheduler", "negative", "width", "height",
+              "shift")
 
 # Built-in presets. A user [images.styles.<name>] table with one of
 # these names is merged OVER the built-in, so overriding just
 # lora_strength keeps the prefix.
 PRESETS = {
+    # NOTE the prefix says nothing about who is IN the picture. It used
+    # to carry a species-fidelity clause ("an anthropomorphic
+    # beast-person stays a beast-person, muzzle, fur and tail visible")
+    # to stop Flux quietly humanizing a Khajiit. It worked there and was
+    # a disaster elsewhere: prepended to EVERY prompt, an empty crypt
+    # stairwell got a beast too, and on a furry-tuned SDXL checkpoint
+    # `muzzle` is the danbooru tag for the restraint device, which duly
+    # appeared strapped to its face. Species fidelity now lives in the
+    # composed sentence instead (scenecomp's cast rules), where it can
+    # only be said about a character the scene actually has.
     "cinematic": {
         "style_prefix": (
             "A moody cinematic film still, anamorphic framing, "
             "practical light sources, volumetric haze, muted grade "
-            "with deep blacks. The subject characters keep their "
-            "described species and anatomy exactly - an "
-            "anthropomorphic beast-person stays a beast-person, "
-            "muzzle, fur and tail visible, never rendered as a "
-            "human. Scene: "),
+            "with deep blacks. Scene: "),
         "lora": "MovieClips_Klein9B_copy_000000880.safetensors",
         "lora_strength": 0.8,
     },
@@ -70,10 +82,51 @@ PRESETS = {
     "painted-noir": {
         "style_prefix": (
             "A painted dark fantasy scene lit like film noir: hard "
-            "single-source light carving the figure out of "
-            "near-black, long shadows, fog catching the beam, "
-            "restrained cold palette with one warm highlight. "
-            "Scene: "),
+            "single-source light carving form out of near-black, "
+            "long shadows, fog catching the beam, restrained cold "
+            "palette with one warm highlight. Scene: "),
+    },
+    # For an Illustrious/Pony-family SDXL checkpoint - NovaFurryXL and
+    # the rest of the anthro-tuned ones. Three things make it different
+    # from the presets above, all of them the model's doing:
+    #
+    #  - it is a TAG model. Prose reads as a bag of words, so the look
+    #    is comma-separated tags and the quality tags come first, where
+    #    the weighting is. (The composed scene stays a sentence; mixed
+    #    tags and prose is normal for this family and works.)
+    #  - it has 77-token CLIP chunks, so a long prose preamble spends
+    #    the whole first chunk before the scene is even mentioned -
+    #    which is how a crypt turns into a forest. This prefix is short
+    #    on purpose.
+    #  - it is trained on anthro art and needs no encouragement to draw
+    #    a beast. What it needs is the negative below, and the
+    #    subject-count tags scenecomp derives per scene.
+    #
+    # Sampler settings are SDXL's, not Flux's: cfg 1.0 disables
+    # classifier-free guidance, and this is a preset whose negative
+    # prompt is half the point.
+    "anthro-illustrious": {
+        "style_prefix": (
+            "masterpiece, best quality, highly detailed, painted "
+            "illustration, dark fantasy adventure game art, dramatic "
+            "lighting, single warm light source, deep shadow, muted "
+            "palette, detailed background, "),
+        "negative": (
+            "worst quality, low quality, lowres, jpeg artifacts, "
+            "watermark, signature, artist name, logo, text, "
+            "border, frame, letterbox, "
+            "bad anatomy, bad proportions, deformed, extra limbs, "
+            "extra digits, "
+            # The scene-stealers. A furry checkpoint will volunteer all
+            # of these into a room that was described as empty.
+            "macro, giant, oversized, size difference, "
+            "monster, creature, feral, dragon, "
+            "muzzle, harness, leash, collar, "
+            "blank background, simple background"),
+        "steps": 28,
+        "cfg": 5.0,
+        "sampler": "euler_ancestral",
+        "scheduler": "normal",
     },
 }
 

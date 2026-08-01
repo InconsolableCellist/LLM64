@@ -21,6 +21,8 @@ import logging
 import time
 from pathlib import Path
 
+from .scenecomp import cast_tags
+
 AUTO_INTERVAL_S = 240.0
 
 
@@ -33,7 +35,8 @@ def _backend_label(backend) -> str:
 
 
 def build_sidecar(meta: dict, final_prompt: str, scene: str,
-                  backend_label: str, when: int) -> dict:
+                  backend_label: str, when: int,
+                  negative: str = '') -> dict:
     """The record written beside every generated image (docs/13). Caller
     supplies the trigger context in `meta` (instructions, directive,
     caption, conv_id, at_msg); this fills in what only the service knows.
@@ -45,6 +48,10 @@ def build_sidecar(meta: dict, final_prompt: str, scene: str,
         'backend': backend_label,
         'time': when,
     })
+    # Only when there was one, so old sidecars and this one stay
+    # comparable at a glance.
+    if negative:
+        out['cast_negative'] = negative
     return out
 
 # Style guidance matters as much as the converter: art made of flat
@@ -164,8 +171,15 @@ class ImageService:
 
         prefix = self.style_prefix if self._configured or style is None \
             else style
-        final_prompt = prefix + prompt
-        raw = self.backend.generate(final_prompt, purpose="adventure")
+        # The scene's own cast, in the vocabulary image models actually
+        # obey (scenecomp.cast_tags): a subject-count tag in front of the
+        # scene, and the matching push on the negative. Empty for any
+        # roster that is missing or names more than one figure, so this
+        # is a no-op on everything it cannot read confidently.
+        cast, negative = cast_tags(prompt)
+        final_prompt = prefix + (cast + ", " if cast else "") + prompt
+        raw = self.backend.generate(final_prompt, purpose="adventure",
+                                    negative=negative)
 
         # One folder per conversation, matching conversations/<id>.json.
         folder = self.dir / str(conv_id).replace("/", "_")
@@ -175,7 +189,7 @@ class ImageService:
         (self.dir / f"{stem}.png").write_bytes(raw)
 
         # Save what produced this image beside it (docs/13).
-        self._write_sidecar(stem, meta, final_prompt, prompt, now)
+        self._write_sidecar(stem, meta, final_prompt, prompt, now, negative)
 
         try:
             img = Image.open(io.BytesIO(raw))
@@ -187,12 +201,14 @@ class ImageService:
         (self.dir / f"{stem}.blob").write_bytes(blob + bytes([bg]))
         return blob, stem, bg
 
-    def _write_sidecar(self, stem, meta, final_prompt, scene, when):
+    def _write_sidecar(self, stem, meta, final_prompt, scene, when,
+                       negative=''):
         """Write <stem>.json beside the image (docs/13). Best-effort: a
         failed sidecar must never lose an image already paid for - the
         same policy _log_usage follows."""
         sidecar = build_sidecar(meta, final_prompt, scene,
-                                _backend_label(self.backend), when)
+                                _backend_label(self.backend), when,
+                                negative)
         try:
             (self.dir / f"{stem}.json").write_text(
                 json.dumps(sidecar, indent=2))
