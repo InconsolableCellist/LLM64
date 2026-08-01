@@ -51,18 +51,25 @@ editor with validation, and an
 [illustration preview](#previewing-illustrations) that turns your image
 settings into an actual picture without booting a client.
 
+![The launcher, on the Illustrations tab](../screenshots/proxy_launcher.png)
+
 1. Build `llm64-proxy` (Linux) or `llm64-proxy.exe` (Windows) with
    [PACKAGING.md](PACKAGING.md) -- four commands on the platform you
    are targeting -- or take a build from the Releases page if one is
    published for your platform.
 2. Put it in a folder of its own and run it. On Windows, allow the
    firewall prompt so the clients can reach it.
-3. Press "Create config" in the Settings tab: it writes a `config.toml`
-   next to the binary from the built-in template. Point `[api]` at
-   your model (below), then "Save & Restart". The ↻ button beside each
-   model field asks the endpoint what it serves (`GET /v1/models`, and
-   ComfyUI's own API for checkpoints/CLIPs/VAEs), so once the base URL
-   and key are in, the model is a dropdown pick, not a guess.
+3. The [setup wizard](#the-setup-wizard) opens by itself the first
+   time, since there is no config yet. Work through it and you are
+   done; press Start when it closes.
+
+If you would rather fill the settings in by hand, press "Create config"
+in the Settings tab instead: it writes a `config.toml` next to the
+binary from the built-in template. Point `[api]` at your model (below),
+then "Save & Restart". The ↻ button beside each model field asks the
+endpoint what it serves (`GET /v1/models`, and ComfyUI's own API for
+checkpoints/CLIPs/VAEs), so once the base URL and key are in, the model
+is a dropdown pick, not a guess.
 
 The rest of this README applies unchanged; where it says
 `./run.sh proxy`, press Start instead. `llm64-proxy --headless` runs
@@ -70,6 +77,54 @@ the plain CLI server from the same file, with the same flags as
 `python -m src`.
 
 ## Configuration
+
+### The setup wizard
+
+If you are running the launcher window (the standalone binary, or
+`python -m src.launcher`), press **Setup wizard** in the toolbar. It
+walks you through the whole system in the order the pieces have to
+happen and checks each one against the live machine as you go, writing
+ordinary keys into `config.toml` that the Settings tab edits afterwards.
+
+It opens by itself on a machine that has not been set up -- no
+`config.toml`, or one still carrying the template's placeholder endpoint
+with no key anywhere. It leaves a working install alone.
+
+![The setup wizard, on the step that configures the model](../screenshots/proxy_wizard.png)
+
+Two steps are mandatory:
+
+| Step | What it checks |
+|------|----------------|
+| **The LLM** | Sends one real completion. That is what proves the base URL, the key and the model name are right together; `GET /models` proves only the first. On a local server it also forces the model to load, so allow it a minute. |
+| **What the C64 dials** | That nothing else holds the port, and which of this machine's addresses to type into the client. |
+
+The rest are optional, and the wizard says so on each page rather than
+leaving you to guess:
+
+| Step | What it does |
+|------|--------------|
+| **Files and names** | Where conversations, images and the log go, and what the model calls you. |
+| **Pictures** | Backend and its settings (only the selected backend's fields are shown), then a real generation you can look at -- see [Image generation](#image-generation). |
+| **Music** | Reports whether each library is on disk and gives you the build commands. It cannot build them for you; they are large downloads that take hours to tag. |
+| **Printing** | `c64` needs nothing on this host. `cups` is checked against `lpstat`, and there is a button that spools a real test page. The Windows client's Notebook window is virtual paper for `/print` and needs no printer at all. |
+| **Claude Code** | Runs `claude --version` so `/code` fails here rather than on the C64. |
+
+Every step is written as you leave it, so **Save and close** half way
+through keeps what you finished and reopening resumes. That is the
+intended way to handle a step you cannot do today: build a music library
+at the weekend, reopen the wizard, and it picks the library up.
+
+**Cancel** is the other ending, and it undoes the lot: every file the
+wizard touched goes back to what it was when the window opened, and a
+`config.toml` the wizard created is removed. It names the files and asks
+first. There is no third option -- closing the window is the same as
+Save and close, because by then the steps behind you are already on
+disk.
+
+Finishing writes a `[wizard]` table into `config.toml`. That table is
+the only thing stopping it opening unasked, so delete it if you want the
+first-run behaviour back.
 
 ### Write a config
 
@@ -181,6 +236,11 @@ Test-NetConnection <proxy-host> -Port 6400    # reachable from elsewhere?
 ```
 
 ## Optional features
+
+The [setup wizard](#the-setup-wizard) covers every row of this table
+and checks each one, so if you are running the launcher window, start
+there. The sections below are the same ground in more detail, and the
+only way to do it when you run the proxy headless.
 
 | Want | Do this |
 |------|---------|
@@ -608,9 +668,11 @@ llm64_proxy/
 │   ├── modes.py             # chat / adventure / roleplay / code prompts
 │   ├── advmap.py advsetup.py advtemplates.py chargen.py dice.py
 │   ├── images.py imagegen.py imaging.py scenecomp.py printpic.py
-│   ├── imgstyles.py preview.py
+│   ├── imgstyles.py preview.py setupwiz.py
 │   ├── launcher.py          # the desktop window; preview.py is its
 │   │                        #   Illustrations tab, minus the widgets
+│   ├── wizard.py            # the setup wizard's window; setupwiz.py is
+│   │                        #   its steps and checks, minus the widgets
 │   ├── music.py midi_library.py sid_ranking.py sid_overrides.py
 │   ├── printdoc.py printcups.py
 │   ├── claude_session.py    # /code mode

@@ -37,10 +37,15 @@ import tomlkit
 
 from . import discovery
 from . import preview
+from . import setupwiz
+from . import wizard
+from . import __version__
 from .config import Config
 from .api_client import APIClient
 from .tcp_server import C64Server
-from .respath import resource_dir, bundled_workflows_dir
+from .respath import bundled_workflows_dir
+from .setupwiz import music_status_lines, validate_config_text  # noqa: F401
+from .wizard import scroll_host, photo_image
 
 logger = logging.getLogger('launcher')
 
@@ -377,85 +382,12 @@ CONFIG_SCHEMA = [
 ]
 
 
-def music_status_lines(data_dir):
-    """One line each for the SID and MIDI libraries under data_dir.
-
-    Goes through the real loaders (MusicLibrary/MidiLibrary), so
-    "detected" means the server would actually play it, not just that a
-    file exists. The loaders swallow parse errors and come back empty,
-    which is why a present-but-empty database gets its own wording.
-    """
-    from .music import MusicLibrary
-    from .midi_library import MidiLibrary
-    lines = []
-    for name, db_path, cls, hint in (
-            ('SID', Path(data_dir) / 'sids' / 'moods.json', MusicLibrary,
-             'run llm64_proxy/tools/sid_build.py (README: "Building the '
-             'SID music library")'),
-            ('MIDI', Path(data_dir) / 'midi' / 'midi.json', MidiLibrary,
-             'run llm64_proxy/tools/midi_fetch.py, midi_scan.py, '
-             'midi_mood.py, midi_makedb.py (README: "Music for the '
-             'Windows client")')):
-        try:
-            if not db_path.exists():
-                lines.append(f'{name}: not set up - {hint}')
-                continue
-            lib = cls(db_path)
-            if lib.available:
-                lines.append(f'{name}: {len(lib.tunes)} tunes, '
-                             f'{len(lib.moods)} moods ({db_path})')
-            else:
-                lines.append(f'{name}: {db_path} exists but loaded no '
-                             f'tunes (broken or empty database) - {hint}')
-        except Exception as e:
-            lines.append(f'{name}: {db_path} failed to load '
-                         f'({type(e).__name__}: {e})')
-    return lines
-
-
-def _dig(doc, dotted, create=False):
-    """The table a dotted section name refers to, or None."""
-    node = doc
-    for part in dotted.split('.'):
-        if not isinstance(node, dict) or part not in node:
-            if not create:
-                return None
-            node[part] = tomlkit.table()
-        node = node[part]
-    return node
-
-
-def _template_path():
-    """config.toml.example, in a checkout or in the bundle."""
-    for base in (resource_dir().parent, resource_dir()):
-        p = base / 'config.toml.example'
-        if p.exists():
-            return p
-    return None
-
-
-def validate_config_text(text, config_path):
-    """None if the text is a config the server would accept, else the
-    complaint. Runs the real Config parser against a scratch file in
-    the same directory, so relative paths resolve exactly as they will
-    at start time."""
-    try:
-        tomlkit.parse(text)
-    except Exception as e:
-        return f'TOML syntax: {e}'
-    base = Path(config_path).resolve().parent if config_path else Path('.')
-    tmp = base / '.launcher-validate.tmp.toml'
-    try:
-        tmp.write_text(text)
-        Config(str(tmp))
-    except Exception as e:
-        return f'Config rejected: {e}'
-    finally:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
-    return None
+# The config plumbing this window and the setup wizard both need lives
+# in setupwiz.py, which has no tkinter in it and can therefore be
+# tested without a display. These are the names the launcher calls it
+# by.
+_dig = setupwiz.dig
+_template_path = setupwiz.template_path
 
 
 # --------------------------------------------------------------------------
@@ -465,7 +397,10 @@ class LauncherApp(tk.Tk):
 
     def __init__(self, config_path):
         super().__init__()
-        self.title('LLM64 Proxy')
+        # The version goes in the title because a packaged binary has
+        # nowhere else to say it: no pip metadata, no --version to type,
+        # and the person reporting a bug is looking at this window.
+        self.title(f'LLM64 Proxy {__version__}')
         # Tall enough for the illustration tab's two rows of 320x200
         # renders; every tab scrolls, so a smaller screen still works.
         self.geometry('980x760')
@@ -497,6 +432,8 @@ class LauncherApp(tk.Tk):
         self._preview_history = []
         self._preview_prefix = {}   # target -> (style prefix, its source)
 
+        self._wizard = None
+
         self._build_ui()
         self._load_editor()
         self.protocol('WM_DELETE_WINDOW', self._on_close)
@@ -507,6 +444,28 @@ class LauncherApp(tk.Tk):
                 f'would run on built-in defaults. Use "Create config" in '
                 f'the Settings tab.')
         self.after(POLL_MS, self._tick)
+        self._maybe_open_wizard()
+
+    # ---- setup wizard ----
+
+    def _open_wizard(self):
+        wizard.open_wizard(self, self.config_path.get())
+
+    def _maybe_open_wizard(self):
+        """Open the wizard unasked on a machine that has not been set
+        up. Deliberately narrow - see setupwiz.should_autorun - because
+        a window that opens over an already-working install every time
+        is a window people learn to close without reading.
+
+        after(), not a direct call: __init__ has not returned yet, so
+        the main window is not mapped and a Toplevel raised over it now
+        would come up behind it on some window managers.
+        """
+        want, why = setupwiz.should_autorun(self.config_path.get())
+        if not want:
+            return
+        logger.info(f'Opening the setup wizard: {why}')
+        self.after(300, self._open_wizard)
 
     # ---- layout ----
 
@@ -529,6 +488,11 @@ class LauncherApp(tk.Tk):
         self.btn_start.pack(side='left')
         self.btn_stop.pack(side='left', padx=4)
         self.btn_restart.pack(side='left')
+        # Next to the buttons that do the obvious thing, because the
+        # people who need it are the people who have not found the
+        # Settings tab yet.
+        ttk.Button(bar, text='Setup wizard',
+                   command=self._open_wizard).pack(side='left', padx=(12, 0))
 
         self.status_dot = tk.Label(bar, text='●', fg='#888')
         self.status_dot.pack(side='left', padx=(16, 2))
@@ -562,56 +526,13 @@ class LauncherApp(tk.Tk):
             foot, text='Log file: (created when the server starts)')
         self.logfile_label.pack(side='right')
 
-    @staticmethod
-    def _scroll_host(parent):
-        """A vertically scrolling frame filling `parent`. Returns
-        (inner frame, wheel handler) - the handler has to be bound to
-        each child as it is built, because a child with its own bindings
-        swallows the wheel event before the canvas sees it.
-
-        Pack the tab's fixed furniture (a button row) BEFORE calling
-        this: the canvas takes every pixel the earlier packs left.
-        """
-        canvas = tk.Canvas(parent, highlightthickness=0)
-        vsb = ttk.Scrollbar(parent, orient='vertical', command=canvas.yview)
-        canvas.configure(yscrollcommand=vsb.set)
-        vsb.pack(side='right', fill='y')
-        canvas.pack(side='top', fill='both', expand=True)
-        inner = ttk.Frame(canvas, padding=8)
-        inner_id = canvas.create_window((0, 0), window=inner, anchor='nw')
-        inner.bind('<Configure>', lambda e: canvas.configure(
-            scrollregion=canvas.bbox('all')))
-        canvas.bind('<Configure>', lambda e: canvas.itemconfigure(
-            inner_id, width=e.width))
-
-        def _wheel(event):
-            if event.num == 4 or event.delta > 0:
-                canvas.yview_scroll(-3, 'units')
-            else:
-                canvas.yview_scroll(3, 'units')
-        # bind on the canvas subtree only, not the whole app, so the log
-        # and raw tabs keep their own wheel behaviour
-        for w in (canvas, inner):
-            w.bind('<MouseWheel>', _wheel)
-            w.bind('<Button-4>', _wheel)
-            w.bind('<Button-5>', _wheel)
-        return inner, _wheel
+    # The scrolling frame and the wheel plumbing are shared with the
+    # wizard, which is where they live (wizard.py). Bound as methods
+    # here because every call site in this file predates the move.
+    _scroll_host = staticmethod(scroll_host)
 
     def _bind_wheel(self, widget, wheel):
-        """Hand the page's wheel handler down a finished subtree.
-
-        Skipped: text boxes, which scroll themselves, and the value
-        widgets whose Tk bindings read the wheel as "change me" - a
-        scroll over a combobox must not silently pick a different style
-        preset.
-        """
-        for child in widget.winfo_children():
-            if not isinstance(child, (tk.Text, ttk.Combobox, ttk.Spinbox,
-                                      ttk.Scrollbar)):
-                child.bind('<MouseWheel>', wheel)
-                child.bind('<Button-4>', wheel)
-                child.bind('<Button-5>', wheel)
-            self._bind_wheel(child, wheel)
+        wizard.bind_wheel(widget, wheel)
 
     def _build_settings_tab(self, nb):
         tab = ttk.Frame(nb)
@@ -1129,21 +1050,7 @@ class LauncherApp(tk.Tk):
     # ---- preview: drawing ----
 
     def _photo(self, img, box=None):
-        """A tk image from a PIL one. Encoded as PNG and handed to Tk's
-        own decoder rather than going through PIL.ImageTk: one fewer
-        optional Pillow component to be missing from a frozen build, and
-        Tk has read PNG since 8.6."""
-        import base64
-        import io
-        from PIL import Image
-        if box and (img.width > box[0] or img.height > box[1]):
-            img = img.copy()
-            img.thumbnail(box, Image.LANCZOS)
-        buf = io.BytesIO()
-        img.save(buf, 'PNG')
-        return tk.PhotoImage(
-            data=base64.b64encode(buf.getvalue()).decode('ascii'),
-            master=self)
+        return photo_image(self, img, box)
 
     def _preview_show(self, result):
         """Put one preview in the panels. `result` is a preview.Preview
