@@ -21,8 +21,6 @@ import logging
 import time
 from pathlib import Path
 
-from .scenecomp import cast_tags
-
 AUTO_INTERVAL_S = 240.0
 
 
@@ -35,8 +33,7 @@ def _backend_label(backend) -> str:
 
 
 def build_sidecar(meta: dict, final_prompt: str, scene: str,
-                  backend_label: str, when: int,
-                  negative: str = '') -> dict:
+                  backend_label: str, when: int) -> dict:
     """The record written beside every generated image (docs/13). Caller
     supplies the trigger context in `meta` (instructions, directive,
     caption, conv_id, at_msg); this fills in what only the service knows.
@@ -48,10 +45,6 @@ def build_sidecar(meta: dict, final_prompt: str, scene: str,
         'backend': backend_label,
         'time': when,
     })
-    # Only when there was one, so old sidecars and this one stay
-    # comparable at a glance.
-    if negative:
-        out['cast_negative'] = negative
     return out
 
 # Style guidance matters as much as the converter: art made of flat
@@ -76,10 +69,18 @@ DEFAULT_STYLE_PREFIX = (
 
 class ImageService:
     def __init__(self, data_dir: Path, mode: str = "ask", backend=None,
-                 style_prefix: str = None, dib_period: bool = True):
+                 style_prefix: str = None, dib_period: bool = True,
+                 prompt_format: str = "prose"):
         self.dir = Path(data_dir) / "images"
         self.mode = mode
         self.backend = backend
+        # What SHAPE the scene description should be written in, which
+        # is a property of the checkpoint rather than of this service:
+        # "prose" for Flux and the API backends, "tags" for a
+        # Danbooru-lineage SDXL one. protocol.py reads it back when it
+        # builds the composition question (scenecomp.compose_question).
+        self.prompt_format = prompt_format if prompt_format in (
+            "prose", "tags") else "prose"
         # The 1993 treatment on the Windows client's DIBs: 320x200, the
         # levels crunch, and a dither against a fixed VGA palette
         # (imaging.convert_to_dib8). [images] dib_style = "clean" turns it
@@ -171,15 +172,8 @@ class ImageService:
 
         prefix = self.style_prefix if self._configured or style is None \
             else style
-        # The scene's own cast, in the vocabulary image models actually
-        # obey (scenecomp.cast_tags): a subject-count tag in front of the
-        # scene, and the matching push on the negative. Empty for any
-        # roster that is missing or names more than one figure, so this
-        # is a no-op on everything it cannot read confidently.
-        cast, negative = cast_tags(prompt)
-        final_prompt = prefix + (cast + ", " if cast else "") + prompt
-        raw = self.backend.generate(final_prompt, purpose="adventure",
-                                    negative=negative)
+        final_prompt = prefix + prompt
+        raw = self.backend.generate(final_prompt, purpose="adventure")
 
         # One folder per conversation, matching conversations/<id>.json.
         folder = self.dir / str(conv_id).replace("/", "_")
@@ -189,7 +183,7 @@ class ImageService:
         (self.dir / f"{stem}.png").write_bytes(raw)
 
         # Save what produced this image beside it (docs/13).
-        self._write_sidecar(stem, meta, final_prompt, prompt, now, negative)
+        self._write_sidecar(stem, meta, final_prompt, prompt, now)
 
         try:
             img = Image.open(io.BytesIO(raw))
@@ -201,14 +195,12 @@ class ImageService:
         (self.dir / f"{stem}.blob").write_bytes(blob + bytes([bg]))
         return blob, stem, bg
 
-    def _write_sidecar(self, stem, meta, final_prompt, scene, when,
-                       negative=''):
+    def _write_sidecar(self, stem, meta, final_prompt, scene, when):
         """Write <stem>.json beside the image (docs/13). Best-effort: a
         failed sidecar must never lose an image already paid for - the
         same policy _log_usage follows."""
         sidecar = build_sidecar(meta, final_prompt, scene,
-                                _backend_label(self.backend), when,
-                                negative)
+                                _backend_label(self.backend), when)
         try:
             (self.dir / f"{stem}.json").write_text(
                 json.dumps(sidecar, indent=2))

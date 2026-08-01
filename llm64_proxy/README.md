@@ -46,8 +46,10 @@ python3 -m venv .venv
 ### Standalone binary (no Python)
 
 One file, and a launcher window instead of a terminal: Start/Stop
-buttons, live status (connections, LLM calls), the log, and a
-config.toml editor with validation.
+buttons, live status (connections, LLM calls), the log, a config.toml
+editor with validation, and an
+[illustration preview](#previewing-illustrations) that turns your image
+settings into an actual picture without booting a client.
 
 1. Build `llm64-proxy` (Linux) or `llm64-proxy.exe` (Windows) with
    [PACKAGING.md](PACKAGING.md) -- four commands on the platform you
@@ -210,51 +212,128 @@ it to `""` if your ComfyUI workflow carries its own style. Backends
   `randomize_seed`. `workflow` unset runs the bundled
   `workflows/flux2-klein-retro.json` (Flux 2 klein), so the backend
   works out of the box; a bare filename also resolves against the
-  bundled set when the config dir has no such file. No auth -- keep it
-  on a trusted LAN.
+  bundled set when the config dir has no such file. Four ship: the Flux
+  pair (`flux2-klein-retro.json`, `flux2-klein-lora.json`) and an SDXL
+  pair (`novafurryxl.json`, `novafurryxl-lora.json`) for Illustrious /
+  Pony / SDXL checkpoints. A workflow may carry a `"_defaults"` table
+  naming the checkpoint, steps, cfg and geometry it needs, so selecting
+  it is enough to get a working run; `[images.comfyui]` and style
+  presets still override those. No auth -- keep it on a trusted LAN.
 - **`fixture`** -- a fixed local image, for tests.
 
 **Style presets.** Set `[images] style` to a named look instead of
 hand-writing a prefix: `cinematic` (moody film still, runs the
 MovieClips LoRA through the bundled `flux2-klein-lora.json` workflow),
-`oil-chiaroscuro` (Rembrandt-style night oil painting),
-`painted-noir` (film-noir lit dark fantasy), or `anthro-illustrious`
-(for an Illustrious/Pony-family SDXL checkpoint such as NovaFurryXL).
-Define your own as an `[images.styles.<name>]` table -- see
-config.toml.example. To use your own LoRA: drop the `.safetensors` file
-in ComfyUI's `models/loras`, open the launcher's Settings tab, set Style
-preset to `custom`, hit the custom section's refresh button to list the
-server's LoRAs, and pick yours.
+`oil-chiaroscuro` (Rembrandt-style night oil painting), `painted-noir`
+(film-noir lit dark fantasy), or `nova-furry` (below). Define your own
+as an `[images.styles.<name>]` table -- see config.toml.example. A
+preset can carry the whole stack, not just the prefix: `workflow`,
+`model`, `steps`, `cfg`, `sampler`, `scheduler`, `width`, `height`,
+`lora`, `lora_strength`. To use your own LoRA: drop the `.safetensors`
+file in ComfyUI's `models/loras`, open the launcher's Settings tab, set
+Style preset to `custom`, hit the custom section's refresh button to
+list the server's LoRAs, and pick yours.
 
-The first three presets are written for Flux, which follows prose. An
-SDXL checkpoint does not: it reads tags, weights the front of the
-prompt hardest, and splits the text into 77-token chunks, so a long
-prose preamble can spend the whole first chunk before the scene is
-mentioned. `anthro-illustrious` is tags, short, and ships the negative
-prompt that family needs.
+**Anthro characters (`nova-furry`).** A general-purpose model draws a
+beast-person by drawing a person and hoping, which is why animal races
+come out rough. The fix is a checkpoint that was trained on them: put
+[NovaFurryXL](https://civitai.com/models/503815) (Illustrious-based) in
+ComfyUI's `models/checkpoints` and set `[images] style = "nova-furry"`.
+The preset selects an SDXL workflow that carries the checkpoint name
+and the sampler settings that family needs -- the bare
+`[images.comfyui]` defaults are Flux's and would run SDXL at 8 steps
+and cfg 1. Those live in the workflow rather than the preset on
+purpose, so `[images.comfyui] steps` and the launcher's Steps and
+Width fields still override them.
 
-It also brings its own graph -- `workflows/sdxl-illustrious.json`, one
-`CheckpointLoaderSimple` instead of the Flux loader trio, `cfg` 5 so the
-negative prompt actually guides -- so **selecting the preset in the
-launcher is the whole setup**. Two consequences worth knowing: it
-replaces any `[images.comfyui] workflow` you had configured (it logs
-when it does; a Flux graph is not something this preset can restyle),
-and its `model` is a default to re-point at whatever checkpoint you
-have, via Settings -> Checkpoint and the ↻ button. Don't pair it with a
-Flux LoRA -- one loads zero keys onto an SDXL checkpoint (ComfyUI logs
-several hundred `lora key not loaded` lines and carries on regardless).
+Generation size is 1280x800: 1.6:1 exactly, so the C64 letterbox
+throws nothing away, at about the megapixel SDXL was trained for. Going
+higher is tempting because the short edge is under 1024, and it
+measured worse -- at 1344x896 and above this checkpoint duplicates
+characters and pushes the subject toward the horizon.
 
-**A style prefix must never name a subject.** It is prepended to every
-prompt, including the one for a room the story says is empty, so an
-image model reads "an anthropomorphic beast-person, muzzle and tail
-visible" as an instruction to draw one -- in the empty room too. Keep
-the prefix to medium, light and palette. Species fidelity is handled a
-layer down, in the sentence the chat model composes for each scene,
-which can only say it about a character the scene actually has.
+It also changes how the scene itself is written. `[images]
+prompt_format = "tags"` (which the preset sets) switches the
+composition step from one prose sentence to a Danbooru/e621 tag list --
+cast, species, action, framing, place, light. That is not cosmetic:
+
+- `solo` keeps the rest of the party out of a portrait, which no
+  amount of prose ever managed. A `/pic` naming one character also
+  narrows the visual canon to that character, so nobody else is even
+  described to the model.
+- A framing tag (`upper body`, `cowboy shot`, `wide shot`) is obeyed
+  where prose camera language is ignored, which is what stops the
+  subject ending up the size of an ant.
+- An action named in the request (`/pic bruc drawing his sword`)
+  becomes `drawing sword` instead of being dropped.
+
+`prompt_format` stays `"prose"` for everything else, so Flux, Gemini
+and OpenAI configs are untouched.
+
+Two more things about the preset are deliberate. Its prefix asks for
+flat colour, cel shading and thick outlines, because that is what
+survives 16 colours at 160x200 -- airbrushed detail becomes dither
+mush. And it carries no "keep them anthro" clause, unlike the other
+presets: this checkpoint needs no convincing, and on fixed seeds that
+clause put a beast in an explicitly unpeopled scene and dragged
+unrelated scenes toward the same picture. Judge changes to it in the
+Illustrations tab, not from the prose.
+
+What still misses: two characters in one frame sometimes swap their
+clothing (SDXL attribute binding -- a roll of the dice, not a prompt
+bug), and the composer still reaches for a wide shot more often than
+the subject deserves.
+
+Using a different checkpoint is `[images.comfyui] model`; using a LoRA
+with it means pointing a preset at `novafurryxl-lora.json` -- the file's
+own comment has the six lines to copy.
 
 Minimum to get pictures: install Pillow (it's in requirements.txt), set
 `mode = "ask"`, and supply a Gemini key. Then type `/pic a snake-like
 green dragon with one arm lover a burningi village` on the C64 to test.
+
+#### Previewing illustrations
+
+Nothing above tells you what a picture will actually look like, and the
+slow way to find out is to boot a client, play into a scene, type
+`/pic`, and squint. The launcher's **Illustrations** tab does it in one
+click instead.
+
+1. Open the tab and type a scene, or pick one from **Sample scene** --
+   those are shaped like the sentences the model composes at runtime.
+2. Check **Final prompt**. That is the exact text the backend will
+   receive: your style prefix (or the preset's, or the client's) plus
+   your scene. The line under it says which of those the prefix came
+   from.
+3. **Prompt for** picks whose prefix that is. The C64 gets the
+   dark-fantasy default; the Windows client asks for 1993 VGA pixel art
+   instead. An `[images] style_prefix` or a style preset overrides both,
+   for every client -- and the tab says so when it does.
+4. Press **Generate**. Set **Count** above 1 to get several takes of the
+   same scene; **Stop** ends the batch after the picture already in
+   flight.
+
+You get three views of one generation: what the backend drew, the C64
+multicolor conversion (16 colours, with the caption band burned in), and
+the Windows 320x200 one. The original is there to tell the two failure
+modes apart -- a picture that is wrong in the original is a prompt
+problem, one that is fine there and mud on the C64 is a subject problem.
+
+The tab reads the Settings form **as it stands**, including edits you
+have not saved, so the loop is edit -> Generate -> look. Press **Reread
+settings** after changing anything in the Settings tab. The server does
+not need to be running.
+
+Every preview is saved under `data/previews/` -- the original, both
+conversions, and a JSON file recording the prompt, the style preset, and
+the ComfyUI settings that produced it. They show up in the strip at the
+bottom of the tab, newest first; click one to bring it back into the
+panels along with the scene and caption that made it. Nothing deletes
+them, so clear that folder out yourself when you are done comparing.
+
+Previews cost exactly what an illustration costs, and are logged in
+`data/images/usage.tsv` as `llm64/preview`. Local ComfyUI is free;
+Gemini and OpenAI are not.
 
 ### Building the SID music library (the C64's music)
 
@@ -529,6 +608,9 @@ llm64_proxy/
 │   ├── modes.py             # chat / adventure / roleplay / code prompts
 │   ├── advmap.py advsetup.py advtemplates.py chargen.py dice.py
 │   ├── images.py imagegen.py imaging.py scenecomp.py printpic.py
+│   ├── imgstyles.py preview.py
+│   ├── launcher.py          # the desktop window; preview.py is its
+│   │                        #   Illustrations tab, minus the widgets
 │   ├── music.py midi_library.py sid_ranking.py sid_overrides.py
 │   ├── printdoc.py printcups.py
 │   ├── claude_session.py    # /code mode

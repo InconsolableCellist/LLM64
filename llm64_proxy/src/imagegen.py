@@ -177,15 +177,9 @@ class ImageBackend:
         """Cheap, local, no network. See the module docstring."""
         return False
 
-    def generate(self, prompt: str, purpose: str,
-                 negative: str = "") -> bytes:
+    def generate(self, prompt: str, purpose: str) -> bytes:
         """Raw image bytes in any format PIL can open - the converter
-        letterboxes and quantizes, so size and format are free.
-
-        `negative` is what this ONE image additionally must not contain
-        (images.py derives it from the scene's cast). Only backends with
-        a negative-prompt input can honor it; the hosted ones have none
-        and ignore it, which is a quality difference, not a failure."""
+        letterboxes and quantizes, so size and format are free."""
         raise ImageGenError(f"backend {self.name} cannot generate")
 
 
@@ -217,7 +211,7 @@ class GeminiBackend(ImageBackend):
     def available(self):
         return bool(self._key())
 
-    def generate(self, prompt, purpose, negative=""):
+    def generate(self, prompt, purpose):
         key = self._key()
         if not key:
             raise ImageGenError("no Gemini API key configured")
@@ -285,7 +279,7 @@ class OpenAIImagesBackend(ImageBackend):
         )
         return _http(req, 300, "images API")
 
-    def generate(self, prompt, purpose, negative=""):
+    def generate(self, prompt, purpose):
         key = self._key()
         if not key:
             raise ImageGenError("no images API key configured")
@@ -350,18 +344,19 @@ class ComfyUIBackend(ImageBackend):
         # Token values: the defaults, then whatever the config overrides,
         # coerced because TOML gives a bare 8 as an int but "8" as a
         # string and ComfyUI will not accept the second.
+        #
+        # _explicit remembers which of them the CONFIG named, because a
+        # workflow may carry its own defaults (_defaults below) and those
+        # have to beat COMFY_DEFAULTS while losing to the config.
         self.values = dict(COMFY_DEFAULTS)
+        self._explicit = set()
         for token, default in COMFY_DEFAULTS.items():
             if token.lower() not in cfg:
                 continue
             raw = cfg[token.lower()]
             try:
-                if token in COMFY_INT_KEYS:
-                    self.values[token] = int(raw)
-                elif token in COMFY_FLOAT_KEYS:
-                    self.values[token] = float(raw)
-                else:
-                    self.values[token] = str(raw)
+                self.values[token] = self._coerce(token, raw)
+                self._explicit.add(token)
             except (TypeError, ValueError):
                 logger.warning("ComfyUI: [images.comfyui] %s=%r is not a "
                                "number, using %r",
@@ -380,7 +375,50 @@ class ComfyUIBackend(ImageBackend):
         # never heard of: [images.comfyui.vars] LORA = "foo.safetensors".
         extra = cfg.get("vars") or {}
         if isinstance(extra, dict):
-            self.values.update({str(k).upper(): v for k, v in extra.items()})
+            for key, value in extra.items():
+                self.values[str(key).upper()] = value
+                self._explicit.add(str(key).upper())
+
+    @staticmethod
+    def _coerce(token, raw):
+        """A config or workflow value as the type ComfyUI validates for."""
+        if token in COMFY_INT_KEYS:
+            return int(raw)
+        if token in COMFY_FLOAT_KEYS:
+            return float(raw)
+        return str(raw)
+
+    def _workflow_defaults(self, workflow):
+        """A workflow's own "_defaults" table, coerced.
+
+        The global COMFY_DEFAULTS describe the SHIPPED Flux workflow -
+        8 steps, cfg 1, a Flux checkpoint filename - which are wrong for
+        any other model family, and picking a workflow in the launcher
+        does not also fill in a checkpoint. So a workflow may carry the
+        settings it needs to run at all:
+
+            "_defaults": {"MODEL": "novaFurryXL_ilV120.safetensors",
+                          "STEPS": 28, "CFG": 5.0}
+
+        They sit between the global defaults and the config: selecting
+        that workflow alone gives a working run, and [images.comfyui] (or
+        a style preset) still overrides any of it. Like "_comment", the
+        key is not a node and never reaches ComfyUI.
+        """
+        table = (workflow or {}).get("_defaults")
+        if not isinstance(table, dict):
+            return {}
+        out = {}
+        for key, raw in table.items():
+            token = str(key).upper()
+            try:
+                out[token] = (self._coerce(token, raw)
+                              if token in COMFY_DEFAULTS else raw)
+            except (TypeError, ValueError):
+                logger.warning("ComfyUI workflow %s: _defaults %s=%r is not "
+                               "a number, ignoring",
+                               self.workflow_path.name, key, raw)
+        return out
 
     @staticmethod
     def _resolve_workflow(configured, base_dir):
@@ -443,18 +481,16 @@ class ComfyUIBackend(ImageBackend):
     def available(self):
         return self._load() is not None
 
-    def _tokens(self, prompt, negative=""):
+    def _tokens(self, prompt, workflow=None):
         """{TOKEN} -> value, for this one run.
 
-        A per-image `negative` is APPENDED to the configured one rather
-        than replacing it: the config's entry is the operator's standing
-        list (watermarks, borders), the caller's is about this scene's
-        cast, and both have to hold."""
-        tokens = {"{%s}" % k: v for k, v in self.values.items()}
-        if negative:
-            standing = str(self.values.get("NEGATIVE") or "").strip()
-            tokens["{NEGATIVE}"] = (f"{standing}, {negative}" if standing
-                                    else negative)
+        Precedence, lowest first: COMFY_DEFAULTS, the workflow's own
+        _defaults, then whatever the config named."""
+        values = dict(self.values)
+        for token, value in self._workflow_defaults(workflow).items():
+            if token not in self._explicit:
+                values[token] = value
+        tokens = {"{%s}" % k: v for k, v in values.items()}
         tokens[PROMPT_TOKEN] = prompt
         tokens["{SEED}"] = (self.seed if self.seed is not None
                             else random.randrange(2 ** 31))
@@ -478,14 +514,14 @@ class ComfyUIBackend(ImageBackend):
     def _is_node(value):
         return isinstance(value, dict) and "class_type" in value
 
-    def _prepare(self, workflow, prompt, negative=""):
+    def _prepare(self, workflow, prompt):
         # Only nodes are submitted. A workflow file is a thing a human has
         # to read and edit, so it is allowed a "_comment" key explaining
         # its tokens - and ComfyUI validates every top-level entry as a
         # node, so that key has to be dropped rather than passed on.
         graph = {k: deepcopy(v) for k, v in workflow.items()
                  if self._is_node(v)}
-        tokens = self._tokens(prompt, negative)
+        tokens = self._tokens(prompt, workflow)
         seen = set()
         for inputs in self._node_inputs(graph):
             for key, value in list(inputs.items()):
@@ -524,7 +560,8 @@ class ComfyUIBackend(ImageBackend):
             # The body is node validation errors and holds no secrets.
             logger.error("ComfyUI rejected the workflow: HTTP %s %s", status,
                          raw[:2000].decode("utf-8", "replace"))
-            raise ImageGenError("ComfyUI rejected the workflow (see log)")
+            raise ImageGenError(
+                f"ComfyUI rejected the workflow{_reject_detail(raw)}")
         prompt_id = _json_body(raw, "ComfyUI").get("prompt_id")
         if not prompt_id:
             raise ImageGenError("ComfyUI returned no prompt_id")
@@ -568,16 +605,43 @@ class ComfyUIBackend(ImageBackend):
         return _fetch_image(f"{self.url}/view?{query}", "ComfyUI image fetch",
                             timeout=60)
 
-    def generate(self, prompt, purpose, negative=""):
+    def generate(self, prompt, purpose):
         workflow = self._load()
         if workflow is None:
             raise ImageGenError(
                 f"ComfyUI workflow {self.workflow_path} is missing, "
                 f"unparseable, or has no {PROMPT_TOKEN} token")
         data = self._fetch(self._poll(self._submit(
-            self._prepare(workflow, prompt, negative))))
+            self._prepare(workflow, prompt))))
         _log_usage(self.data_dir, "comfyui", purpose)
         return data
+
+
+def _reject_detail(raw):
+    """The first node validation complaint from a rejected /prompt, as a
+    clause to hang off "ComfyUI rejected the workflow".
+
+    Worth digging out because this is the error an operator can actually
+    fix - a checkpoint filename that is not on that machine, a sampler
+    that does not exist - and "see log" is a poor thing to show in a
+    preview dialog. Returns "" if the body is not what we expect; the
+    full response is in the log either way.
+    """
+    try:
+        body = json.loads(raw.decode("utf-8", "replace"))
+        for node_id, node in (body.get("node_errors") or {}).items():
+            for err in (node.get("errors") or []):
+                detail = err.get("details") or err.get("message") or ""
+                if detail:
+                    return (f": node {node_id} "
+                            f"({node.get('class_type', '?')}) "
+                            f"{detail[:300]}")
+        message = (body.get("error") or {}).get("message")
+        if message:
+            return f": {str(message)[:300]}"
+    except (ValueError, AttributeError, TypeError):
+        pass
+    return " (see log)"
 
 
 def _comfy_error(state):
@@ -602,7 +666,7 @@ class FixtureBackend(ImageBackend):
     def available(self):
         return bool(self.path) and self.path.is_file()
 
-    def generate(self, prompt, purpose, negative=""):
+    def generate(self, prompt, purpose):
         if not self.path:
             raise ImageGenError("no fixture path configured")
         try:

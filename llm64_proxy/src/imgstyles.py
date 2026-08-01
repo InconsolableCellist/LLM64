@@ -1,11 +1,10 @@
 """Named image style presets: [images] style = "cinematic".
 
 A preset is one table of settings - a style_prefix plus optional
-ComfyUI overrides (model, sampler, a negative, a LoRA) - selected by
-name, so a user can switch the whole look of the illustrations without
-editing workflow JSON. Four presets ship built in (PRESETS below); a
-config can add its own or override a built-in with
-[images.styles.<name>].
+ComfyUI overrides (model, sampler, a LoRA) - selected by name, so a
+user can switch the whole look of the illustrations without editing
+workflow JSON. Three presets ship built in (PRESETS below); a config
+can add its own or override a built-in with [images.styles.<name>].
 
 Resolution runs ONCE, at config load (config.py calls apply_style on
 the raw [images] table), and works by folding the preset into the keys
@@ -14,10 +13,17 @@ the rest of the proxy already reads:
   style_prefix       -> [images].style_prefix (ImageService reads it),
                         REPLACING the profile/default prefix - picking
                         a named style is the more specific choice
-  model, clip, vae, steps, cfg, sampler, scheduler, negative,
-  width, height, shift
+  prompt_format      -> [images].prompt_format: 'prose' (default) or
+                        'tags', which changes what the COMPOSITION step
+                        writes (scenecomp.py). A tag-trained checkpoint
+                        wants tags all the way up the chain, not a
+                        sentence with tags glued to the front
+  model, clip, vae, steps, cfg, sampler, scheduler, width, height
                      -> [images.comfyui].<key>, overriding what the
-                        table had (only meaningful for that backend)
+                        table had (only meaningful for that backend).
+                        Geometry is in the list because a checkpoint
+                        family has a native one: SDXL wants ~1 MP and
+                        Flux does not care.
   workflow           -> [images.comfyui].workflow
   lora, lora_strength-> [images.comfyui.vars] LORA / LORA_STRENGTH,
                         and - when neither the preset nor the config
@@ -42,33 +48,23 @@ logger = logging.getLogger(__name__)
 LORA_WORKFLOW = "flux2-klein-lora.json"
 
 # Preset keys that map 1:1 onto [images.comfyui] settings (which map
-# 1:1 onto workflow tokens - see imagegen.COMFY_DEFAULTS). `negative`
-# is here because a look and the things that ruin it are one decision:
-# a preset that specifies a sampler but has to borrow the default
-# negative is only half a preset.
+# 1:1 onto workflow tokens - see imagegen.COMFY_DEFAULTS).
 COMFY_KEYS = ("model", "clip", "vae", "steps", "cfg",
-              "sampler", "scheduler", "negative", "width", "height",
-              "shift")
+              "sampler", "scheduler", "width", "height")
 
 # Built-in presets. A user [images.styles.<name>] table with one of
 # these names is merged OVER the built-in, so overriding just
 # lora_strength keeps the prefix.
 PRESETS = {
-    # NOTE the prefix says nothing about who is IN the picture. It used
-    # to carry a species-fidelity clause ("an anthropomorphic
-    # beast-person stays a beast-person, muzzle, fur and tail visible")
-    # to stop Flux quietly humanizing a Khajiit. It worked there and was
-    # a disaster elsewhere: prepended to EVERY prompt, an empty crypt
-    # stairwell got a beast too, and on a furry-tuned SDXL checkpoint
-    # `muzzle` is the danbooru tag for the restraint device, which duly
-    # appeared strapped to its face. Species fidelity now lives in the
-    # composed sentence instead (scenecomp's cast rules), where it can
-    # only be said about a character the scene actually has.
     "cinematic": {
         "style_prefix": (
             "A moody cinematic film still, anamorphic framing, "
             "practical light sources, volumetric haze, muted grade "
-            "with deep blacks. Scene: "),
+            "with deep blacks. The subject characters keep their "
+            "described species and anatomy exactly - an "
+            "anthropomorphic beast-person stays a beast-person, "
+            "muzzle, fur and tail visible, never rendered as a "
+            "human. Scene: "),
         "lora": "MovieClips_Klein9B_copy_000000880.safetensors",
         "lora_strength": 0.8,
     },
@@ -82,64 +78,67 @@ PRESETS = {
     "painted-noir": {
         "style_prefix": (
             "A painted dark fantasy scene lit like film noir: hard "
-            "single-source light carving form out of near-black, "
-            "long shadows, fog catching the beam, restrained cold "
-            "palette with one warm highlight. Scene: "),
+            "single-source light carving the figure out of "
+            "near-black, long shadows, fog catching the beam, "
+            "restrained cold palette with one warm highlight. "
+            "Scene: "),
     },
-    # For an Illustrious/Pony-family SDXL checkpoint - NovaFurryXL and
-    # the rest of the anthro-tuned ones. Three things make it different
-    # from the presets above, all of them the model's doing:
+    # The anthro answer. A general-purpose model draws a beast-person by
+    # drawing a person and hoping; an e621-trained SDXL checkpoint draws
+    # the muzzle, the digitigrade legs and the fur because that is most
+    # of what it has ever seen. So this preset is a whole stack - its own
+    # workflow (SDXL: one checkpoint, no Flux VAE or CLIP), the
+    # checkpoint, and the sampler settings that family wants, since
+    # COMFY_DEFAULTS are Flux's and would run this at 8 steps and cfg 1.
     #
-    #  - it is a TAG model. Prose reads as a bag of words, so the look
-    #    is comma-separated tags and the quality tags come first, where
-    #    the weighting is. (The composed scene stays a sentence; mixed
-    #    tags and prose is normal for this family and works.)
-    #  - it has 77-token CLIP chunks, so a long prose preamble spends
-    #    the whole first chunk before the scene is even mentioned -
-    #    which is how a crypt turns into a forest. This prefix is short
-    #    on purpose.
-    #  - it is trained on anthro art and needs no encouragement to draw
-    #    a beast. What it needs is the negative below, and the
-    #    subject-count tags scenecomp derives per scene.
+    # Tags, not prose, the whole way down: an Illustrious-lineage model
+    # was trained on Danbooru/e621 tag strings, so this preset also
+    # switches the COMPOSITION step to writing tags (prompt_format).
+    # Half-measures do not work here - a tag prefix in front of a prose
+    # sentence gave a second figure in a shot asked for `solo` and put
+    # the subject on the horizon, because prose has no `solo` and no
+    # `upper body`.
     #
-    # Sampler settings are SDXL's, not Flux's: cfg 1.0 disables
-    # classifier-free guidance, and this is a preset whose negative
-    # prompt is half the point.
-    "anthro-illustrious": {
+    # NO SPECIES CLAUSE, deliberately - and this is the one thing not to
+    # "fix" by adding it back. The other presets carry a sentence telling
+    # the model an anthro stays an anthro, because they run models that
+    # would not otherwise. Here it is both unnecessary and harmful: an
+    # A/B on fixed seeds had "anthro, muzzle, fur, ears and tail, never a
+    # human face" in the prefix produce a beast in an explicitly
+    # unpeopled castle scene, and drag two different scenes to nearly the
+    # same picture. The prefix competes with the scene for a fixed CLIP
+    # budget, and this checkpoint needs no convincing to draw fur.
+    #
+    # The flatness tags are the C64's, not taste: flat colour, thick
+    # outlines and a limited palette survive 16 colours and a 160x200
+    # grid; the airbrushed detail "absurdres" buys turns to dither mush.
+    #
+    # This checkpoint knows the whole e621 rating range. Nothing here
+    # asks for or blocks any of it; put "rating_safe, " at the front of
+    # the prefix, or "nsfw" in [images.comfyui] negative, if a given
+    # table wants that decided rather than left to the scene.
+    "nova-furry": {
+        # The quality/aesthetic tags this lineage was trained with, then
+        # the source and medium, then the flatness the C64 needs. What
+        # is NOT here: cast, species, framing and setting. Those are
+        # per-scene and come from the composition step, which writes
+        # tags too (prompt_format below) - a fixed prefix cannot know
+        # whether this shot has two characters in it or nobody.
         "style_prefix": (
-            "masterpiece, best quality, highly detailed, painted "
-            "illustration, dark fantasy adventure game art, dramatic "
-            "lighting, single warm light source, deep shadow, muted "
-            "palette, detailed background, "),
-        "negative": (
-            "worst quality, low quality, lowres, jpeg artifacts, "
-            "watermark, signature, artist name, logo, text, "
-            "border, frame, letterbox, "
-            "bad anatomy, bad proportions, deformed, extra limbs, "
-            "extra digits, "
-            # The scene-stealers. A furry checkpoint will volunteer all
-            # of these into a room that was described as empty.
-            "macro, giant, oversized, size difference, "
-            "monster, creature, feral, dragon, "
-            "muzzle, harness, leash, collar, "
-            "blank background, simple background"),
-        # An SDXL checkpoint needs an SDXL graph - one loader, no
-        # AuraFlow shift, cfg that actually guides - so the preset
-        # brings its own and picking it in the launcher is the whole
-        # operation. It replaces a configured workflow (apply_style
-        # logs when it does): a Flux graph is not something this
-        # preset can style, it is something it would crash on.
-        "workflow": "sdxl-illustrious.json",
-        # A default to re-point, not a claim about your disk: the
-        # launcher's Checkpoint field lists what the running ComfyUI
-        # actually has. Named here because the standing default is a
-        # Flux checkpoint, and an SDXL graph asking for that is a
-        # ComfyUI 400 rather than a picture.
-        "model": "novaFurryXL_ilV120.safetensors",
-        "steps": 28,
-        "cfg": 5.0,
-        "sampler": "euler_ancestral",
-        "scheduler": "normal",
+            "masterpiece, best quality, amazing quality, very aesthetic, "
+            "newest, source_furry, dark fantasy adventure game "
+            "illustration, flat colour, cel shading, thick outlines, "
+            "limited palette, strong silhouettes, high value contrast, "
+            "one dominant light source, "),
+        "prompt_format": "tags",
+        # Checkpoint, sampler, steps, cfg and geometry are NOT here.
+        # They live in the workflow's own "_defaults" table, one layer
+        # further down, because a preset key overrides [images.comfyui]
+        # outright: with them here, an operator who selected this preset
+        # would find the launcher's Steps and Width fields doing
+        # nothing. From _defaults they still make the workflow work on
+        # its own, and the config can still tune them.
+        "workflow": "novafurryxl.json",
     },
 }
 
@@ -196,6 +195,11 @@ def apply_style(images_cfg):
                         "[images].style_prefix", name)
         images_cfg["style_prefix"] = str(prefix)
 
+    # How the scene itself should be written. Belongs to the preset
+    # because it belongs to the checkpoint: see scenecomp._tag_task.
+    if preset.get("prompt_format"):
+        images_cfg["prompt_format"] = str(preset["prompt_format"])
+
     comfy = images_cfg.get("comfyui")
     if not isinstance(comfy, dict):
         comfy = {}
@@ -206,14 +210,6 @@ def apply_style(images_cfg):
 
     lora = preset.get("lora")
     if preset.get("workflow"):
-        # Loud, because an operator who authored a workflow and then
-        # picked a named preset has just had it replaced, and a silent
-        # swap is a very confusing afternoon.
-        if comfy.get("workflow") \
-                and comfy["workflow"] != str(preset["workflow"]):
-            logger.info("style %r runs its own workflow %s, replacing "
-                        "the configured %s", name, preset["workflow"],
-                        comfy["workflow"])
         comfy["workflow"] = str(preset["workflow"])
     elif lora and not comfy.get("workflow"):
         # imagegen resolves the bare name to the bundled copy.

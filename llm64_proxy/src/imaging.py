@@ -556,3 +556,44 @@ def convert_to_dib8(img, max_w=DIB_MAX_W, max_h=DIB_MAX_H, period=True):
     rows = b"".join(raw[y * w:(y + 1) * w] + pad
                     for y in range(h - 1, -1, -1))
     return header + table + rows, w, h
+
+
+def render_preview_dib(dib):
+    """Inverse of convert_to_dib8: a packed DIB back to a PIL image.
+
+    What the Win16 client's StretchDIBits would put on screen, without a
+    Win16 client - the launcher's illustration preview draws this. The
+    geometry comes out of the header rather than from the caller, so the
+    two traps this format has (BGR colour table, bottom-up rows padded to
+    4 bytes) are read back exactly as written: get one wrong and the
+    picture shears or turns blue here too, instead of only on the 486.
+    """
+    import struct
+
+    if len(dib) < 40 + 1024:
+        raise ValueError("not a packed 8-bit DIB: shorter than its header "
+                         "and colour table")
+    size, w, h, planes, bits, comp = struct.unpack("<IiiHHI", dib[:20])
+    if (size, planes, bits, comp) != (40, 1, 8, 0):
+        raise ValueError(f"expected an uncompressed 8-bit DIB, got "
+                         f"biSize={size} planes={planes} bitCount={bits} "
+                         f"compression={comp}")
+    bottom_up = h > 0
+    h = abs(h)
+    table = dib[40:40 + 1024]
+    # RGBQUAD is B,G,R,reserved; PIL wants R,G,B.
+    pal = [table[i * 4 + c] for i in range(256) for c in (2, 1, 0)]
+
+    stride = (w + 3) & ~3
+    rows = dib[40 + 1024:]
+    if len(rows) < stride * h:
+        raise ValueError(f"DIB pixel data is short: {len(rows)} bytes for "
+                         f"{stride}x{h}")
+    order = range(h - 1, -1, -1) if bottom_up else range(h)
+    data = bytearray(w * h)
+    for dst, src in enumerate(order):
+        off = src * stride
+        data[dst * w:(dst + 1) * w] = rows[off:off + w]
+    img = Image.frombytes("P", (w, h), bytes(data))
+    img.putpalette(pal)
+    return img.convert("RGB")

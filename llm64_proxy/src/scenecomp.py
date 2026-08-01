@@ -9,6 +9,8 @@ kept as a pure function so it is testable without an event loop or a
 model (tests/test_scenecomp.py).
 """
 
+import re
+
 
 # Image models obey "the scene contains only X" far better than "do not
 # include Z" - negations are weak in image prompting - so the composed
@@ -17,10 +19,145 @@ _ROSTER_EXAMPLE = ('e.g. "- the only figure present is the kobold in a '
                    'maid outfit", or for an empty room "- an empty, '
                    'unpeopled scene"')
 
+# --- tag mode ---------------------------------------------------------
+#
+# A Danbooru/e621-lineage checkpoint (Illustrious, NoobAI, Pony) was
+# trained on tag strings, and a well-formed prose sentence is the wrong
+# shape for it in ways that are not subtle: prose "the only figure
+# present is Bruc" gets a second figure anyway, while the single token
+# `solo` does not, and prose camera language ("a close view of") is
+# ignored where `close-up` is obeyed. So for those models the
+# COMPOSITION step writes tags instead, and the two failures that
+# survived every prompt-prefix attempt - an extra character, and a
+# subject the size of an ant in a wide establishing shot - become one
+# tag each.
+#
+# The vocabulary below is deliberately small and fixed. A free-for-all
+# tag list from a 26B model drifts into invented tags the checkpoint has
+# never seen; naming the allowed values makes the two that matter -
+# cast and framing - land every time.
+
+# Danbooru cast tags. `no humans` is not a negation here: it is the tag
+# for "the characters in this picture are not human", which is what an
+# all-anthro cast is, and it is the single most effective way to stop a
+# beast-person from being drawn with a human face.
+TAG_CAST = ("solo", "duo", "no humans, scenery")
+
+# Framing, weakest to strongest crop. One of these is mandatory: the
+# model picks a default composition when none is named, and its default
+# is a wide shot with the subject at the horizon.
+TAG_FRAMING = ("close-up", "portrait", "upper body", "cowboy shot",
+               "full body", "wide shot", "scenery")
+
+# How long a composed tag list may be. Around 30-40 tags is what the
+# task below asks for, and that runs 400-600 characters - past the
+# 400-char cap a prose sentence lives under, which is why this is its
+# own number rather than a shared one.
+TAG_SCENE_LIMIT = 700
+
+_TAG_EXAMPLE = (
+    "solo, 1girl, no humans, anthro, kobold, adult, small build, red "
+    "scales, cream underbelly, chipped horn, maid outfit, holding a "
+    "lantern up in one hand, looking back over her shoulder, upper "
+    "body, standing in a narrow stone corridor, wet flagstones, ivy on "
+    "the walls, lantern light, deep shadow, dark fantasy")
+
+# The vocabulary rule, and the reason it needs saying. A narrator writes
+# "a bruised sky above the Hollow Chapel"; the checkpoint has been
+# trained on neither of those phrases, so it renders roughly nothing
+# from them. It HAS seen "twilight sky", "purple clouds" and "ruined
+# stone chapel" tens of thousands of times. The composition step is the
+# only place this translation can happen - by the time the prompt
+# reaches the backend it is too late.
+_PLAIN_WORDS = (
+    "Write it in words an image model knows: plain concrete nouns and "
+    "ordinary adjectives, the vocabulary of a photo caption. Two rules "
+    "that matter more than they look:\n"
+    "- NO PROPER NOUNS. A name means nothing to an image model. "
+    "\"Bruc\" is nothing; \"grey wolf in ring mail\" is a picture. "
+    "\"The Hollow Chapel\" is nothing; \"ruined stone chapel\" is a "
+    "picture.\n"
+    "- NO LITERARY PHRASING. Translate the narrator's language into "
+    "what a camera would see: \"a bruised sky\" becomes \"twilight sky, "
+    "purple clouds\"; \"a spiral of teeth\" becomes \"spiral carved in "
+    "stone, rows of teeth\"; \"something drags itself upright\" becomes "
+    "whatever the thing actually is.")
+
+
+def _tag_task(fmt_note: str = '') -> str:
+    """The tag-mode task block: what to write, in what order."""
+    return (
+        "Below is the latest part of a text adventure. Describe the "
+        "CURRENT scene for an image model as a TAG LIST - lowercase, "
+        "comma-separated, in the Danbooru/e621 style, no preamble. "
+        "Write it in this order:\n"
+        "1. CAST, first and exactly one of: " + ", ".join(TAG_CAST)
+        + ". Add `1girl` or `1boy` for the main character when the story "
+        "gives them a gender, and add `no humans` as well whenever every "
+        "character in the shot is an anthro, beast or monster rather "
+        "than a human.\n"
+        "2. WHO THEY ARE: for each character actually in the shot, their "
+        "settled look as tags - anthro, the species, muzzle or snout, "
+        "ears, fur or scales and their colours, tail, clothing. Copy "
+        "these from the descriptions given below rather than inventing "
+        "them, and keep it to the SIX or so most recognisable tags per "
+        "character: a long costume inventory crowds out the scene. "
+        "Include `adult` and a build (`small build`, `athletic build`, "
+        "`towering`) for every grown character - a small species with "
+        "no age tag comes out looking like a child.\n"
+        "3. WHAT IS HAPPENING: the pose and the action. If the request "
+        "or the transcript names an action, it belongs here; a picture "
+        "of someone standing still when the story has them drawing a "
+        "blade is the wrong picture. Say what they are doing WITH the "
+        "place too - `walking in through a broken doorway` rather than "
+        "`standing`, or two characters end up facing each other in the "
+        "middle of the frame doing nothing.\n"
+        "4. FRAMING, exactly one of: " + ", ".join(TAG_FRAMING)
+        + ". Choose the one that makes the subject readable: a character "
+        "the scene is about wants upper body or cowboy shot, a room or "
+        "a view wants wide shot or scenery.\n"
+        "5. WHERE: the place, its architecture, and the props the scene "
+        "names.\n"
+        "6. LIGHT AND MOOD: the light source and the atmosphere.\n"
+        + _PLAIN_WORDS + "\n"
+        # The hybrid: these checkpoints were captioned with tag lists
+        # that carry short natural phrases inside them, which is the
+        # only way to express a relationship ("holding a lantern up",
+        # "rain through the window") that no single tag covers.
+        "Slots 3 and 5 may be short plain phrases as well as single "
+        "tags - `holding a lantern up in one hand`, `rain visible "
+        "through a broken window` - which is how these models were "
+        "captioned. Slots 1 and 4 must be the exact tags listed above, "
+        "nothing else.\n"
+        "Around 30 tags in total, never more than 40 - past that the "
+        "image model reads the tail of the list as noise.\n"
+        "Example of the shape wanted:\n" + _TAG_EXAMPLE
+        + (("\n" + fmt_note) if fmt_note else ""))
+
+
+def tidy_tags(text, truncated=False):
+    """A tag-list reply, normalised.
+
+    One line (models like to wrap), no empty or duplicate tags, and -
+    when the reply hit the caller's length cap - no half-written tag
+    dangling off the end. That last one is not cosmetic: a truncated
+    "dark atmos" is a token the checkpoint has never seen sitting in
+    the highest-weight position of the list, the end.
+    """
+    tags, seen = [], set()
+    for raw in (text or '').replace('\n', ',').split(','):
+        tag = ' '.join(raw.split())
+        if tag and tag.lower() not in seen:
+            seen.add(tag.lower())
+            tags.append(tag)
+    if truncated and len(tags) > 1:
+        tags.pop()
+    return ', '.join(tags)
+
 
 def compose_question(convo: str, priors, adv_state, room, character,
                      instructions: str = '', directive: str = '',
-                     canon=None) -> str:
+                     canon=None, fmt: str = 'prose') -> str:
     """The one-shot question handed to the chat model to write an image
     prompt.
 
@@ -32,30 +169,68 @@ def compose_question(convo: str, priors, adv_state, room, character,
     instructions - the player's /pic text, a request TO the illustrator.
     directive    - the narrator's [[IMAGE:]] text, a suggested shot.
     canon        - the visual_canon META dict (docs/17), or None.
+    fmt          - 'prose' (the default: one sentence, what Flux and the
+                   API backends want) or 'tags' (a Danbooru-style tag
+                   list, for Illustrious/Pony/NoobAI checkpoints). Set
+                   by [images] prompt_format, which a style preset can
+                   carry - see imgstyles.py.
 
     Every game-state argument is optional, so roleplay mode (transcript
     only) still yields a well-formed question with no leftover
     placeholders.
     """
+    tags = fmt == 'tags'
+    # Which canon characters the request names, if any. Decided up front
+    # because three separate blocks below depend on it: the request's
+    # own framing rule, how much of the ledger is injected, and the
+    # final word on the cast.
+    focus = focus_names(instructions, canon)
     parts = []
 
     # Task and any steering come first, so a small model reads them
     # before the wall of transcript.
-    parts.append(
+    parts.append(_tag_task() if tags else (
         "Below is the latest part of a text adventure. Write a vivid "
         "visual description of the CURRENT scene for an illustrator, in "
         "ONE sentence (two only if the scene is genuinely busy). Include "
         "the established appearance of the characters and setting "
         "(clothing, hair, architecture, lighting) from earlier in the "
-        "story. Reply with only that description, no preamble.")
+        "story. Reply with only that description, no preamble.\n"
+        # The narrator's prose is written for a reader; the illustrator
+        # is a diffusion model, which renders concepts it has seen and
+        # nothing else. Same rule in both modes, for the same reason.
+        + _PLAIN_WORDS))
 
     if instructions:
+        # A checklist, not a paragraph: a 20-30B model follows short
+        # imperatives far more reliably, and every line here is a
+        # failure that was observed - the whole party turning up for a
+        # request naming one character, and a named action ("drawing
+        # his sword") quietly becoming a standing portrait.
         parts.append(
             "The player asked the illustrator for: " + instructions +
-            "\nHonor this request: find what it refers to in the "
-            "transcript and describe THAT. It may name a single detail "
-            "rather than the whole room; if so, illustrate the detail. "
-            "This request outranks the default framing above.")
+            "\nObey the request exactly:\n"
+            "- What it names is the SUBJECT of the picture; find it in "
+            "the transcript and describe THAT.\n"
+            "- If it names ONE character, that character is alone in "
+            "the picture and nobody else appears"
+            + (" - cast tag `solo`" if tags else "") + ".\n"
+            "- If it names an ACTION, that action must be in the "
+            "description; a still portrait instead is the wrong "
+            "picture.\n"
+            "- It may name a detail rather than a whole room; then "
+            "illustrate the detail.\n"
+            # A request for a character that comes back as a wide shot
+            # of the room they are in is a picture of the wrong subject
+            # - and at 160x200 the character is then four pixels tall.
+            + ("- This is a picture OF that character, so the framing "
+               "tag is one of: portrait, upper body, cowboy shot, full "
+               "body. Not wide shot, not scenery.\n"
+               if tags and focus else
+               ("- This is a picture OF that character: frame it on "
+                "them, close enough to read their face, not as a wide "
+                "view of the room.\n" if focus else "")) +
+            "This request outranks everything below it.")
     if directive:
         parts.append(
             "The narrator suggested this shot: " + directive +
@@ -73,12 +248,19 @@ def compose_question(convo: str, priors, adv_state, room, character,
     # player's explicit request: priors describe scenes, the canon
     # describes the people - and copying it verbatim is precisely what
     # keeps illustration N looking like illustration N-1 (docs/17).
+    #
+    # Narrowed when the request names characters, because a ledger entry
+    # is an invitation to draw someone: telling the model what Vess
+    # looks like while asking for a portrait of Bruc is most of why she
+    # kept turning up in it.
     if canon:
-        block = canon_block(canon)
+        block = canon_block(canon, only=focus or None)
         if block:
             parts.append(block)
 
-    if character:
+    # Same reason: the chargen sheet is the PLAYER's identity, so a
+    # request naming somebody else must not carry it.
+    if character and (not focus or canon_player_name(canon) in focus):
         parts.append(
             "The player character's fixed visual identity:\n" + character +
             "\nIf the player character is shown, they MUST match this "
@@ -98,46 +280,67 @@ def compose_question(convo: str, priors, adv_state, room, character,
         if loc:
             parts.append(" ".join(loc))
 
-    parts.append(
-        "Cast rules for the illustration:\n"
-        "- Show the current location as described in the transcript.\n"
+    # The same cast policy either way; only the last line differs,
+    # because in tag mode the roster IS the cast tag.
+    cast = [
+        "Cast rules for the illustration:",
+        "- Show the current location as described in the transcript.",
         "- The player character may appear ONLY if the request asks for "
         "them or the current scene is about them; if shown, they must "
-        "match the identity and game state above.\n"
-        "- Companions listed in the game state may appear.\n"
+        "match the identity and game state above.",
+        # This bullet is why a request for one character used to come
+        # back with the whole party: it is the LAST thing said about the
+        # cast before the transcript, so it beat the request block far
+        # above it. When the player has named a subject, the request
+        # owns the cast and this rule must not re-open it.
+        (("- The picture contains exactly "
+          + ", ".join(sorted(focus)) + " and nobody else.")
+         if focus else
+         ("- The player's request above has already settled who is in "
+          "the picture. The game state does not add anyone to it."
+          if instructions else
+          "- Companions listed in the game state may appear.")),
         "- Include NO other people, creatures, or monsters unless the "
-        "current scene in the transcript explicitly puts them there.\n"
+        "current scene in the transcript explicitly puts them there.",
         "- Include props and scenery named in the scene or the location "
-        "note (keys, doors, altars).\n"
-        "- If a character you DO show is not human (beast-folk, "
-        "anthropomorphic, alien), say so plainly where you name them - "
-        "their species and its visible features. Never say this about a "
-        "scene with no characters in it.\n"
-        "- End your description with an explicit list of who is present, "
-        + _ROSTER_EXAMPLE + ".")
+        "note (keys, doors, altars).",
+    ]
+    if tags:
+        cast.append(
+            "- The cast tag must match that count exactly: `solo` when "
+            "one character is in the shot, `duo` when two, "
+            "`no humans, scenery` when the shot is a place with nobody "
+            "in it. Getting this tag wrong is how an extra figure "
+            "appears in the picture.")
+    else:
+        cast.append(
+            "- End your description with an explicit list of who is "
+            "present, " + _ROSTER_EXAMPLE + ".")
+    parts.append("\n".join(cast))
 
     parts.append("Transcript:\n" + convo)
 
     return "\n\n".join(parts)
 
 
-# --- keeping the roster ------------------------------------------------
+# --- keeping the prose roster -----------------------------------------
 #
-# The roster line the cast rules demand is the one part of the composed
-# sentence that must survive to the image model: it is what keeps a
-# crypt stairwell from acquiring a monster. It also lands at the very
-# END, which is exactly where a character cap bites - the old 400-char
-# cap cut it off every time the prose ran long, mid-word.
+# Tag mode ends on the cast tag and tidy_tags looks after it. Prose ends
+# on the roster line the rule above asks for - the "who is present" list
+# that is the only thing standing between an empty crypt and a monster -
+# and that line is LAST, which is exactly where a length cap bites. At
+# 400 chars it was cut off every time the description ran long, mid-word
+# ("...her short golden f"), taking the cast list with it.
 
-# The composed scene's budget. Two sentences of scene plus a roster
-# line fit comfortably; more than this is prose the image model dilutes
-# itself with anyway.
-SCENE_CHARS = 700
+# Two sentences of scene plus a roster fit inside this; more than this
+# is prose the image model dilutes itself with anyway. Deliberately the
+# same number as TAG_SCENE_LIMIT, for a different reason.
+PROSE_SCENE_LIMIT = 700
 
 
 def _cut_words(text, limit):
-    """`text` capped at `limit`, on a word boundary when there is one
-    to find in the back half."""
+    """`text` capped at `limit`, on a word boundary when there is one to
+    find in the back half."""
     text = text.strip()
     if len(text) <= limit:
         return text
@@ -156,11 +359,12 @@ def _is_roster(line):
                           or 'figure' in low)
 
 
-def trim_scene(text, limit=SCENE_CHARS):
-    """The composed scene, capped WITHOUT losing the roster.
+def trim_scene(text, limit=PROSE_SCENE_LIMIT):
+    """A composed prose scene, capped WITHOUT losing the roster.
 
-    A scene over budget loses the tail of its prose, not its cast list:
-    the roster is dropped only when there is no room for it at all."""
+    Over budget, the description gives up the tail of its PROSE, not its
+    cast list; the roster is dropped only when there is no room for it
+    at all."""
     text = (text or '').strip()
     if len(text) <= limit:
         return text
@@ -169,56 +373,6 @@ def trim_scene(text, limit=SCENE_CHARS):
     if sep and _is_roster(roster) and len(roster) <= limit // 2:
         return _cut_words(body, limit - len(roster) - 1) + "\n" + roster
     return _cut_words(text, limit)
-
-
-# --- cast tags (docs/13) ----------------------------------------------
-#
-# What the roster is FOR, once it has survived. SDXL/Illustrious-family
-# models (the anthro-illustrious preset's target) are trained on
-# danbooru tags and obey the subject-count ones - `solo`, `no humans` -
-# far more reliably than any sentence about who is present. So the
-# roster is read once, here, and turned into that vocabulary: a tag on
-# the front of the positive prompt and a matching push on the negative.
-#
-# Only the two unambiguous cases are claimed. A busier roster ("the
-# player and the drowned priest") yields nothing and the prompt travels
-# exactly as it did before, which is also what a truncated or missing
-# roster gets.
-
-# `anthro` but not `furry`: on an anthro-trained checkpoint the first is
-# the subject tag and the second is closer to a style tag, and negating
-# the style of the model you chose is how an empty room comes back ugly
-# as well as empty.
-CAST_EMPTY = (
-    "no humans, no characters, empty scenery, environment only",
-    "1girl, 1boy, solo, person, people, character, anthro, "
-    "creature, monster, animal, macro, giant",
-)
-CAST_SOLO = (
-    "solo, single character",
-    "2girls, 2boys, multiple girls, multiple boys, crowd, extra people, "
-    "monster, creature, beast, macro, giant, size difference",
-)
-
-_EMPTY_WORDS = ("unpeopled", "no figures", "no one", "no-one", "nobody",
-                "no people", "no characters", "no living", "empty of")
-_SOLO_WORDS = ("only figure", "only person", "only character",
-               "single figure", "one figure")
-
-
-def cast_tags(scene):
-    """(positive, negative) tag additions for a composed scene's roster.
-
-    ('', '') whenever the roster is missing, truncated, or names more
-    than one figure - the caller then sends what it always sent."""
-    last = (scene or '').strip().rpartition('\n')[2].lower()
-    if not _is_roster(last):
-        return '', ''
-    if any(w in last for w in _EMPTY_WORDS):
-        return CAST_EMPTY
-    if any(w in last for w in _SOLO_WORDS):
-        return CAST_SOLO
-    return '', ''
 
 
 # --- the visual canon (docs/17) ---------------------------------------
@@ -302,7 +456,8 @@ def parse_canon_reply(text, prev=None):
     # by a length cap, or by the model simply stopping. Salvage the one
     # field that matters rather than storing the scaffolding itself as
     # the player's description, which is what the prose fallback below
-    # would otherwise do.
+    # would otherwise do (and did: a live conversation's ledger began
+    # '{\n  "player": "').
     m = re.search(r'"player"\s*:\s*"(.+?)(?:"\s*[,}]|$)', text, re.DOTALL)
     if m:
         salvaged = m.group(1).replace('\\"', '"').replace('\\n', ' ').strip()
@@ -329,17 +484,61 @@ def canon_stale(canon, appearance):
         canon.get('appearance_seen', ''))
 
 
-def canon_block(canon):
-    """The ledger as the injection block compose_question carries."""
+def canon_player_name(canon):
+    """The player's name as the ledger records it ("Vess Kolvar: small
+    anthro kobold, ..." -> "Vess Kolvar"), or ''. The build question
+    asks for that shape but does not enforce it, so a player entry
+    written as bare prose yields no name and simply never matches."""
+    player = (canon or {}).get('player') or ''
+    head = player.split(':', 1)[0].strip() if ':' in player else ''
+    # A whole sentence before the colon is prose, not a name.
+    return head if 0 < len(head) <= 40 and len(head.split()) <= 4 else ''
+
+
+def focus_names(instructions, canon):
+    """The canon characters a /pic request actually names.
+
+    Empty when the request names none of them (or there is no request),
+    which means "no narrowing" - a bare /pic still gets the whole cast
+    to choose from. Matching is per word so "/pic vess" finds "Vess
+    Kolvar", with a word boundary so "/pic the altar" does not find an
+    NPC called "Al".
+    """
+    text = (instructions or '').lower()
+    if not text or not canon:
+        return set()
+    hits = set()
+    names = [canon_player_name(canon)] + list(canon.get('npcs') or {})
+    for name in [n for n in names if n]:
+        for word in name.replace(',', ' ').split():
+            if len(word) >= 3 and re.search(
+                    r'\b' + re.escape(word.lower()) + r'\b', text):
+                hits.add(name)
+                break
+    return hits
+
+
+def canon_block(canon, only=None):
+    """The ledger as the injection block compose_question carries.
+
+    `only` narrows it to a set of character names - what a request
+    naming one character needs. Everything the block still lists is a
+    character the model is being invited to draw, so the reliable way
+    to keep the rest of the party out of a portrait is not to mention
+    them here. Places are never narrowed: the room is where the shot
+    happens whoever is standing in it.
+    """
     if not canon:
         return ''
     lines = ["AUTHORITATIVE VISUAL CANON - these descriptions are "
              "settled. Wherever these people or places appear, repeat "
              "them precisely; they outrank the transcript's phrasing:"]
-    if canon.get('player'):
+    if canon.get('player') and (
+            only is None or canon_player_name(canon) in only):
         lines.append("Player character: " + canon['player'])
     for name, desc in (canon.get('npcs') or {}).items():
-        lines.append(name + ": " + desc)
+        if only is None or name in only:
+            lines.append(name + ": " + desc)
     for name, desc in (canon.get('places') or {}).items():
         lines.append(name + " (place): " + desc)
     return "\n".join(lines) if len(lines) > 1 else ''

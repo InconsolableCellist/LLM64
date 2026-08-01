@@ -32,6 +32,11 @@ data_dir = "./data"
 # Originals and converted blobs land in <data_dir>/images/<conv_id>/.
 # See docs/12-image-backends.md for the full guide.
 [images]
+# Nothing in this section can be judged by reading it. The launcher's
+# Illustrations tab generates one picture from these settings as they
+# stand - unsaved edits included - and shows what each client would
+# display; see README "Previewing illustrations".
+#
 # ask  - the model suggests a scene, you confirm with /pic (default)
 # auto - striking scenes illustrate themselves (rate-limited)
 # off  - never
@@ -46,41 +51,20 @@ backend = "gemini"
 # style_prefix = ""
 
 # Or pick a named style preset instead: a prefix plus optional ComfyUI
-# overrides (model, sampler, a negative, a LoRA), switched with one key.
-# Built in:
-#   cinematic         moody film still + the MovieClips LoRA (Flux)
-#   oil-chiaroscuro   Rembrandt night oil painting
-#   painted-noir      film-noir lit dark fantasy
-#   anthro-illustrious  for an Illustrious/Pony-family SDXL checkpoint
-#                     (NovaFurryXL and friends): tag-phrased, short, and
-#                     carrying the negative such a model needs. It runs
-#                     the bundled workflows/sdxl-illustrious.json, so
-#                     picking it is the whole job - but that REPLACES a
-#                     workflow named below (a Flux graph is not
-#                     something this preset can style), and its
-#                     `model` is a default to re-point at your own
-#                     checkpoint.
-# A preset's prefix wins over style_prefix above. Unknown names warn and
-# fall back to the default look.
+# overrides (model, sampler, a LoRA), switched with one key. Built in:
+# cinematic (moody film still + the MovieClips LoRA), oil-chiaroscuro,
+# painted-noir. A preset's prefix wins over style_prefix above. Unknown
+# names warn and fall back to the default look.
 # style = "cinematic"
-
-# A style_prefix rides on EVERY prompt, including the one for an empty
-# room, so keep it to medium, light and palette. Naming a subject in it
-# ("an anthropomorphic beast-person, muzzle and tail visible") puts that
-# subject in scenes that have no characters at all. Species fidelity is
-# handled for you, in the composed sentence, where a scene with no cast
-# cannot pick it up.
 
 # Your own presets are [images.styles.<name>] tables; one that reuses a
 # built-in name overrides it key by key. style_prefix is the look (end
-# it in "Scene: " for a prose one); the other keys are optional.
-# model/clip/vae/steps/cfg/sampler/scheduler/negative/width/height/shift
-# override [images.comfyui] below; a lora runs via the bundled
-# flux2-klein-lora.json workflow (drop the file in ComfyUI's
-# models/loras first) unless `workflow` names your own.
+# it in "Scene: "); the other keys are optional. model/clip/vae/steps/
+# cfg/sampler/scheduler override [images.comfyui] below; a lora runs
+# via the bundled flux2-klein-lora.json workflow (drop the file in
+# ComfyUI's models/loras first) unless `workflow` names your own.
 # [images.styles.mystyle]
 # style_prefix = "A woodcut in two colors, heavy black ink. Scene: "
-# negative = "color, grey wash, photographic"
 # lora = "my-style.safetensors"
 # lora_strength = 0.8
 # steps = 12
@@ -141,9 +125,7 @@ model = "gemini-2.5-flash-image"
 # clip = "qwen_3_8b_fp8mixed.safetensors"
 # vae = "flux2-vae.safetensors"
 #
-# {NEGATIVE} - see the cfg note above before tuning this. This is the
-#   standing list; the proxy APPENDS to it per image, pushing away the
-#   people or creatures the composed scene said were not there.
+# {NEGATIVE} - see the cfg note above before tuning this.
 # negative = "text, watermark, border, blurry"
 #
 # {STYLE} - era styling, and empty by default so that [images].style_prefix

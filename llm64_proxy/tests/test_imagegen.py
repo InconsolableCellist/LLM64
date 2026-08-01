@@ -284,6 +284,57 @@ def test_comfyui_templating():
     check("style defaults to empty so style_prefix owns the look",
           gp["6"]["inputs"]["text"] == "x", gp["6"]["inputs"]["text"])
 
+    # A workflow's own _defaults: between the global defaults and the
+    # config. This is what makes picking a workflow in the launcher -
+    # without also selecting the matching style preset - a working run
+    # instead of "ckpt_name 'flux-2-klein...' not in [...]".
+    wf_defaults = dict(TEMPLATED)
+    wf_defaults["_defaults"] = {"MODEL": "sdxl.safetensors", "STEPS": 28,
+                                "CFG": "5.0", "SAMPLER": "euler_ancestral",
+                                "WIDTH": 1280, "HEIGHT": 800,
+                                "NOPE": "not a number either"}
+    dpath = Path(TMP) / "defaults.json"
+    dpath.write_text(json.dumps(wf_defaults))
+
+    d = ComfyUIBackend({"url": "http://127.0.0.1:1", "workflow": str(dpath)},
+                       TMP)
+    gd = d._prepare(d._load(), "x")
+    check("_defaults beats the global default",
+          gd["9"]["inputs"]["unet_name"] == "sdxl.safetensors",
+          gd["9"]["inputs"]["unet_name"])
+    check("_defaults geometry applies",
+          (gd["5"]["inputs"]["width"], gd["5"]["inputs"]["height"])
+          == (1280, 800))
+    check("_defaults are coerced like config values (\"5.0\" -> float)",
+          gd["8"]["inputs"]["cfg"] == 5.0
+          and isinstance(gd["8"]["inputs"]["cfg"], float))
+    check("_defaults steps is an int", gd["8"]["inputs"]["steps"] == 28)
+    check("the _defaults key is not submitted as a node",
+          "_defaults" not in gd, sorted(gd))
+
+    over = ComfyUIBackend({"url": "http://127.0.0.1:1", "workflow": str(dpath),
+                           "model": "mine.safetensors", "steps": 12}, TMP)
+    go = over._prepare(over._load(), "x")
+    check("the config still beats _defaults",
+          go["9"]["inputs"]["unet_name"] == "mine.safetensors"
+          and go["8"]["inputs"]["steps"] == 12)
+    check("...without dragging the rest of _defaults down with it",
+          go["8"]["inputs"]["cfg"] == 5.0)
+
+    # A rejected submit has to say WHY in the exception, not only the
+    # log: the launcher's preview shows the exception in a dialog.
+    body = json.dumps({
+        "error": {"message": "Prompt outputs failed validation"},
+        "node_errors": {"1": {"class_type": "CheckpointLoaderSimple",
+                              "errors": [{"details": "ckpt_name: 'a.st' "
+                                                     "not in ['b.st']"}]}}})
+    detail = imagegen._reject_detail(body.encode())
+    check("the rejection names the node and the bad value",
+          "node 1" in detail and "CheckpointLoaderSimple" in detail
+          and "not in" in detail, detail)
+    check("a body that is not JSON falls back to the log",
+          imagegen._reject_detail(b"<html>502</html>") == " (see log)")
+
     # A seed varies per run, or is pinned when asked.
     a = plain._prepare(plain._load(), "x")["8"]["inputs"]["seed"]
     b = plain._prepare(plain._load(), "x")["8"]["inputs"]["seed"]
@@ -627,6 +678,7 @@ def test_style_presets():
     import copy
     import logging
     from src.imgstyles import PRESETS, apply_style, resolve_style
+    from src.respath import bundled_workflows_dir
 
     # No style key: the table must come back byte-identical, because
     # this is every pre-preset config in the field.
@@ -727,39 +779,55 @@ def test_style_presets():
     check("prefixless preset leaves style_prefix unset",
           "style_prefix" not in cfg)
 
-    # A preset may carry its own negative - a look and the things that
-    # ruin it are one decision (COMFY_KEYS).
-    cfg = {"style": "anthro-illustrious", "comfyui": {"negative": "blurry"}}
+    # The SDXL preset carries a whole stack, because COMFY_DEFAULTS are
+    # Flux's: pointed at the wrong workflow, or missing the sampler
+    # settings, this checkpoint runs at 8 steps and cfg 1 and produces
+    # noise. Geometry is part of the stack (SDXL wants its ~1 MP).
+    cfg = {"backend": "comfyui", "style": "nova-furry", "comfyui": {}}
     apply_style(cfg)
-    check("preset negative overrides the comfyui table",
-          "macro" in cfg["comfyui"]["negative"])
-    check("preset sdxl sampler settings land",
-          cfg["comfyui"]["cfg"] == 5.0 and cfg["comfyui"]["steps"] == 28)
-    check("preset brings its own SDXL workflow",
-          cfg["comfyui"]["workflow"] == "sdxl-illustrious.json")
-    # An SDXL preset over a Flux graph is a crash, not a restyle, so the
-    # preset's workflow replaces a configured one - loudly.
-    cfg = {"style": "anthro-illustrious",
-           "comfyui": {"workflow": "my-own.json"}}
-    apply_style(cfg)
-    check("preset workflow replaces the configured one",
-          cfg["comfyui"]["workflow"] == "sdxl-illustrious.json")
+    comfy = cfg["comfyui"]
+    check("nova-furry selects the SDXL workflow",
+          comfy.get("workflow") == "novafurryxl.json", repr(comfy))
+    check("...and switches the composition step to tags",
+          cfg.get("prompt_format") == "tags")
+    # The mechanical settings deliberately do NOT come from the preset:
+    # a preset key overrides [images.comfyui] outright, so putting them
+    # here would leave the launcher's Steps and Width fields dead for
+    # anyone who selected this style. They live in the workflow's
+    # _defaults, one layer further down, where the config still wins.
+    check("the preset does not seize the mechanical settings",
+          not {"model", "steps", "cfg", "sampler", "scheduler",
+               "width", "height"} & set(comfy), repr(comfy))
+    wf = json.loads((bundled_workflows_dir() / "novafurryxl.json").read_text())
+    d = wf.get("_defaults") or {}
+    check("the workflow carries its checkpoint instead",
+          d.get("MODEL") == "novaFurryXL_ilV120.safetensors", repr(d))
+    check("...and SDXL sampler settings, not Flux's",
+          (d.get("STEPS"), d.get("CFG"), d.get("SAMPLER"),
+           d.get("SCHEDULER")) == (28, 5.0, "euler_ancestral", "normal"))
+    # 1.6:1 is the C64 frame, so nothing is lost to imaging.py's
+    # letterbox; ~1 MP is where this checkpoint stops duplicating
+    # characters (measured at 1.2 MP and up, two seeds).
+    check("...and 1.6:1 geometry at about a megapixel",
+          (d.get("WIDTH"), d.get("HEIGHT")) == (1280, 800)
+          and abs(d["WIDTH"] / d["HEIGHT"] - 320 / 200) < 0.001)
+    check("no lora, so the flux lora workflow is not dragged in",
+          "vars" not in comfy or "LORA" not in comfy.get("vars", {}))
+    # The prefix must not carry a species clause: it competes with the
+    # scene for the CLIP budget on a checkpoint that draws anthro
+    # unprompted, and an A/B on fixed seeds had it put a beast in an
+    # explicitly unpeopled scene. See the preset's comment.
+    check("nova-furry prefix stays a style, not a cast list",
+          not any(w in cfg["style_prefix"].lower()
+                  for w in ("anthro", "muzzle", "digitigrade")),
+          cfg["style_prefix"])
 
-    # THE regression this file exists to catch. A style_prefix rides on
-    # EVERY prompt, including one for an empty room, so it may describe
-    # the medium and the light and never the cast. "muzzle, fur and tail
-    # visible" in the cinematic prefix put a giant beast in every
-    # unpeopled crypt a furry-tuned checkpoint was asked for.
-    from src.images import DEFAULT_STYLE_PREFIX
-    subject_words = ("beast-person", "muzzle", "anthropomorphic", "fur and",
-                     "creature", "figure", "character", "person")
-    prefixes = {name: preset.get("style_prefix") or ""
-                for name, preset in PRESETS.items()}
-    prefixes["<default>"] = DEFAULT_STYLE_PREFIX
-    for name, prefix in prefixes.items():
-        offenders = [w for w in subject_words if w in prefix.lower()]
-        check(f"{name} prefix names no subject", not offenders,
-              f"found {offenders}")
+    # Geometry has to be a preset key for that to work at all.
+    cfg = {"style": "custom", "comfyui": {"width": 1024},
+           "styles": {"custom": {"width": 1216, "height": 832}}}
+    apply_style(cfg)
+    check("a preset can set geometry",
+          (cfg["comfyui"]["width"], cfg["comfyui"]["height"]) == (1216, 832))
 
     # Unknown name: a warning and today's behavior, never a crash.
     records = []
@@ -781,48 +849,63 @@ def test_style_presets():
 
 
 def test_bundled_workflows():
-    """Every shipped workflow must template CLEAN.
+    """Every workflow that ships in workflows/.
 
-    A {TOKEN} nobody fills does not fail loudly - it travels to ComfyUI
-    as the literal string "{LORA}" and comes back an opaque HTTP 400
-    ("value_not_in_list"), which reaches the player as "Illustration
-    failed." So: load each bundled graph the way the backend does, run
-    it through the preset that selects it, and assert nothing with
-    braces survives into the submitted nodes."""
+    These are hand-written JSON that nothing else typechecks, and the way
+    they fail is quiet: a typo'd {SAMPER} is not an error, it is a
+    literal string handed to ComfyUI, and a preset naming a workflow that
+    is not in the bundle only shows up when someone selects that style.
+    So: parse, tokens, wiring, and the presets' side of the deal."""
     print("bundled workflows")
-    from src.imgstyles import PRESETS, apply_style
+    import json
+    import re
+    from src.imgstyles import PRESETS, LORA_WORKFLOW
     from src.respath import bundled_workflows_dir
 
-    # Which preset (if any) is written for which shipped file, so each
-    # graph is tokenized under the settings it actually ships with.
-    by_workflow = {}
-    for name, preset in PRESETS.items():
-        wf = preset.get("workflow") or (
-            "flux2-klein-lora.json" if preset.get("lora") else None)
-        if wf:
-            by_workflow.setdefault(wf, name)
+    known = ({"{%s}" % k for k in imagegen.COMFY_DEFAULTS}
+             | {"{PROMPT}", "{SEED}", "{LORA}", "{LORA_STRENGTH}"})
+    folder = bundled_workflows_dir()
+    files = sorted(folder.glob("*.json"))
+    check("the bundle has workflows at all", len(files) >= 2, str(folder))
 
-    for path in sorted(bundled_workflows_dir().glob("*.json")):
-        style = by_workflow.get(path.name)
-        cfg = {"comfyui": {"workflow": path.name}}
-        if style:
-            cfg["style"] = style
-            apply_style(cfg)
-        be = ComfyUIBackend(cfg["comfyui"], TMP,
-                            base_dir=str(bundled_workflows_dir()))
-        graph = be._load()
-        check(f"{path.name} loads as a node graph", graph is not None)
-        if graph is None:
+    for path in files:
+        name = path.name
+        try:
+            graph = json.loads(path.read_text())
+        except ValueError as e:
+            check(f"{name} parses", False, str(e))
             continue
-        prepared = be._prepare(graph, "a scene", "monster")
-        unfilled = [f"{n}.{k}={v}" for n, node in prepared.items()
-                    for k, v in node["inputs"].items()
-                    if isinstance(v, str) and "{" in v and "}" in v]
-        check(f"{path.name} leaves no unfilled token"
-              + (f" (style {style})" if style else ""),
-              not unfilled, f"got {unfilled}")
-        check(f"{path.name} drops the _comment key",
-              "_comment" not in prepared)
+        nodes = {k: v for k, v in graph.items()
+                 if isinstance(v, dict) and "class_type" in v}
+        check(f"{name} is a node graph", bool(nodes))
+
+        strings = [v for n in nodes.values()
+                   for v in n.get("inputs", {}).values()
+                   if isinstance(v, str)]
+        check(f"{name} has the {{PROMPT}} token imagegen requires",
+              any("{PROMPT}" in s for s in strings))
+        used = {t for s in strings for t in re.findall(r"\{[A-Z_]+\}", s)}
+        check(f"{name} uses only tokens imagegen fills",
+              used <= known, str(sorted(used - known)))
+
+        # Every link points at a node that exists - a renumbered graph
+        # that lost a node still submits, and ComfyUI rejects it at run
+        # time with a validation error nobody sees until /pic.
+        for node_id, node in nodes.items():
+            for key, value in node.get("inputs", {}).items():
+                if (isinstance(value, list) and len(value) == 2
+                        and isinstance(value[0], str)):
+                    check(f"{name} node {node_id}.{key} -> node "
+                          f"{value[0]} exists", value[0] in nodes)
+
+    have = {p.name for p in files}
+    check(f"the lora fallback {LORA_WORKFLOW} is bundled",
+          LORA_WORKFLOW in have)
+    for style, preset in PRESETS.items():
+        wf = preset.get("workflow")
+        if wf:
+            check(f"preset {style} names a bundled workflow ({wf})",
+                  wf in have, str(sorted(have)))
 
 
 def test_usage_log():

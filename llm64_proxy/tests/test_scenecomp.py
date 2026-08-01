@@ -14,8 +14,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.scenecomp import (compose_question, trim_scene, cast_tags,
-                           SCENE_CHARS)
+from src.scenecomp import compose_question
 
 CONVO = ("user: I push open the door.\n"
          "assistant: The hinges shriek and dust drifts down.")
@@ -75,10 +74,16 @@ def test_instructions():
     check("instructions text present", "the footprints in the sand" in q)
     check("steering framed as a request to the illustrator",
           has(q, "asked the illustrator for"))
-    check("instructions marked as outranking the default",
-          has(q, "outranks the default"))
+    check("instructions marked as outranking the rest",
+          has(q, "outranks everything below"))
     # A detail request must say it may be a detail, not the whole room.
-    check("detail-not-room hint present", has(q, "single detail"))
+    check("detail-not-room hint present", has(q, "detail rather than a"))
+    # Two rules that exist because both failures were seen in real
+    # compositions: the whole party turning up for a request naming one
+    # character, and a named action becoming a standing portrait.
+    check("one-character requests settle the cast",
+          has(q, "alone in the picture"))
+    check("named actions must survive composition", has(q, "names an ACTION"))
 
 
 def test_directive():
@@ -143,13 +148,130 @@ def test_canon():
                                  canon=None))
 
 
-def test_trim_scene():
-    """The cap must not eat the roster - it used to, every time.
+def test_focus():
+    """A /pic naming one character narrows the ledger to that character.
 
-    The 400-char cap this replaces cut the composed sentence mid-word
-    and took the who-is-present line with it, which is precisely the
-    line that keeps extra creatures out of the picture."""
-    print("trim_scene")
+    Not a prompt-politeness matter: every canon entry in the question is
+    an invitation to draw that person, and describing the rest of the
+    party in a question that asks for a portrait of one of them is how
+    the party ends up in the portrait. Deterministic here rather than
+    asked of the model, which was measured refusing to drop them."""
+    print("a named subject narrows the cast (docs/17)")
+    from src.scenecomp import (normalize_canon, focus_names, canon_block,
+                               canon_player_name)
+    canon = normalize_canon({
+        'player': 'Vess Kolvar: a wiry kobold in a patched maid outfit',
+        'npcs': {'Bruc': 'a grey wolf mercenary in battered ring mail',
+                 'Mara': 'a stout innkeeper in grease-stained leathers'},
+        'places': {'The Vault': 'a flooded stone cellar'}})
+
+    check("the player's name comes out of the ledger entry",
+          canon_player_name(canon) == 'Vess Kolvar',
+          canon_player_name(canon))
+    check("a first name matches the full name",
+          focus_names('vess', canon) == {'Vess Kolvar'})
+    check("an npc matches",
+          focus_names('bruc drawing his sword', canon) == {'Bruc'})
+    check("two named characters both match",
+          focus_names('vess and bruc', canon) == {'Vess Kolvar', 'Bruc'})
+    check("a request naming nobody narrows nothing",
+          focus_names('the footprints in the sand', canon) == set())
+    check("no request, no narrowing", focus_names('', canon) == set())
+    # Word boundaries: "Mara" must not be found inside "marauder".
+    check("substrings do not count as names",
+          focus_names('the marauders outside', canon) == set(),
+          focus_names('the marauders outside', canon))
+
+    q = compose_question(CONVO, [], STATE, ROOM, CHARACTER, canon=canon,
+                         instructions='bruc drawing his sword')
+    check("the named character is described", "grey wolf mercenary" in q)
+    check("the others are not", "grease-stained leathers" not in q
+          and "patched maid outfit" not in q)
+    check("the place survives narrowing", "a flooded stone cellar" in q)
+    check("the chargen sheet goes too - it is the PLAYER's identity",
+          "a Kobold Femboy maid" not in q)
+    check("and the cast is stated outright", has(q, "contains exactly Bruc"))
+
+    # Naming the player keeps the player's sheet and entry.
+    qp = compose_question(CONVO, [], STATE, ROOM, CHARACTER, canon=canon,
+                          instructions='vess')
+    check("naming the player keeps her ledger entry",
+          "patched maid outfit" in qp)
+    check("...and her sheet", "a Kobold Femboy maid" in qp)
+    check("...and drops the NPCs", "battered ring mail" not in qp)
+
+    # A request that names nobody leaves the question exactly as it was.
+    q0 = compose_question(CONVO, [], STATE, ROOM, CHARACTER, canon=canon,
+                          instructions='the altar')
+    check("no narrowing means the whole ledger",
+          "battered ring mail" in q0 and "patched maid outfit" in q0)
+
+
+def test_tags():
+    """[images] prompt_format = "tags": the composition writes Danbooru
+    tags instead of a sentence, because that is what an Illustrious /
+    Pony / NoobAI checkpoint was trained on. The two tags that carry
+    the weight are the cast tag (an extra figure otherwise) and the
+    framing tag (a subject at the horizon otherwise)."""
+    print("tag-mode composition")
+    from src.scenecomp import TAG_CAST, TAG_FRAMING
+    q = compose_question(CONVO, [], STATE, ROOM, CHARACTER, fmt='tags')
+    check("asks for tags, not a sentence", has(q, "TAG LIST"))
+    check("no prose contract left over", not has(q, "ONE sentence"))
+    for tag in TAG_CAST:
+        check(f"cast vocabulary offered: {tag}", tag in q)
+    for tag in TAG_FRAMING:
+        check(f"framing vocabulary offered: {tag}", tag in q)
+    check("framing is mandatory, not optional", has(q, "exactly one of"))
+    check("an action slot exists", has(q, "WHAT IS HAPPENING"))
+    check("the tag budget is stated", has(q, "never more than 40"))
+    check("the cast tag is tied to the count",
+          has(q, "cast tag must match that count"))
+    check("the prose roster is gone",
+          not has(q, "explicit list of who is present"))
+    check("cast rules still apply", has(q, "cast rules"))
+    check("transcript still present", CONVO.split("\n")[0] in q)
+
+    # The reply cap: a 30-tag list does not fit in the 400 chars a prose
+    # sentence lives under, and what a cut leaves behind is a made-up
+    # token in the list's highest-weight position.
+    from src.scenecomp import tidy_tags, TAG_SCENE_LIMIT
+    check("tag lists get their own, larger cap", TAG_SCENE_LIMIT > 400)
+    check("a wrapped reply becomes one line",
+          tidy_tags("solo, 1girl,\nanthro,\n  kobold ")
+          == "solo, 1girl, anthro, kobold")
+    check("duplicates collapse",
+          tidy_tags("anthro, kobold, anthro") == "anthro, kobold")
+    check("empty tags from a trailing comma go",
+          tidy_tags("solo, kobold, ,") == "solo, kobold")
+    check("a truncated reply loses its half-written tag",
+          tidy_tags("solo, kobold, dark atmos", truncated=True)
+          == "solo, kobold")
+    check("an untruncated reply keeps every tag",
+          tidy_tags("solo, kobold, dark atmosphere")
+          == "solo, kobold, dark atmosphere")
+    check("a one-tag reply is never emptied",
+          tidy_tags("solo", truncated=True) == "solo")
+    check("nothing in, nothing out", tidy_tags("") == "")
+
+    # Prose stays the default: every existing config keeps its behaviour.
+    check("prose is what an unset format gets",
+          compose_question(CONVO, [], STATE, ROOM, CHARACTER)
+          == compose_question(CONVO, [], STATE, ROOM, CHARACTER,
+                              fmt='prose'))
+    check("prose mode is untouched by tag mode existing",
+          has(compose_question(CONVO, [], STATE, ROOM, CHARACTER),
+              "ONE sentence"))
+
+
+def test_trim_scene():
+    """The prose cap must not eat the roster - it used to, every time.
+
+    Tag mode ends on the cast tag, which tidy_tags protects; prose ends
+    on the who-is-present line, and the 400-char cap this replaces cut
+    it off mid-word along with the description's tail."""
+    print("trim_scene (prose)")
+    from src.scenecomp import trim_scene, PROSE_SCENE_LIMIT
     body = ("A narrow spiral stone stair descends into darkness, rough-cut "
             "walls closing in, a cracked funeral urn with dusty bones in a "
             "wall niche, cold air and a faint damp gleam on the steps, lit "
@@ -164,11 +286,11 @@ def test_trim_scene():
             "below the slow drip of water into standing water.")
     roster = "- the only figure present is the young Khajiit woman"
     out = trim_scene(body + "\n" + roster)
-    check("over-budget scene is capped", len(out) <= SCENE_CHARS,
+    check("over-budget scene is capped", len(out) <= PROSE_SCENE_LIMIT,
           f"got {len(out)}")
     check("the roster survives the cap", out.endswith(roster))
-    check("the prose is what gave way", len(out.rpartition('\n')[0])
-          < len(body))
+    check("the prose is what gave way",
+          len(out.rpartition('\n')[0]) < len(body))
     check("no mid-word cut", not out.rpartition('\n')[0].endswith(" "))
 
     short = "A cold stair.\n" + roster
@@ -177,32 +299,7 @@ def test_trim_scene():
     plain = trim_scene(body, 100)
     check("rosterless scene still capped", len(plain) <= 100)
     check("rosterless cut lands on a word", not plain.endswith("rough-c"))
-
-
-def test_cast_tags():
-    """The roster, once it survives, in the vocabulary image models obey."""
-    print("cast_tags")
-    solo_pos, solo_neg = cast_tags(
-        "A stair.\n- the only figure present is the Khajiit woman")
-    check("one figure -> solo", "solo" in solo_pos)
-    check("one figure pushes crowds away", "multiple girls" in solo_neg)
-    check("one figure pushes beasts away",
-          has(solo_neg, "monster", "macro", "giant"))
-
-    empty_pos, empty_neg = cast_tags(
-        "A cold crypt corridor.\n- an empty, unpeopled scene")
-    check("empty scene -> no humans", "no humans" in empty_pos)
-    check("empty scene pushes people away", has(empty_neg, "1girl", "solo"))
-    check("empty scene pushes creatures away",
-          has(empty_neg, "creature", "monster"))
-
-    # Anything it cannot read confidently must change nothing at all.
-    check("a crowded roster claims nothing",
-          cast_tags("The hall.\n- present are the player, Marja and the "
-                    "drowned priest") == ('', ''))
-    check("no roster claims nothing",
-          cast_tags("just some prose about a room") == ('', ''))
-    check("empty input claims nothing", cast_tags('') == ('', ''))
+    check("empty input survives", trim_scene('') == '')
 
 
 if __name__ == "__main__":
@@ -212,8 +309,9 @@ if __name__ == "__main__":
     test_degradation()
     test_partial_room()
     test_canon()
+    test_focus()
+    test_tags()
     test_trim_scene()
-    test_cast_tags()
 
     print()
     if failures:

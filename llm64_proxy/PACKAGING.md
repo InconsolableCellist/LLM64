@@ -8,7 +8,13 @@ it.
 
 PyInstaller does not cross-compile: build on Linux to get the Linux
 binary, build on Windows to get the .exe. The spec, the code and these
-steps are identical on both.
+steps are identical on both. You can still make both on one Linux box,
+because a Windows Python running under Wine is a Windows Python as far
+as PyInstaller is concerned -- see "Build the .exe on Linux, with
+Wine" below.
+
+`make release` in the repository root runs all of this for you, along
+with the C64 and Windows clients.
 
 ## Build on Linux
 
@@ -40,6 +46,41 @@ rem result: dist\llm64-proxy.exe
 ```
 
 Rename the exe to whatever you like; nothing inside cares.
+
+## Build the .exe on Linux, with Wine
+
+If you have Wine, you do not need a Windows machine. Install a Windows
+Python into a Wine prefix once:
+
+```bash
+cd llm64_proxy
+./tools/win-build-setup.sh      # ~15 min, ~600 MB in ~/.wine-llm64proxy
+```
+
+It downloads CPython 3.12 from python.org, installs it under Wine with
+tcl/tk included, and pip-installs the requirements and PyInstaller.
+Then build the exe any time with either of:
+
+```bash
+make proxy-bin-win              # from the repository root
+./tools/win-build.sh            # or directly
+# result: dist/llm64-proxy.exe
+```
+
+The two builds share `dist/` but not their PyInstaller work
+directories -- the Windows one uses `build/win`, so neither poisons the
+other's cache.
+
+Overrides: `PYVER=3.13.7 ./tools/win-build-setup.sh` for a different
+CPython, `WINEPREFIX=...` for a different prefix (export it for both
+scripts if you change it). Throw a broken prefix away with
+`rm -rf ~/.wine-llm64proxy` and rerun the setup; nothing else lives
+there.
+
+Test the result before shipping it: `wine dist/llm64-proxy.exe` should
+open the launcher window. Wine is a good enough Win32 to build against,
+but the binary has only really been exercised once it has run on
+Windows itself.
 
 ## Running the packaged proxy
 

@@ -26,7 +26,8 @@ from . import printcups
 from . import printpic
 from .scenecomp import (compose_question, canon_build_question,
                         canon_update_question, canon_stale,
-                        parse_canon_reply, trim_scene)
+                        parse_canon_reply, tidy_tags, trim_scene,
+                        TAG_SCENE_LIMIT)
 from .markup import colorize_for_wire, split_safe, UNICODE_TO_ASCII
 from .profiles import C64 as PROFILE_C64, from_hello
 from .markup import prompt_snippet as color_prompt_snippet
@@ -251,7 +252,8 @@ class ProtocolHandler:
             backend=make_backend(images_cfg, self.config.data_dir,
                                  getattr(self.config, 'config_dir', '.')),
             style_prefix=images_cfg.get('style_prefix'),
-            dib_period=images_cfg.get('dib_style', 'period') != 'clean')
+            dib_period=images_cfg.get('dib_style', 'period') != 'clean',
+            prompt_format=images_cfg.get('prompt_format', 'prose'))
         if self.images.available:
             self.logger.info(f"Images enabled (backend: "
                              f"{self.images.backend.name}, "
@@ -1966,12 +1968,25 @@ class ProtocolHandler:
         # amended only when the narrative contradicts it. Rides inside
         # the "Studying the scene..." heartbeat the caller already runs.
         canon = await self._ensure_canon(convo, adv_state, character)
+        # The shape follows the image model: a tag-trained checkpoint
+        # gets tags from here, not a sentence (scenecomp, docs/13).
+        fmt = getattr(self.images, 'prompt_format', 'prose')
         question = compose_question(
             convo, priors, adv_state, room, character,
-            instructions=instructions, directive=directive, canon=canon)
-        # A generous hard guard on the model, then the real cap - which
-        # protects the roster line the cast rules put at the end, and
-        # cuts on a word boundary rather than mid-word (scenecomp).
+            instructions=instructions, directive=directive, canon=canon,
+            fmt=fmt)
+        # Either shape ends on the part that settles the cast - the cast
+        # tag, or the roster line - so neither may be cut off at the
+        # tail. Tag mode gets the room a 30-tag list needs, and any
+        # fragment the cap still leaves is trimmed rather than shipped
+        # to the image model.
+        if fmt == 'tags':
+            scene = await self._ask_model(question, limit=TAG_SCENE_LIMIT)
+            return tidy_tags(scene,
+                             truncated=len(scene) >= TAG_SCENE_LIMIT - 2)
+        # Prose: _ask_model's cap is a crude slice, and at 400 it landed
+        # mid-word and took the roster with it. Ask with headroom and let
+        # trim_scene spend the budget on the description instead.
         return trim_scene(await self._ask_model(question, limit=4000))
 
     @staticmethod
