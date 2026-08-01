@@ -83,7 +83,7 @@ Boot it with the proxy's address in `-rsdev1`. One line, from the
 directory holding the disk:
 
 ```bash
-x64sc -acia1 -acia1mode 0 -acia1base 0xDE00 -acia1irq 2 -myaciadev 0 -rsdev1 127.0.0.1:6400 +rsdev1ip232 -rsdev1baud 9600 -8 llm64-vice.d64 -autostart llm64-vice.d64
+x64sc -acia1 -acia1mode 0 -acia1base 0xDE00 -acia1irq 2 -myaciadev 0 -rsdev1 127.0.0.1:6400 +rsdev1ip232 -rsdev1baud 38400 -8 llm64-vice.d64 -autostart llm64-vice.d64
 ```
 
 Change `127.0.0.1:6400` if the proxy runs on another machine. That is the
