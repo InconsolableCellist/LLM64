@@ -123,6 +123,19 @@ PRESETS = {
             "monster, creature, feral, dragon, "
             "muzzle, harness, leash, collar, "
             "blank background, simple background"),
+        # An SDXL checkpoint needs an SDXL graph - one loader, no
+        # AuraFlow shift, cfg that actually guides - so the preset
+        # brings its own and picking it in the launcher is the whole
+        # operation. It replaces a configured workflow (apply_style
+        # logs when it does): a Flux graph is not something this
+        # preset can style, it is something it would crash on.
+        "workflow": "sdxl-illustrious.json",
+        # A default to re-point, not a claim about your disk: the
+        # launcher's Checkpoint field lists what the running ComfyUI
+        # actually has. Named here because the standing default is a
+        # Flux checkpoint, and an SDXL graph asking for that is a
+        # ComfyUI 400 rather than a picture.
+        "model": "novaFurryXL_ilV120.safetensors",
         "steps": 28,
         "cfg": 5.0,
         "sampler": "euler_ancestral",
@@ -193,6 +206,14 @@ def apply_style(images_cfg):
 
     lora = preset.get("lora")
     if preset.get("workflow"):
+        # Loud, because an operator who authored a workflow and then
+        # picked a named preset has just had it replaced, and a silent
+        # swap is a very confusing afternoon.
+        if comfy.get("workflow") \
+                and comfy["workflow"] != str(preset["workflow"]):
+            logger.info("style %r runs its own workflow %s, replacing "
+                        "the configured %s", name, preset["workflow"],
+                        comfy["workflow"])
         comfy["workflow"] = str(preset["workflow"])
     elif lora and not comfy.get("workflow"):
         # imagegen resolves the bare name to the bundled copy.

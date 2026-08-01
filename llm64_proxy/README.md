@@ -231,9 +231,18 @@ SDXL checkpoint does not: it reads tags, weights the front of the
 prompt hardest, and splits the text into 77-token chunks, so a long
 prose preamble can spend the whole first chunk before the scene is
 mentioned. `anthro-illustrious` is tags, short, and ships the negative
-prompt that family needs. Don't pair it with a Flux LoRA -- a Flux LoRA
-loads zero keys onto an SDXL checkpoint (ComfyUI logs several hundred
-`lora key not loaded` lines and carries on).
+prompt that family needs.
+
+It also brings its own graph -- `workflows/sdxl-illustrious.json`, one
+`CheckpointLoaderSimple` instead of the Flux loader trio, `cfg` 5 so the
+negative prompt actually guides -- so **selecting the preset in the
+launcher is the whole setup**. Two consequences worth knowing: it
+replaces any `[images.comfyui] workflow` you had configured (it logs
+when it does; a Flux graph is not something this preset can restyle),
+and its `model` is a default to re-point at whatever checkpoint you
+have, via Settings -> Checkpoint and the ↻ button. Don't pair it with a
+Flux LoRA -- one loads zero keys onto an SDXL checkpoint (ComfyUI logs
+several hundred `lora key not loaded` lines and carries on regardless).
 
 **A style prefix must never name a subject.** It is prepended to every
 prompt, including the one for a room the story says is empty, so an

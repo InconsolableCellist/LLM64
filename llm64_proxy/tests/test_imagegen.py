@@ -735,8 +735,15 @@ def test_style_presets():
           "macro" in cfg["comfyui"]["negative"])
     check("preset sdxl sampler settings land",
           cfg["comfyui"]["cfg"] == 5.0 and cfg["comfyui"]["steps"] == 28)
-    check("a prefixless-LoRA preset is not implied",
-          "workflow" not in cfg["comfyui"])
+    check("preset brings its own SDXL workflow",
+          cfg["comfyui"]["workflow"] == "sdxl-illustrious.json")
+    # An SDXL preset over a Flux graph is a crash, not a restyle, so the
+    # preset's workflow replaces a configured one - loudly.
+    cfg = {"style": "anthro-illustrious",
+           "comfyui": {"workflow": "my-own.json"}}
+    apply_style(cfg)
+    check("preset workflow replaces the configured one",
+          cfg["comfyui"]["workflow"] == "sdxl-illustrious.json")
 
     # THE regression this file exists to catch. A style_prefix rides on
     # EVERY prompt, including one for an empty room, so it may describe
@@ -773,6 +780,51 @@ def test_style_presets():
         logging.getLogger("src.imgstyles").removeHandler(handler)
 
 
+def test_bundled_workflows():
+    """Every shipped workflow must template CLEAN.
+
+    A {TOKEN} nobody fills does not fail loudly - it travels to ComfyUI
+    as the literal string "{LORA}" and comes back an opaque HTTP 400
+    ("value_not_in_list"), which reaches the player as "Illustration
+    failed." So: load each bundled graph the way the backend does, run
+    it through the preset that selects it, and assert nothing with
+    braces survives into the submitted nodes."""
+    print("bundled workflows")
+    from src.imgstyles import PRESETS, apply_style
+    from src.respath import bundled_workflows_dir
+
+    # Which preset (if any) is written for which shipped file, so each
+    # graph is tokenized under the settings it actually ships with.
+    by_workflow = {}
+    for name, preset in PRESETS.items():
+        wf = preset.get("workflow") or (
+            "flux2-klein-lora.json" if preset.get("lora") else None)
+        if wf:
+            by_workflow.setdefault(wf, name)
+
+    for path in sorted(bundled_workflows_dir().glob("*.json")):
+        style = by_workflow.get(path.name)
+        cfg = {"comfyui": {"workflow": path.name}}
+        if style:
+            cfg["style"] = style
+            apply_style(cfg)
+        be = ComfyUIBackend(cfg["comfyui"], TMP,
+                            base_dir=str(bundled_workflows_dir()))
+        graph = be._load()
+        check(f"{path.name} loads as a node graph", graph is not None)
+        if graph is None:
+            continue
+        prepared = be._prepare(graph, "a scene", "monster")
+        unfilled = [f"{n}.{k}={v}" for n, node in prepared.items()
+                    for k, v in node["inputs"].items()
+                    if isinstance(v, str) and "{" in v and "}" in v]
+        check(f"{path.name} leaves no unfilled token"
+              + (f" (style {style})" if style else ""),
+              not unfilled, f"got {unfilled}")
+        check(f"{path.name} drops the _comment key",
+              "_comment" not in prepared)
+
+
 def test_usage_log():
     print("usage accounting")
     imagegen._log_usage(TMP, "comfyui", "adventure")
@@ -806,6 +858,7 @@ if __name__ == "__main__":
         test_make_backend()
         test_sidecars()
         test_style_presets()
+        test_bundled_workflows()
         test_usage_log()
 
     print()

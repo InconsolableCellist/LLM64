@@ -53,10 +53,13 @@ backend = "gemini"
 #   painted-noir      film-noir lit dark fantasy
 #   anthro-illustrious  for an Illustrious/Pony-family SDXL checkpoint
 #                     (NovaFurryXL and friends): tag-phrased, short, and
-#                     carrying the negative such a model needs. Use it
-#                     with an SDXL workflow - the prose presets above
-#                     are written for Flux, and NOT with a Flux LoRA,
-#                     which loads zero keys onto an SDXL checkpoint.
+#                     carrying the negative such a model needs. It runs
+#                     the bundled workflows/sdxl-illustrious.json, so
+#                     picking it is the whole job - but that REPLACES a
+#                     workflow named below (a Flux graph is not
+#                     something this preset can style), and its
+#                     `model` is a default to re-point at your own
+#                     checkpoint.
 # A preset's prefix wins over style_prefix above. Unknown names warn and
 # fall back to the default look.
 # style = "cinematic"
