@@ -37,16 +37,18 @@ Join my Discord for support/updates, and/or my X/Twitter:
 1. [Install the proxy](llm64_proxy/README.md#installation). You'll setup Python in a venv on any modern machine
    -- or skip Python entirely with the [standalone binary](llm64_proxy/README.md#standalone-binary-no-python),
    one file with a launcher window (status, log, config editor) for Windows or Linux
-2. [Configure the proxy](llm64_proxy/README.md#configuration). Copy
-   `config.toml.example` and point `[api]` at your model, then
+2. [Configure the proxy](llm64_proxy/README.md#configuration). In the
+   launcher window the [setup wizard](llm64_proxy/README.md#the-setup-wizard)
+   does this for you and opens by itself on a fresh install; by hand,
+   copy `config.toml.example` and point `[api]` at your model. Then
    [start it](llm64_proxy/README.md#running-the-proxy)
 3. Download (or build) the [C64](c64_client/README.md#build) or
-   [Windows](win311_client/README.md#build) client — pre-compiled binaries
+   [Windows](win311_client/README.md#build) client -- pre-compiled binaries
    are on the Releases page
-4. Run the client — [on a C64, a C64 Ultimate or VICE](c64_client/README.md#running-it),
+4. Run the client -- [on a C64, a C64 Ultimate or VICE](c64_client/README.md#running-it),
    or [on a modern or period PC, a VM or Wine](win311_client/README.md#running-it)
 5. Optionally, [enable more features in the proxy](llm64_proxy/README.md#optional-features)
-   — pictures, SID music, MIDI music, real printing, `/code`
+   -- pictures, SID music, MIDI music, real printing, `/code`
 
 ## The Clients: C64, Win 3.11/95/98, and modern Windows
 
@@ -76,6 +78,24 @@ Join my Discord for support/updates, and/or my X/Twitter:
 └─────────────────┘
 ```
 
+## The proxy
+
+The proxy is the piece that does the work: it holds the conversations,
+talks to the model, generates and converts the pictures, picks the
+music, and composes anything you `/print`. It runs on Linux or Windows,
+from source or as a single self-contained binary, and it can sit on a
+different machine from the one you play on.
+
+| | |
+|---|---|
+| ![The setup wizard, on the step that configures the model](screenshots/proxy_wizard.png) | ![The proxy launcher, on the Illustrations tab](screenshots/proxy_launcher.png) |
+| The setup wizard opens by itself on a fresh install and checks each step against the live system | the launcher: start/stop, live status, the log, a validating config editor, and illustrations you can try before you play |
+
+Everything it can do is in the
+[proxy README](llm64_proxy/README.md); the
+[setup wizard](llm64_proxy/README.md#the-setup-wizard) is the quickest
+way through it, and the Setup wizard button in the launcher reopens it
+whenever you want to turn something else on.
 
 ## Using it
 
@@ -173,7 +193,7 @@ On the C64:
 | Key | Action |
 |-----|--------|
 | Return | Send message |
-| F1 | Menu — server-fed panel, hotkeys or cursor+Return |
+| F1 | Menu -- server-fed panel, hotkeys or cursor+Return |
 | F2 / F3 | New conversation / cancel reply |
 | F4 / F6 | Page chat up / down |
 | F5 | Conversation manager (load, star, delete, pages) |
@@ -275,12 +295,44 @@ and some additional design docs:
 
 - [01-system-architecture.md](docs/01-system-architecture.md),
   [02-c64-client-design.md](docs/02-c64-client-design.md),
-  [03-linux-proxy-design.md](docs/03-linux-proxy-design.md) — original design
-- [05-ultimate-setup.md](docs/05-ultimate-setup.md) — real hardware setup
-- [16-windows-311-client.md](docs/16-windows-311-client.md) — the Windows
+  [03-linux-proxy-design.md](docs/03-linux-proxy-design.md) -- original design
+- [05-ultimate-setup.md](docs/05-ultimate-setup.md) -- real hardware setup
+- [16-windows-311-client.md](docs/16-windows-311-client.md) -- the Windows
   client, the multi-client profile design
 
 ## Version history
+
+[CHANGELOG.md](CHANGELOG.md) has the full list.
+
+### 1.1 -- 2026-08-01
+
+The Windows client runs on Windows 10 and 11, and the proxy is
+something you install rather than something you configure by hand.
+
+- **`LLM32.EXE`, for modern Windows.** One source tree builds twice:
+  the 16-bit `LLM64.EXE` for real WfW 3.11 and 95/98, and a 32-bit
+  binary that needs no 16-bit subsystem. Modern Windows draws your
+  window as Windows 11, so the client draws its own -- caption, menu
+  bar, frame, MDI children, menus, dialogs, buttons and scrollbars are
+  all ours, measured against a capture of a real 3.11 machine and
+  matching it to 50 pixels in 17,252.
+- **A launcher window and a standalone binary.** The proxy packages as
+  one self-contained file for Linux and Windows, with start/stop, live
+  status, the log and a validating `config.toml` editor.
+- **A setup wizard**, which opens by itself on a fresh install and is
+  re-runnable afterwards. Two mandatory settings and five optional
+  features, each checked against the live system: the LLM step sends a
+  real completion, the printing step spools a real test page, the
+  images step draws a real picture.
+- **Illustrations you can look at before you play** -- a launcher tab
+  that runs the real image path and shows what each client would
+  display -- plus named style presets and an SDXL chain for anthro
+  characters.
+- **A better desk on Windows**: a multiline input with real undo, a
+  selectable transcript, wheel scrolling, a remembered window position
+  and an About box.
+- **The narrator's dice are visible**: the die that decided a moment is
+  shown where it fell, and kept out of the history the model rereads.
 
 ### 1.0 -- 2026-07-29
 
