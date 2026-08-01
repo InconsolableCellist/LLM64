@@ -2931,11 +2931,16 @@ class ProtocolHandler:
                 sys_prompt += (
                     "\n\nDICE FOR THIS TURN - real rolls, already made, "
                     "yours to use:\n" + dice_pool() +
-                    "\nTake them in order, and say what you rolled "
-                    "(\"you swing - 14 against its guard\"). They are "
-                    "OPTIONAL: leave them unused if nothing this turn is "
-                    "genuinely uncertain. Never invent a check just to "
-                    "spend one.")
+                    "\nTake them in order. When one decides an outcome, "
+                    "stamp it right after the sentence it decided, on "
+                    "one line: [[ROLL: d20 14+3=17 vs 12, attack - hit]] "
+                    "(die, modifiers, target, what it was for). The "
+                    "stamp is shown to the player as the die that "
+                    "decided the moment, so keep the arithmetic out of "
+                    "the prose itself. The dice are OPTIONAL: leave "
+                    "them unused if nothing this turn is genuinely "
+                    "uncertain, and never invent a check just to spend "
+                    "one.")
             _mlib = self._music_lib()
             if (mfilter and _mlib is not None and _mlib.available
                     and _mlib.stale() and sys_prompt):
@@ -2988,8 +2993,22 @@ class ProtocolHandler:
             await self.send_message(MessageType.CHAT_DONE, payload)
             done_sent = True
 
-            # Save assistant response to conversation
-            self.conv_manager.add_message('assistant', full_response)
+            # The narrator's dice, audited: payloads land in meta where
+            # a "did it roll silently?" question is one grep, capped so
+            # a long campaign cannot bloat its own save file.
+            if mfilter and mfilter.rolls:
+                log = self.conv_manager.get_meta('adv_rolls') or []
+                at = len(self.conv_manager.get_messages())
+                log += [{'at_msg': at, 'roll': r} for r in mfilter.rolls]
+                self.conv_manager.set_meta('adv_rolls', log[-50:])
+
+            # Save assistant response to conversation - minus the
+            # rendered [dice: ...] lines. The player was shown them; the
+            # model must not reread them (see strip_notes).
+            self.conv_manager.add_message(
+                'assistant',
+                mfilter.strip_notes(full_response) if mfilter
+                else full_response)
             self.conv_manager.save()
 
             # Adventure state block: persist the newest one in meta
@@ -3138,8 +3157,10 @@ class ProtocolHandler:
                                       min(len(full_response), 0xFFFF))
                 await self.send_message(MessageType.CHAT_DONE, payload)
                 if full_response:
-                    self.conv_manager.add_message('assistant',
-                                                  full_response)
+                    self.conv_manager.add_message(
+                        'assistant',
+                        mfilter.strip_notes(full_response) if mfilter
+                        else full_response)
                     self.conv_manager.save()
 
         except Exception as e:

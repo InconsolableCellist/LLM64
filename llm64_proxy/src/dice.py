@@ -98,3 +98,29 @@ def expand(text: str, rng=None):
         return out
 
     return ROLL_RE.sub(sub, text), rolled
+
+
+# --- the [[ROLL:]] directive ------------------------------------------
+#
+# The narrator's answer to "which die decided that?": when it spends one
+# of pool()'s dice it stamps [[ROLL: d20 14+3=17 vs 12, attack - hit]]
+# into the reply. The directive filter swaps the stamp for the rendered
+# line below on its way to the player, and the SAVED reply drops it
+# entirely (MusicDirectiveFilter.strip_notes) - so the player always
+# sees the die, while the model never rereads its own roll-talk and
+# cannot ratchet itself into rolling for the quiet moments.
+
+ROLL_NOTE_MAX = 100
+
+
+def render_roll(payload: str) -> str:
+    """The player-visible line for one [[ROLL: ...]] payload.
+
+    Rendered as "dice", not "roll": [roll: ...] is the PLAYER macro's
+    spelling and [[ROLL:]] the directive's, and this line travels back
+    through text both parsers scan - "dice" matches neither, so a
+    rendered line can never be re-rolled or re-extracted."""
+    text = " ".join(str(payload).split())
+    if len(text) > ROLL_NOTE_MAX:
+        text = text[:ROLL_NOTE_MAX - 3] + "..."
+    return f"[dice: {text}]"

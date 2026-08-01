@@ -18,11 +18,12 @@ from pathlib import Path
 
 from . import sid_overrides
 from . import sid_ranking
+from .dice import render_roll
 
 DIRECTIVE_RE = re.compile(
     # Canonical form. DOTALL so a STATE block's JSON may wrap, and ']]'
     # as the terminator so the JSON's own ']' cannot close it early.
-    r"\[\[\s*(MUSIC|IMAGE|STATE|MAP)\s*:\s*(.*?)\s*\]\]"
+    r"\[\[\s*(MUSIC|IMAGE|STATE|MAP|ROLL)\s*:\s*(.*?)\s*\]\]"
     r"|"
     # Single-bracket fallback. Adventure replies open with a status line
     # that is itself single-bracketed - "[HP 15/20 | Gold 0 | ...]" - so
@@ -31,7 +32,11 @@ DIRECTIVE_RE = re.compile(
     # MUSIC/IMAGE/MAP only, and the value may not span ']' or a newline:
     # STATE's JSON contains ']', so it has no safe single-bracket form.
     # MAP is safe here because its value is '|'-separated key=value with
-    # no ']' of its own.
+    # no ']' of its own. ROLL has NO single-bracket form either, and not
+    # for a length reason: "[roll:1d20]" is the PLAYER macro, and the
+    # narrator writes it out when inviting the player to roll - a
+    # single-bracket ROLL here would eat that invitation off the screen
+    # (test_dice guards exactly this).
     # The lookbehind matters mid-stream: while "[[MUSIC: calm]]" is still
     # arriving it briefly reads as "[[MUSIC: calm]", and without it this
     # alternative would match the inner "[MUSIC: calm]" and leave a
@@ -217,6 +222,12 @@ class MusicDirectiveFilter:
     accumulate in .moods (music), .images (image descriptions),
     .states (adventure game-state JSON, newest last) and .maps
     (movement/geography, in the order they were emitted).
+
+    [[ROLL: ...]] is the one directive that is REPLACED rather than
+    removed: the payload lands in .rolls, and feed() emits the rendered
+    [dice: ...] line in its place so the player sees the die where it
+    fell. The rendered lines accumulate in .roll_texts for strip_notes(),
+    which takes them back out of the copy history keeps.
     """
 
     # Image descriptions can be a sentence and a state block carries a
@@ -237,6 +248,8 @@ class MusicDirectiveFilter:
         self.images = []
         self.states = []
         self.maps = []
+        self.rolls = []       # raw payloads, for the audit log
+        self.roll_texts = []  # rendered [dice: ...] lines, for strip_notes
 
     # Openers worth holding a partial tail for (see _could_become_directive)
     # Colour markup is NOT extracted here - the tags stay in the text so
@@ -244,7 +257,7 @@ class MusicDirectiveFilter:
     # docs/08-inline-color.md); they are turned into marker cells at
     # egress. They are listed only so a tag split across stream chunks
     # is held back instead of going out half-written.
-    _PREFIXES = ("[[MUSIC:", "[[IMAGE:", "[[STATE:", "[[MAP:",
+    _PREFIXES = ("[[MUSIC:", "[[IMAGE:", "[[STATE:", "[[MAP:", "[[ROLL:",
                  "[MUSIC:", "[IMAGE:", "[MAP:",
                  "[COLOR", "[COLOUR", "[/COLOR", "[/COLOUR")
 
@@ -265,6 +278,13 @@ class MusicDirectiveFilter:
                 self.states.append(value)
             elif kind == "MAP":
                 self.maps.append(value)
+            elif kind == "ROLL":
+                # Replaced, not removed: the player gets the die where
+                # it fell; strip_notes() owes history the removal.
+                note = render_roll(value)
+                self.rolls.append(value)
+                self.roll_texts.append(note)
+                return note
             else:
                 self.images.append(value)
             return ""
@@ -306,4 +326,13 @@ class MusicDirectiveFilter:
     def flush(self) -> str:
         text = self._extract(self.held, final=True)
         self.held = ""
+        return text
+
+    def strip_notes(self, text: str) -> str:
+        """text minus the [dice: ...] lines this filter rendered - the
+        form history keeps. The player saw the dice; the model rereading
+        its own roll-talk every turn is how it learns to roll for
+        crossing a quiet room, so the saved reply keeps only the prose."""
+        for note in self.roll_texts:
+            text = text.replace(note, "", 1)
         return text

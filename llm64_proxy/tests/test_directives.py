@@ -98,6 +98,50 @@ check("held across chunks", "a[[MUSIC: calm]]b", "ab", want_moods=["calm"])
 # it back rather than silently eating the rest of the reply.
 check("unterminated opener", "text [[MUSIC: hmm", "text [[MUSIC: hmm")
 
+# [[ROLL:]] is replaced, not removed: the player sees the rendered
+# [dice: ...] line exactly where the stamp fell, .rolls keeps the payload
+# for the audit log, and strip_notes() returns the prose-only form that
+# history keeps.
+ROLL = "d20 14+3=17 vs 12, attack - hit"
+for chunked in (False, True):
+    how = "chunked" if chunked else "whole"
+    text = f"You swing. [[ROLL: {ROLL}]] The blade bites."
+    out, f = run(text, chunked)
+    if out != f"You swing. [dice: {ROLL}] The blade bites.":
+        failures.append(f"roll rendered [{how}]: got {out!r}")
+    if f.rolls != [ROLL] or f.roll_texts != [f"[dice: {ROLL}]"]:
+        failures.append(f"roll recorded [{how}]: {f.rolls!r} {f.roll_texts!r}")
+    if f.strip_notes(out) != "You swing.  The blade bites.":
+        failures.append(f"strip_notes [{how}]: got {f.strip_notes(out)!r}")
+
+# ROLL deliberately has NO single-bracket fallback: "[roll:1d20]" is the
+# player macro, and the narrator writes it out when inviting the player
+# to roll. Both must pass through as text.
+for chunked in (False, True):
+    for invite in ("[ROLL: d6 3, damage] stays",
+                   "Roll [roll:1d20] to strike, and add your STR."):
+        out, f = run(invite, chunked)
+        if out != invite or f.rolls:
+            failures.append(
+                f"single-bracket roll not left alone: {out!r} {f.rolls!r}")
+
+# The rendered line must never be re-parseable - by this filter (fresh
+# instance, as history replayed through anything) or by the player-macro
+# regex in dice.py.
+from src.dice import ROLL_RE, render_roll
+rendered = render_roll(ROLL)
+out2, f2 = run(rendered, False)
+if out2 != rendered or f2.rolls:
+    failures.append(f"rendered line re-parsed: {out2!r} {f2.rolls!r}")
+if ROLL_RE.search(rendered):
+    failures.append(f"rendered line matches the player macro: {rendered!r}")
+
+# render_roll flattens whitespace and caps runaway payloads.
+if render_roll("d20\n 14 vs   9") != "[dice: d20 14 vs 9]":
+    failures.append(f"render_roll whitespace: {render_roll('d20  14 vs 9')!r}")
+if len(render_roll("x" * 500)) > len("[dice: ]") + 100:
+    failures.append("render_roll did not cap a runaway payload")
+
 if failures:
     print(f"FAIL ({len(failures)})\n")
     print("\n\n".join(failures))
