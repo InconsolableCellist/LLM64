@@ -97,7 +97,7 @@ def _tag_task(fmt_note: str = '') -> str:
         "character in the shot is an anthro, beast or monster rather "
         "than a human.\n"
         "2. WHO THEY ARE: for each character actually in the shot, their "
-        "settled look as tags - anthro, the species, muzzle or snout, "
+        "settled look as tags - anthro, the species, snout, "
         "ears, fur or scales and their colours, tail, clothing. Copy "
         "these from the descriptions given below rather than inventing "
         "them, and keep it to the SIX or so most recognisable tags per "

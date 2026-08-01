@@ -57,13 +57,16 @@ COMFY_KEYS = ("model", "clip", "vae", "steps", "cfg",
 # lora_strength keeps the prefix.
 PRESETS = {
     "cinematic": {
+        # "snout", never "muzzle": an operator who points this prose
+        # prefix at an e621-lineage checkpoint gets the restraint, not
+        # the anatomy - a fox in a literal leather muzzle.
         "style_prefix": (
             "A moody cinematic film still, anamorphic framing, "
             "practical light sources, volumetric haze, muted grade "
             "with deep blacks. The subject characters keep their "
             "described species and anatomy exactly - an "
             "anthropomorphic beast-person stays a beast-person, "
-            "muzzle, fur and tail visible, never rendered as a "
+            "snout, fur and tail visible, never rendered as a "
             "human. Scene: "),
         "lora": "MovieClips_Klein9B_copy_000000880.safetensors",
         "lora_strength": 0.8,
