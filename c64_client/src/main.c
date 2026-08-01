@@ -1463,10 +1463,18 @@ int main(void) {
     wait_for_ack(4000);
 
     chat_start(2);
+#ifdef CONNECT_DIRECT
+    /* The ACIA is the socket, so whoever opened it - VICE's -rsdev1 -
+       holds the address, and g_host/g_port are only the build-time
+       default. Printing them would name a machine the user never
+       dialled: on the VICE disk they are wrong every time. */
+    chat_append_petscii("Connected through the emulator's serial port");
+#else
     chat_append_petscii("Connected to ");
     chat_append_petscii(g_host);
     chat_append_petscii(":");
     chat_append_petscii(g_port);
+#endif
     chat_finish();
 
     /* The two ways in. Client-side rather than proxy-side on purpose:

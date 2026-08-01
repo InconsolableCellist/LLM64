@@ -249,10 +249,36 @@ toolbar, and it is re-runnable by design.
 - The default prompts learned mood -- prose, one light source, no piles
   of negations.
 
+### C64 client
+
+- **A second disk for VICE, `llm64-vice.d64`.** The shipped disk is a
+  `CONNECT=hayes` build: it dials `ATDT`, so it needs something that
+  answers AT commands, and VICE has nothing that does. Running it there
+  loops on "Resetting modem..." forever, which looks like a broken
+  program rather than a missing `tcpser`. The VICE disk is the same
+  client and the same overlay modules built `CONNECT=direct`, where the
+  ACIA is the socket: VICE dials the proxy through `-rsdev1`, nothing
+  extra is installed, and nothing is configured. `make disk-vice` builds
+  it and `make release` ships both.
+- Because a direct build never dials, it now says "Connected through the
+  emulator's serial port" rather than naming the compiled-in address it
+  did not use, and the config editor's address field says it is ignored
+  instead of quietly changing nothing.
+- **`llm64.d64` means one thing now.** `./run.sh emu-80` used to write a
+  `CONNECT=direct` build under that name while `make disk` wrote a
+  `CONNECT=hayes` one, so what the file contained depended on which
+  command had run last. The emulator path writes `llm64-vice.d64`
+  instead.
+- `emu/run_emu.sh` boots a disk rather than a loose `llm64.prg`: the
+  VICE disk in direct mode, the hardware disk in hayes mode, where it
+  also starts a `tcpser` for you if the port is free and takes it down
+  on exit. An image carries its client and its modules together, so it
+  cannot pair a client with modules built against a different one.
+
 ### Build and release
 
-- **`make release`** builds every shippable in one command: the C64
-  disk, both Windows client binaries, the 1.44 MB floppy image and both
+- **`make release`** builds every shippable in one command: both C64
+  disks, both Windows client binaries, the 1.44 MB floppy image and both
   proxy binaries, then prints a manifest with sizes and timestamps --
   because a stale artifact from last week looks exactly like a fresh one
   in an `ls`. `MODE80=1` on the disk build is not optional and the

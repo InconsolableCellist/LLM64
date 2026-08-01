@@ -17,9 +17,9 @@ You need a running proxy first: see
 |-----|---------|
 | Building | `cc65` 2.19+, GNU make |
 | Making the disk image | VICE's `c1541` (a distro package or the `net.sf.VICE` flatpak; `emu/vice-run.sh` finds either) |
-| Running in VICE | VICE's `x64sc` |
+| Running in VICE | VICE's `x64sc`, and the VICE disk (see [In VICE](#in-vice)) |
 | Deploying to a C64 Ultimate | `curl` and `python3` |
-| The Hayes dial test in VICE | `tcpser` |
+| Running the *hayes* disk in VICE, or the dial test | `tcpser` |
 
 ## Build
 
@@ -41,8 +41,10 @@ together on one disk. Mixing builds crashes the machine as soon as the F1
 menu loads a module.
 
 `make disk` in the repository root runs those three lines for you, and
-`make release` builds this disk along with the Windows clients and the
-proxy binaries.
+`make disk-vice` builds the same disk `CONNECT=direct` as
+`build/llm64-vice.d64`, which is the one VICE users want. `make release`
+builds both of them along with the Windows clients and the proxy
+binaries.
 
 `make -C c64_client info` prints the sources, objects, and the FTP path it
 would upload to.
@@ -66,6 +68,53 @@ Leave `MODE80=1` off and you get the 40-column build, which the older
 
 ### In VICE
 
+**Use `llm64-vice.d64`, not `llm64.d64`.** Two disks ship, and the
+difference is the only thing you have to get right on this platform:
+
+| | `llm64.d64` | `llm64-vice.d64` |
+|---|---|---|
+| Built | `CONNECT=hayes` | `CONNECT=direct` |
+| Dials with | Hayes AT commands | nothing: the ACIA *is* the socket |
+| Needs `tcpser` | yes | **no** |
+| Proxy address comes from | the config editor, on first boot | the `x64sc` command line |
+| For | a real C64, a C64 Ultimate | VICE |
+
+Boot it with the proxy's address in `-rsdev1`. One line, from the
+directory holding the disk:
+
+```bash
+x64sc -acia1 -acia1mode 0 -acia1base 0xDE00 -acia1irq 2 -myaciadev 0 -rsdev1 127.0.0.1:6400 +rsdev1ip232 -rsdev1baud 9600 -8 llm64-vice.d64 -autostart llm64-vice.d64
+```
+
+Change `127.0.0.1:6400` if the proxy runs on another machine. That is the
+whole configuration: this disk never asks you for an address, because a
+`CONNECT=direct` build has no dial step and no first-boot config editor.
+The address field under F1 -> E is ignored here and says so.
+
+What each part is for, since one wrong flag looks like a broken program:
+
+| Flag | Why |
+|------|-----|
+| `-acia1 -acia1base 0xDE00` | the SwiftLink cartridge the client drives. Without it the client finds no ACIA |
+| `-acia1mode 0` | plain 6551. VICE has no SwiftLink crystal, so rates run at half their label |
+| `-acia1irq 2` | IRQ (`1` is NMI, `0` none) |
+| `-myaciadev 0` | routes the ACIA to `-rsdev1`, and NOT to the userport RS-232 device |
+| `-rsdev1 <host>:<port>` | where the proxy is |
+| `+rsdev1ip232` | **plus, not minus**: IP232 framing OFF. `-rsdev1ip232` turns it on, which is what the tcpser path wants and this one does not |
+| `-8` and `-autostart` | mount the disk and boot it. Both, so the overlay modules keep loading from unit 8 all session |
+
+Put `llm64.d64` in VICE instead and it will loop on "Resetting modem...",
+because nothing in VICE answers `ATZ`. That disk needs `tcpser` between
+VICE and the proxy:
+
+```bash
+tcpser -v 25232 -s 9600 -p 25233 -tSs &
+x64sc ... -rsdev1 127.0.0.1:25232 -rsdev1ip232 ... -8 llm64.d64
+```
+
+If you have the repository rather than a released disk, one command
+builds and launches the whole thing:
+
 ```bash
 ./run.sh emu-80                  # build, make the boot disk, launch x64sc
 ./run.sh emu-80 10.0.0.5:6400    # a proxy elsewhere, for this run only
@@ -74,13 +123,27 @@ Leave `MODE80=1` off and you get the 40-column build, which the older
 
 `emu-80` works out of the box: with no `run.conf` it aims at
 `127.0.0.1:6400` and starts a proxy itself if nothing is listening there.
-Set `PROXY_HOST` in `run.conf` when your proxy is on another machine.
+Set `PROXY_HOST` in `run.conf` when your proxy is on another machine. It
+builds `CONNECT=direct` and the VICE disk to go with it.
 
-The emulator build uses `CONNECT=direct`, so VICE opens the TCP connection
-itself and the client's own config editor cannot change where it connects
-(the address shown there is ignored). To exercise the real dial path
-instead, `make test-emu-hayes` builds `CONNECT=hayes` and puts `tcpser`
-behind VICE's RS-232 as the modem.
+`emu/run_emu.sh` is the layer underneath, and boots a disk either way:
+
+```bash
+./emu/run_emu.sh                 # llm64-vice.d64, straight to 127.0.0.1:6400
+./emu/run_emu.sh direct 10.0.0.5:6400
+./emu/run_emu.sh hayes           # llm64.d64, and it starts tcpser for you
+```
+
+Hayes mode starts a `tcpser` on port 25232 when nothing already holds
+that port, and kills it when VICE exits. It boots a disk rather than
+`build/llm64.prg` because an image carries its client and its overlay
+modules from one build, while a loose PRG is only whatever was compiled
+last -- and a hayes client booted in direct mode is the
+"Resetting modem..." loop. `BOOT_PRG=1` boots the PRG anyway, which is
+what the 40-column `./run.sh emu` does, having no modules and no disk.
+
+To exercise the real dial path under test, `make test-emu-hayes` builds
+`CONNECT=hayes` and puts `tcpser` behind VICE's RS-232 as the modem.
 
 VICE has no SwiftLink crystal, so a rate you select in the client runs at
 half its label under emulation. On hardware the label is the real rate.

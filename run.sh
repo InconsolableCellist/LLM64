@@ -141,15 +141,23 @@ case "${1:-help}" in
       local_proxy_listening || "$0" proxy-bg
     fi
     if [ "$1" = emu-80 ]; then
-      # ...and the boot disk: run_emu.sh mounts build/llm64.d64 on unit 8
-      # if it exists, and every overlay module (config, convmgr, diskcopy,
-      # jukebox) loads from there. Without it F1 falls back to the compact
-      # built-in menu and e)config reports "Module load failed - boot disk?".
+      # ...and the boot disk: run_emu.sh boots build/llm64-vice.d64 and
+      # every overlay module (config, convmgr, diskcopy, jukebox) loads
+      # from there. Without it F1 falls back to the compact built-in menu
+      # and e)config reports "Module load failed - boot disk?".
       # client-tui-direct-80 starts with a clean, which deletes the image.
+      #
+      # disk-vice, not disk: this build is CONNECT=direct, and llm64.d64
+      # is the name of the hayes disk that real hardware boots. Writing a
+      # direct build under that name is what used to leave `make disk`
+      # and `./run.sh emu-80` disagreeing about what llm64.d64 contains.
       make client-tui-direct-80
-      make -C c64_client disk
+      make -C c64_client disk-vice
     else
+      # 40 columns: no overlay modules, so no disk - run_emu.sh needs
+      # telling that the loose PRG is the intended boot here.
       make client-tui-direct
+      export BOOT_PRG=1
     fi
     port_open "${TARGET%:*}" "${TARGET##*:}" || \
       echo "warning: nothing answering at $TARGET - the client will sit at 'Contacting server'"

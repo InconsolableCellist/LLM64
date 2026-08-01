@@ -17,7 +17,8 @@ VICE_RUN ?= ./emu/vice-run.sh
 TESTPORT ?= 6464
 
 .PHONY: all client client-direct test-emu test-emu-hayes run-live clean \
-        win win-floppy proxy-bin proxy-bin-win release disk manifest dirty-check
+        win win-floppy proxy-bin proxy-bin-win release disk disk-vice \
+        manifest dirty-check
 
 # The bare client PRG, 40-column and unbundled: the quick compile check,
 # not a shippable. `make release` is the one that builds artifacts.
@@ -30,6 +31,7 @@ client:
 # release: every artifact this machine can produce, in one command.
 #
 #   c64_client/build/llm64.d64          C64 boot disk (client + overlays)
+#   c64_client/build/llm64-vice.d64     the same disk for VICE, no tcpser
 #   win311_client/build/LLM64.EXE       Windows 3.x client, 16-bit NE
 #   win311_client/build/LLM32.EXE       Windows 10/11 client, 32-bit PE
 #   win311_client/build/llm64.img       1.44 MB floppy: LLM64.EXE + INI
@@ -46,7 +48,7 @@ client:
 # Python from llm64_proxy/tools/win-build-setup.sh, and without it the
 # rest of the release still completes. Nothing else is allowed to fail
 # quietly.
-release: dirty-check disk win win-floppy proxy-bin
+release: dirty-check disk-vice disk win win-floppy proxy-bin
 	@$(MAKE) --no-print-directory proxy-bin-win || \
 	    echo "*** llm64-proxy.exe SKIPPED - everything else was built"
 	@$(MAKE) --no-print-directory manifest
@@ -60,6 +62,7 @@ dirty-check:
 	    echo "*** commit first if this is a real release"; echo; fi
 
 RELEASE_ARTIFACTS = c64_client/build/llm64.d64 \
+                    c64_client/build/llm64-vice.d64 \
                     win311_client/build/LLM64.EXE \
                     win311_client/build/LLM32.EXE \
                     win311_client/build/llm64.img \
@@ -84,10 +87,29 @@ manifest:
 # and that config is only linked in under MODE80 - a plain build emits
 # no modules and the disk rule refuses to run. The clean is there
 # because the objects carry no dependency on the flags that made them.
+#
+# clean-obj, not clean: `release` builds disk-vice first and this one
+# second, and a full clean here would delete the VICE image that just
+# landed. Building in that order also leaves build/llm64.prg holding the
+# hayes client that matches llm64.d64, which is what emu/run_emu.sh
+# autostarts beside the mounted disk - modules are linked against the
+# PRG they were built with, so a mismatched pair crashes on F1.
 disk:
-	$(MAKE) -C c64_client clean
+	$(MAKE) -C c64_client clean-obj
 	$(MAKE) -C c64_client CONNECT=hayes SERVER_IP=$(C64_PROXY_IP) SERVER_PORT=$(C64_PROXY_PORT) MODE80=1
 	$(MAKE) -C c64_client disk
+
+# The VICE disk: same client, same overlays, built CONNECT=direct so the
+# ACIA *is* the socket. VICE dials the proxy through -rsdev1 and the
+# client never speaks Hayes, which is what saves a VICE user from having
+# to install and run tcpser. CONNECT_DIRECT also compiles out the
+# first-boot config editor, so this disk asks for nothing: the proxy
+# address lives in the x64sc command line instead. See
+# c64_client/README.md#in-vice.
+disk-vice:
+	$(MAKE) -C c64_client clean
+	$(MAKE) -C c64_client CONNECT=direct MODE80=1
+	$(MAKE) -C c64_client disk-vice
 
 # Both Windows client binaries: LLM64.EXE (16-bit) and LLM32.EXE.
 win:

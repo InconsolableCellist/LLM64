@@ -27,5 +27,12 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 
-exec_emu() { ./emu/run_emu.sh direct 127.0.0.1:6400; }
+# run_emu.sh boots llm64-vice.d64 by default. `make client-tui-direct`
+# builds a 40-column client with no modules and so no disk, which is what
+# BOOT_PRG asks for - but if an 80-column VICE disk is sitting there,
+# boot that instead and get the overlay modules with it.
+exec_emu() {
+  [ -f c64_client/build/llm64-vice.d64 ] || export BOOT_PRG=1
+  ./emu/run_emu.sh direct 127.0.0.1:6400
+}
 exec_emu

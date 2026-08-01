@@ -166,6 +166,26 @@ $(D64): $(PRG)
 	       -write $(MOD5) "llm64.5" >/dev/null
 	@echo "Disk image: $(D64)"
 
+# VICE distribution disk: the same client and modules, built
+# CONNECT=direct (the caller passes that; this rule only names the
+# image). A direct build skips the Hayes dial entirely - VICE opens the
+# TCP connection itself through -rsdev1 - so the disk needs no tcpser
+# beside it and never asks for an address, because CONNECT_DIRECT
+# compiles the first-boot config editor out.
+D64VICE = $(TARGETDIR)/llm64-vice.d64
+
+disk-vice: $(D64VICE)
+$(D64VICE): $(PRG)
+	@test -f $(MOD1) || { echo "No $(MOD1) - build with MODE80=1"; exit 1; }
+	@$(VICE_RUN) c1541 -format "llm64 vice,01" d64 $(D64VICE) \
+	       -write $(PRG) "llm64" \
+	       -write $(MOD1) "llm64.1" \
+	       -write $(MOD2) "llm64.2" \
+	       -write $(MOD3) "llm64.3" \
+	       -write $(MOD4) "llm64.4" \
+	       -write $(MOD5) "llm64.5" >/dev/null
+	@echo "VICE disk image: $(D64VICE)"
+
 # Free (shareware) distribution disk: the shareware intro as the first
 # file, then exactly the registered disk's contents. The intro is a
 # standalone PRG that chain-loads "llm64" and is overwritten by it, so
@@ -194,11 +214,17 @@ $(D64FREE): $(PRG) intro
 	       -write $(MOD5) "llm64.5" >/dev/null
 	@echo "Free disk image: $(D64FREE)"
 
-# Clean
-clean:
-	@echo "Cleaning..."
-	rm -f $(TARGETDIR)/*.o $(TARGETDIR)/*.map $(PRG) $(MOD1) $(MOD2) $(MOD3) $(MOD4) $(MOD5) $(D64)
-	rm -f $(D64FREE) $(INTRO) $(INTRODATA)
+# Clean. Two levels, because a build that changes CONNECT or MODE80 has
+# to drop the objects (they carry no dependency on the flags that made
+# them) but must NOT drop the disk images: `make release` builds the
+# direct disk and the hayes disk in one run, and a full clean between
+# them would delete the first one's image.
+clean-obj:
+	@echo "Cleaning objects..."
+	rm -f $(TARGETDIR)/*.o $(TARGETDIR)/*.map $(PRG) $(MOD1) $(MOD2) $(MOD3) $(MOD4) $(MOD5)
+
+clean: clean-obj
+	rm -f $(D64) $(D64VICE) $(D64FREE) $(INTRO) $(INTRODATA)
 	@echo "Clean complete"
 
 # Run in VICE emulator (if available)
@@ -233,4 +259,4 @@ info:
 	@echo "Objects: $(OBJECTS)"
 	@echo "C64 FTP: ftp://$(C64_IP)$(C64_PATH)/"
 
-.PHONY: all clean run upload deploy info disk disk-free intro
+.PHONY: all clean clean-obj run upload deploy info disk disk-vice disk-free intro

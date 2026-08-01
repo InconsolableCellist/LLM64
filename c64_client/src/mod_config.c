@@ -38,8 +38,17 @@ static const char S_H1[] = "  return: next field / save";
 static const char S_H2[] = "  stop:   keep current, no save";
 static const char S_HB[] = "  crsr up/down picks a field;";
 static const char S_HB2[] = "  a key cycles Speed";
+/* A direct build never calls config_load and never dials: the ACIA is
+   already the socket by the time anything here could apply. Say so,
+   rather than let the VICE disk offer an address field that silently
+   changes nothing. */
+#ifdef CONNECT_DIRECT
+static const char S_H3[] = "  (ignored here: the emulator holds the link)";
+static const char S_EDIT[] = "The emulator sets the address, not this.";
+#else
 static const char S_H3[] = "  (llm64.cfg on drive 8)";
 static const char S_EDIT[] = "Edit the proxy address.";
+#endif
 static const char S_UNCHANGED[] = "Config unchanged.";
 static const char S_EMPTY[] = "Empty field - config unchanged.";
 static const char S_SAVED[] = "Config saved.";

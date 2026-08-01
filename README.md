@@ -46,7 +46,9 @@ Join my Discord for support/updates, and/or my X/Twitter:
    [Windows](win311_client/README.md#build) client -- pre-compiled binaries
    are on the Releases page
 4. Run the client -- [on a C64, a C64 Ultimate or VICE](c64_client/README.md#running-it),
-   or [on a modern or period PC, a VM or Wine](win311_client/README.md#running-it)
+   or [on a modern or period PC, a VM or Wine](win311_client/README.md#running-it).
+   Two C64 disks ship: take `llm64-vice.d64` for
+   [VICE](c64_client/README.md#in-vice) and `llm64.d64` for real hardware
 5. Optionally, [enable more features in the proxy](llm64_proxy/README.md#optional-features)
    -- pictures, SID music, MIDI music, real printing, `/code`
 
@@ -107,7 +109,11 @@ configure the client.
 fastloader or JiffyDOS is of course highly recommended. On initial startup
 it'll initialize your Hayes-compatible MODEM and then ask you for the IP
 address and port of the LLM64_Proxy running on your network (you can
-change this later with the F1 menu). After connecting, you can hit F1 to
+change this later with the F1 menu). **In VICE, use `llm64-vice.d64`
+instead**: it talks straight to the proxy through VICE's own RS-232, so
+there is no modem to answer AT commands, nothing to install beside it,
+and nothing to configure -- you put the proxy's address in the `x64sc`
+command line ([details](c64_client/README.md#in-vice)). After connecting, you can hit F1 to
 browse the various features, or press F5 to quickly get to a sortable list
 of your past conversations/roleplays/adventures.
 
