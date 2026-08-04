@@ -66,7 +66,7 @@ Join my Discord for support/updates, and/or my X/Twitter:
 5. Optionally, [enable more features in the proxy](llm64_proxy/README.md#optional-features)
    -- pictures, SID music, MIDI music, real printing, `/code`
 
-## The Clients: C64, Win 3.11/95/98, and modern Windows
+## Clients: C64, Win 3.11/95/98, modern Windows
 
 | | | |
 |---|---|---|
