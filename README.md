@@ -5,6 +5,11 @@ Windows 11) play an infinite D&D-style text adventure with a local (or
 remote) Large Language Model like Gemma 4, ChatGPT, Claude, Grok, GLM,
 Kimi, etc.
 
+![The Windows 3.11 desk: a new room is described and the illustration appears](screenshots/hero.gif)
+
+*Walk into a new room and the narrator illustrates it, while the map and the
+music keep up. Same adventure on a C64.*
+
 You can:
 
 1. Play a fully interactive, custom, D&D style text adventure, with the narrator
@@ -17,6 +22,15 @@ You can:
    "/print please give me a summary of the story so far, with plot points and
    the result of combat" or "/print the complete recipe we just discussed")
 
+
+## See it in action
+
+I recorded two short playthroughs (with links to the longer 20-minute streams):
+
+| | |
+|---|---|
+| [![LLM64 on Windows 3.11 -- a two-minute playthrough](screenshots/video_win311_short.jpg)](https://www.youtube.com/watch?v=Ej8GjssQpj0) | [![LLM64 on a Commodore 64 -- a two-minute playthrough](screenshots/video_c64_short.jpg)](https://www.youtube.com/watch?v=gvOT3ZqOScw) |
+| A Windows 3.11 desk: `/print`, the map filling in, and MIDI music | The same adventure on a C64 -- rolling a character, taking a bounty, fighting in the dark |
 
 ## Support
 
