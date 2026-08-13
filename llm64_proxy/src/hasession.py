@@ -7,6 +7,7 @@ rows whose bytes changed go on the wire, so one door costs 120 bytes.
 
 import asyncio
 import logging
+import time
 from typing import Dict, List, Optional, Tuple
 
 from . import homeassist as ha
@@ -55,6 +56,9 @@ class HASession:
         self._keymap: Dict[str, dict] = {}
         self._labels: Dict[str, str] = {}
         self._plot_rows: set = set()
+        self._plot_sent: Dict[int, bytes] = {}   # row -> block last sent
+        self._plot_at = 0.0                      # when history was fetched
+        self._last_push = 0.0
         self._plot_eid = None
         self._plot_blocks = None
         self._plot_label = None
@@ -72,7 +76,12 @@ class HASession:
         self.entity = None
         self.pending = None
         self.confirm = None
+        # A fresh open repaints from a cleared screen, so nothing the
+        # caches remember is on the glass any more.
         self._last = []
+        self._plot_sent.clear()
+        self._plot_rows = set()
+        self._plot_at = 0.0
         if self._task is None:
             self._task = asyncio.create_task(self._pump())
         await self.push(full=True)
@@ -93,7 +102,8 @@ class HASession:
         try:
             while True:
                 await self._dirty.wait()
-                await asyncio.sleep(0.25)
+                gap = self.MIN_PUSH_GAP - (time.monotonic() - self._last_push)
+                await asyncio.sleep(max(0.25, gap))
                 self._dirty.clear()
                 try:
                     await self.push()
@@ -137,14 +147,21 @@ class HASession:
         if self.screen_kind == 'view':
             views = self._views()
             view = views[self.view] if 0 <= self.view < len(views) else {'cards': []}
-            eid, data = await self._plot_data(view, self.client.states,
-                                              self.client.area_of)
-            self._plot_eid = eid
-            if data:
-                self._plot_blocks, lo, hi = data
-                self._plot_label = (self._labels.get(eid) or eid.split('.')[-1],
-                                    lo, hi, self.config.ha_history_hours)
-            else:
+            eid = next((p for k, p in ha.build_blocks(view) if k == 'PLOT'), None)
+            stale = (time.monotonic() - self._plot_at) > self.PLOT_TTL
+            if eid and (stale or eid != self._plot_eid):
+                data = await self._plot_data(view)
+                self._plot_at = time.monotonic()
+                self._plot_eid = eid
+                if data:
+                    self._plot_blocks, lo, hi = data
+                    self._plot_label = (
+                        self._labels.get(eid) or eid.split('.')[-1],
+                        lo, hi, self.config.ha_history_hours)
+                else:
+                    self._plot_blocks = self._plot_label = None
+            elif not eid:
+                self._plot_eid = None
                 self._plot_blocks = self._plot_label = None
         sc = self.render()
         if self.confirm:
@@ -162,6 +179,7 @@ class HASession:
             watch.add(self.entity)
         self.client.watch(watch)
 
+        self._last_push = time.monotonic()
         blobs = [r.to_bytes() for r in sc.rows]
         if full or len(self._last) != len(blobs):
             for first, payload in sc.frames(self.config.ha_max_payload):
@@ -186,28 +204,41 @@ class HASession:
                 now.add((band['row'] + i, band['cell0'], band['ncells']))
         for row, cell0, ncells in sorted(self._plot_rows - now):
             await self.send_plot(bytes([row, cell0, ncells]) + bytes(ncells * 8))
+            self._plot_sent.pop(row, None)
         self._plot_rows = now
 
         for band in sc.plots:
             for i, block in enumerate(band.get('blocks') or []):
+                row = band['row'] + i
+                if self._plot_sent.get(row) == block:
+                    continue          # identical band, no reason to resend
+                self._plot_sent[row] = block
                 await self.send_plot(
-                    bytes([band['row'] + i, band['cell0'], band['ncells']])
-                    + block)
+                    bytes([row, band['cell0'], band['ncells']]) + block)
 
-    async def _plot_data(self, view, states, area_of):
+    # A 24-hour graph does not change meaningfully between two state
+    # changes, and refetching it made every open door cost 642 bytes of
+    # a 9600 baud line.
+    PLOT_TTL = 120.0
+    # Floor on the gap between repaints. Without it a busy house queues
+    # more wire time than the line can carry and the client falls
+    # permanently behind.
+    MIN_PUSH_GAP = 2.0
+
+    async def _plot_data(self, view):
         """History for the view's first graph, and its scale."""
         blocks = build = None
         eid = next((p for k, p in ha.build_blocks(view) if k == 'PLOT'), None)
         if not eid:
-            return None, None
+            return None
         pts = await self.client.history(eid, self.config.ha_history_hours)
         if not pts:
-            return eid, None
+            return None
         ncells, rows = 32, 2
         grid = ha.resample(pts, ncells * 8)
         lo, hi = min(grid), max(grid)
         ys = ha.scale_to_band(grid, rows * 8, lo, hi)
-        return eid, (ha.rasterize(ys, 8, ncells, rows), lo, hi)
+        return ha.rasterize(ys, 8, ncells, rows), lo, hi
 
     # -- keys ----------------------------------------------------------
 
