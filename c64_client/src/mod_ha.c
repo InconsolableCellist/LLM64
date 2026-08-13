@@ -76,10 +76,12 @@ static uint8_t* const rowbase[25] = {
    and a read-modify-write would OR ROM into the picture. */
 static void ha_plot(void) {
     const uint8_t* pl = proto_get_payload(&proto);
+    uint16_t len   = proto_get_length(&proto);
     uint8_t row    = pl[0];
     uint8_t cell0  = pl[1];
     uint8_t ncells = pl[2];
     if (row > 24 || (uint16_t)cell0 + ncells > 40) return;
+    if ((uint16_t)ncells * 8u + 3u > len) return;
     memcpy(rowbase[row] + ((uint16_t)cell0 << 3), pl + 3,
            (uint16_t)ncells << 3);
 }
@@ -93,13 +95,21 @@ static void ha_row(uint8_t row, const uint8_t* col, const uint8_t* cells) {
 
 static void ha_rows_frame(void) {
     const uint8_t* pl = proto_get_payload(&proto);
+    uint16_t len = proto_get_length(&proto);
     uint8_t first = pl[0];
     uint8_t count = pl[1];
     const uint8_t* p = &pl[2];
     uint8_t i;
 
     act_wait = 0;                 /* the proxy answered */
+    /* Trust nothing in here. The frame checksum is one XOR byte, so
+       about one corrupt frame in 256 arrives looking valid, and this
+       link drops bytes for a living. An unchecked row index writes
+       40 bytes at $CC00 + row*40 and hands soft80_span an index past
+       its 25-entry tables - which is a hang, minutes or hours later. */
+    if ((uint16_t)count * 120u + 2u > len) return;
     for (i = 0; i < count; ++i) {
+        if ((uint16_t)first + i > 24) break;
         ha_row(first + i, p, p + 40);
         p += 120;
     }
@@ -149,7 +159,8 @@ static void ha_key(uint8_t k) {
         proto_send_message(MSG_HA_ACTION, arg, 2);
         return;
     }
-    if (k == 140) {               /* f8 - leave the module entirely */
+    if (k == 140 || k == 133) {   /* f8, and f1 because that is the key
+                                     everyone reaches for - leave */
         mod_modal_end();
         return;
     }
