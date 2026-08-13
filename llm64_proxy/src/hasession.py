@@ -41,9 +41,13 @@ async def get_client(cfg) -> HAClient:
 class HASession:
     """The screen this client is on, and what its keys do."""
 
-    def __init__(self, send_rows, send_plot, config):
+    def __init__(self, send_rows, send_plot, config, is_busy=None):
         self.send_rows = send_rows        # async (first, payload) -> None
         self.send_plot = send_plot        # async (payload) -> None
+        # True while the wire belongs to something else (a streaming
+        # reply). One screen is 3.4KB; dropped into a chat stream it
+        # costs the client a frame.
+        self.is_busy = is_busy or (lambda: False)
         self.config = config
         self.client: Optional[HAClient] = None
         self.dashboard = ''
@@ -105,6 +109,8 @@ class HASession:
         try:
             while True:
                 await self._dirty.wait()
+                while self.is_busy():
+                    await asyncio.sleep(1.0)
                 gap = self.MIN_PUSH_GAP - (time.monotonic() - self._last_push)
                 await asyncio.sleep(max(0.25, gap))
                 self._dirty.clear()
@@ -168,6 +174,9 @@ class HASession:
         changes nothing sends nothing, and the client cannot tell that
         from a dead link."""
         if not self.client:
+            return
+        if self.is_busy():
+            self._dirty.set()      # repaint once the wire is ours again
             return
         if self.screen_kind == 'view':
             views = self._views()
@@ -281,6 +290,9 @@ class HASession:
             return
         # F7 arrives as an uppercase sentinel so it cannot collide with
         # an entity hotkey, which are always lowercase.
+        if k == 'Q':               # the module closed on the client
+            self.close()
+            return
         if k == 'V':
             self.screen_kind = 'views'
             self.entity = None

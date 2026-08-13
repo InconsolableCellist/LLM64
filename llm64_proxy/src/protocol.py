@@ -1877,7 +1877,11 @@ class ProtocolHandler:
         async def send_plot(payload):
             await self._send_bulk(MessageType.HA_PLOT, payload)
 
-        self._ha = HASession(send_rows, send_plot, self.config)
+        def busy():
+            return (self.stream_task is not None
+                    and not self.stream_task.done()) or self._print_busy
+
+        self._ha = HASession(send_rows, send_plot, self.config, is_busy=busy)
         return self._ha
 
     async def handle_get_ha(self):

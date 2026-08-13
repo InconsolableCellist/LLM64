@@ -161,6 +161,12 @@ static void ha_key(uint8_t k) {
     }
     if (k == 140 || k == 133) {   /* f8, and f1 because that is the key
                                      everyone reaches for - leave */
+        /* Tell the proxy, or it keeps pushing state changes at a screen
+           that is gone - and those frames land in the middle of whatever
+           the chat is streaming next. */
+        arg[0] = 0x51;            /* ASCII 'Q' */
+        arg[1] = 0;
+        proto_send_message(MSG_HA_ACTION, arg, 2);
         mod_modal_end();
         return;
     }
