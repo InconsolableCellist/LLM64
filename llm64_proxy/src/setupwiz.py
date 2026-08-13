@@ -262,7 +262,7 @@ class ConfigDoc:
     def mark_completed(self):
         """Record that the wizard was run to the end, so it stops
         opening itself. Visible in the file, in a table of its own, and
-        deleting it brings the first-run behaviour back."""
+        deleting it brings the first-run behavior back."""
         table = dig(self.doc, MARKER_SECTION, create=True)
         table['completed'] = WIZARD_VERSION
         table['when'] = time.strftime('%Y-%m-%d %H:%M:%S')
@@ -941,7 +941,7 @@ STEPS = (
 
     Step('images', 'Pictures', False,
          'The model can illustrate a scene, and the proxy converts the '
-         'result to something each client can draw - 16 colours at '
+         'result to something each client can draw - 16 colors at '
          '160x200 for the C64, 256 at 320x200 for the Windows client.\n\n'
          'Pick a backend and give it what it needs. Gemini and the '
          'OpenAI-style backends are hosted and cost money per picture. '
@@ -1063,7 +1063,7 @@ def music_commands(base_url='http://localhost:8080/v1'):
          'Eight stages, resumable, about five hours - most of it emulating '
          'every tune to measure loudness and asking the LLM to tag each one '
          'for mood. --dry-run shows what is already done, --no-loudness '
-         'drops the longest stage, and --info prints the licence position. '
+         'drops the longest stage, and --info prints the license position. '
          'If the proxy lives on another machine, finish with --deploy '
          'user@host:/path/to/llm64_proxy, which copies the 50 MB the proxy '
          'reads and not the 457 MB HVSC tree.'),

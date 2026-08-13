@@ -161,7 +161,7 @@ def test_focus():
                                canon_player_name)
     canon = normalize_canon({
         'player': 'Vess Kolvar: a wiry kobold in a patched maid outfit',
-        'npcs': {'Bruc': 'a grey wolf mercenary in battered ring mail',
+        'npcs': {'Bruc': 'a gray wolf mercenary in battered ring mail',
                  'Mara': 'a stout innkeeper in grease-stained leathers'},
         'places': {'The Vault': 'a flooded stone cellar'}})
 
@@ -184,7 +184,7 @@ def test_focus():
 
     q = compose_question(CONVO, [], STATE, ROOM, CHARACTER, canon=canon,
                          instructions='bruc drawing his sword')
-    check("the named character is described", "grey wolf mercenary" in q)
+    check("the named character is described", "gray wolf mercenary" in q)
     check("the others are not", "grease-stained leathers" not in q
           and "patched maid outfit" not in q)
     check("the place survives narrowing", "a flooded stone cellar" in q)
@@ -254,7 +254,7 @@ def test_tags():
           tidy_tags("solo", truncated=True) == "solo")
     check("nothing in, nothing out", tidy_tags("") == "")
 
-    # Prose stays the default: every existing config keeps its behaviour.
+    # Prose stays the default: every existing config keeps its behavior.
     check("prose is what an unset format gets",
           compose_question(CONVO, [], STATE, ROOM, CHARACTER)
           == compose_question(CONVO, [], STATE, ROOM, CHARACTER,

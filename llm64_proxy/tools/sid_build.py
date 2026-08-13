@@ -3,7 +3,7 @@
 database the proxy can serve. One command, resumable, with progress.
 
 The library is not shipped: the tunes in HVSC are copyrighted by their
-composers (see LICENCE below), so everyone builds their own from their
+composers (see LICENSE below), so everyone builds their own from their
 own copy. That is seven separate tools and several hours of CPU, which is
 what this script exists to hide.
 
@@ -33,7 +33,7 @@ WHERE TO GET HVSC
   The "all of them" archive is the one to get; releases after 85 work
   too, though the ranking's path matching degrades a little.
 
-LICENCE, AND WHY THERE IS NO PREBUILT DOWNLOAD
+LICENSE, AND WHY THERE IS NO PREBUILT DOWNLOAD
   Every tune in HVSC is copyrighted by its composer or publisher, and
   HVSC's own notice limits use to "private enjoyment" - which is exactly
   what this is: your copy, your machine, your C64. Redistributing the
@@ -300,7 +300,7 @@ def main():
                     help='rsync the finished library to a proxy elsewhere '
                          '(only what the proxy reads: ~50 MB, not HVSC)')
     ap.add_argument('--info', action='store_true',
-                    help='print the download links and licence notes, then '
+                    help='print the download links and license notes, then '
                          'exit')
     ap.add_argument('--dry-run', action='store_true',
                     help='show the plan and what is already done')

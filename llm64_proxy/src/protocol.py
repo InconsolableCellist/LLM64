@@ -538,7 +538,7 @@ class ProtocolHandler:
             return
 
         # A setup in progress owns plain messages until it finishes or
-        # is cancelled (/chat). Commands were handled above, so this
+        # is canceled (/chat). Commands were handled above, so this
         # cannot swallow one.
         if self._adv_setup is not None:
             await self._adv_setup_input(text)
@@ -643,7 +643,7 @@ class ProtocolHandler:
         elif cmd == 'chat':
             if self._adv_setup is not None:
                 self._adv_setup = None
-                await self._send_canned("Adventure setup cancelled.")
+                await self._send_canned("Adventure setup canceled.")
                 return
             await self._stop_claude()
             self._switch_mode(Mode(self.config))
@@ -1017,7 +1017,7 @@ class ProtocolHandler:
         # model ever emits a MAP directive.
         if getattr(mode, 'name', '') == 'adventure':
             snippet += advmap.prompt_snippet()
-        # Colour needs no server capability - the client renders it - so
+        # Color needs no server capability - the client renders it - so
         # it is unconditional, unlike music and images.
         snippet += color_prompt_snippet(self.profile)
         mode.music_snippet = snippet
@@ -1229,7 +1229,7 @@ class ProtocolHandler:
 
         def _done(t):
             self._media_tasks.discard(t)
-            if not t.cancelled() and t.exception():
+            if not t.canceled() and t.exception():
                 self.logger.error("Media task failed",
                                   exc_info=t.exception())
         task.add_done_callback(_done)
@@ -1373,7 +1373,7 @@ class ProtocolHandler:
         Data flows only after the client ACKs the BEGIN; a NAK
         afterwards (short/corrupt transfer) triggers spaced resends."""
         if self.profile.music_fmt != 'sid':
-            # The last line of defence, covering every spawn site at
+            # The last line of defense, covering every spawn site at
             # once: retries, the jukebox, the narrator. A SID at a
             # non-C64 is four BEGIN retries and an abort (field: the
             # win16 client printing "[frame 0x57, 28 bytes]").
@@ -2172,11 +2172,11 @@ class ProtocolHandler:
             wrap = False
         elif printdoc.wants_catalog(arg) and self._adv_setup is not None:
             # ONLY while character creation is open. A roleplay scene can
-            # easily put a catalogue in front of the player - a fence's
+            # easily put a catalog in front of the player - a fence's
             # stock list, a ship's manifest - and answering "/print the
             # catalog" with the adventure kit shop would be baffling.
             # Outside setup this falls through to the model, which is the
-            # right answer for a catalogue that exists in the fiction.
+            # right answer for a catalog that exists in the fiction.
             title = 'The supply houses'
             body = printdoc.render_catalog(
                 self._adv_setup.rules,
@@ -2275,7 +2275,7 @@ class ProtocolHandler:
 
         What goes on paper is the C64's own blob, the same bytes /pic
         <n> re-streams to the screen, so the page shows the machine's
-        16-colour rendering rather than the source painting."""
+        16-color rendering rather than the source painting."""
         if self.config.printer_backend == 'c64':
             await self._send_canned(
                 "Pictures print on the paper printer only, and this "
@@ -2414,12 +2414,12 @@ class ProtocolHandler:
                                    self.PRINT_ACK_TIMEOUT)
         except asyncio.TimeoutError:
             self.logger.warning(f"{msg_type.name} not ACKed - job aborted")
-            await self.send_status("Printer stalled - job cancelled.")
+            await self.send_status("Printer stalled - job canceled.")
             return False
         finally:
             self._flow_ack = None
         if self._print_refused:
-            await self.send_status("Printer error - job cancelled.")
+            await self.send_status("Printer error - job canceled.")
             return False
         return True
 
@@ -2510,7 +2510,7 @@ class ProtocolHandler:
 
     # The map is drawn into the SCROLLBACK rather than over the screen:
     # a map is a reference you glance at, not an event you stage. 78
-    # columns, not 79 - the colour tag each line opens with takes a
+    # columns, not 79 - the color tag each line opens with takes a
     # column of its own (docs/10 section 5.3).
     MAP_WIDTH = 78
 
@@ -2541,7 +2541,7 @@ class ProtocolHandler:
         # and on the C64 it is the only map there is.
         await self._send_map_data(m)
         lines = advmap.render_ascii(m, width=self.MAP_WIDTH)
-        # Every line opens with a colour tag. It becomes a marker cell,
+        # Every line opens with a color tag. It becomes a marker cell,
         # so cur_len > 0 by the time the first space of the art arrives
         # and the indentation survives (the client drops a leading space
         # otherwise). The run carries across line breaks, so it must be
@@ -2682,7 +2682,7 @@ class ProtocolHandler:
     async def _send_text(self, seq: int, text: str) -> int:
         """Every path that streams prose to the C64 goes through here.
 
-        This is where colour markup becomes in-band marker cells
+        This is where color markup becomes in-band marker cells
         (docs/08-inline-color.md): tags stay in stored history and in the
         model's context, and only the client-bound bytes carry markers.
         Splitting the result into frames is safe at any offset - a marker
@@ -2959,7 +2959,7 @@ class ProtocolHandler:
             # Always on, in every mode. It was adventure/roleplay only
             # while its whole job was directives, but it is also what
             # holds back markup split across SSE chunk boundaries - and
-            # colour tags can appear in any mode. Without it a tag cut in
+            # color tags can appear in any mode. Without it a tag cut in
             # half by the API's chunking matches nothing and both halves
             # print literally. Directives simply never appear in chat, so
             # extracting them there costs nothing.
@@ -3214,7 +3214,7 @@ class ProtocolHandler:
             asyncio.create_task(self._maybe_title())
 
         except asyncio.CancelledError:
-            self.logger.info("Stream cancelled")
+            self.logger.info("Stream canceled")
             # A cancel landing in the post-DONE media phase must not
             # re-send DONE or double-save the assistant message; a
             # quiet cancel (client moved on) sends nothing at all
@@ -3838,7 +3838,7 @@ class ProtocolHandler:
             # with bit 7 of the role byte so the client appends instead
             # of starting a new chat block.
             FRAME_TEXT = 380
-            # Colour markup becomes marker cells HERE, before slicing:
+            # Color markup becomes marker cells HERE, before slicing:
             # stored history keeps its tags, and colorizing a frame at a
             # time could cut a tag across the boundary.
             frames = []

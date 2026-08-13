@@ -297,7 +297,7 @@ _screen = to_gear().stage_screen()
 if 'supply' not in _screen or 'walk the shelves' not in _screen:
     failures.append("the kit overview lost its opening flavour")
 
-# A class the rules never heard of gets the WHOLE catalogue. Filtering it
+# A class the rules never heard of gets the WHOLE catalog. Filtering it
 # to unrestricted items only left ONE weapon in the book (a dagger),
 # which is how this was found.
 _custom = chargen.gear_options(RULES, 'Vault Technician')
@@ -358,11 +358,11 @@ s.feed('b'); s.feed('d')
 if 'a bone-handled cleaver' not in s.stage_screen():
     failures.append("an invented item is missing from the approve screen")
 
-# Numbers are CATALOGUE-wide, not per-shelf, so one number means one
+# Numbers are CATALOG-wide, not per-shelf, so one number means one
 # thing on every screen and a player can type a kit from memory.
 s = to_gear()
 nums = s._gear_numbers()
-check("numbering covers the whole catalogue",
+check("numbering covers the whole catalog",
       sorted(nums.values()), list(range(1, len(s._gear_items()) + 1)))
 _cats = s._gear_cats()
 _first_of_second = _cats[1][1][0]['name']
@@ -377,7 +377,7 @@ check("a single number still opens a shelf", s.cat, _cats[0][0]['slug'])
 s.feed('b')
 _want = [s._gear_by_number()[n]['name'] for n in (1, 40, 60)]
 s.feed('1 40 60')
-check("several numbers buy straight off the catalogue", s.kit, _want)
+check("several numbers buy straight off the catalog", s.kit, _want)
 check("...without opening a shelf", s.cat, None)
 
 # A number from another shelf works while standing somewhere else
@@ -389,7 +389,7 @@ check("a far number works from any shelf",
       s.kit, [s._gear_by_number()[8]['name']])
 if str(s._gear_numbers()[_cats[jewel - 1][1][0]['name']]) not in \
         s.stage_screen():
-    failures.append("a shelf does not show its catalogue numbers")
+    failures.append("a shelf does not show its catalog numbers")
 
 # Typing an invented item must NOT repaint the shelf - that is the whole
 # point of typing it
@@ -411,7 +411,7 @@ check("words at the overview are an item", s.kit_own, ['a letter from home'])
 check("...filed under Your own things",
       s.own_at['a letter from home'], 'own')
 
-# Every catalogue item must live on a shelf, or it is unreachable
+# Every catalog item must live on a shelf, or it is unreachable
 _kinds = set()
 for c in GEAR['categories']:
     _kinds.update(c['kinds'])

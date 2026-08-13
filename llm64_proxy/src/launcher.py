@@ -815,14 +815,14 @@ class LauncherApp(tk.Tk):
         self.preview_panels = {}
         for i, (key, title) in enumerate((
                 ('original', 'Generated original'),
-                ('c64', 'C64 multicolor (160x200, 16 colours)'),
-                ('vga', 'Windows 3.11 (320x200, 256 colours)'))):
+                ('c64', 'C64 multicolor (160x200, 16 colors)'),
+                ('vga', 'Windows 3.11 (320x200, 256 colors)'))):
             box = ttk.LabelFrame(panels, text=title, padding=4)
             box.grid(row=i // 2, column=i % 2, sticky='nsew',
                      padx=(0, 6) if i % 2 == 0 else 0, pady=(0, 6))
             # A canvas, not a Label: its width/height are pixels whether
             # it is holding a picture or the placeholder text, and it
-            # centres a render that came out shorter than the frame.
+            # centers a render that came out shorter than the frame.
             cv = tk.Canvas(box, width=PANEL_W, height=PANEL_H,
                            background='#222', highlightthickness=0)
             cv.pack()
@@ -844,9 +844,9 @@ class LauncherApp(tk.Tk):
         against last night's - is still there tomorrow."""
         box = ttk.LabelFrame(tab, text='Previous previews', padding=4)
         box.pack(fill='x')
-        # tk.Canvas takes its colour from the X defaults, not the ttk
+        # tk.Canvas takes its color from the X defaults, not the ttk
         # theme, so an unstyled one is a dark slab in the middle of the
-        # tab. Borrow the frame colour it is sitting on.
+        # tab. Borrow the frame color it is sitting on.
         canvas = tk.Canvas(box, height=THUMB_H + 34, highlightthickness=0,
                            background=ttk.Style().lookup('TFrame',
                                                          'background'))

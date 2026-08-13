@@ -16,7 +16,7 @@ offset arithmetic out of the comparison. Only the geometry is left.
 
 The button's INTERIOR is not compared: the reference has the word
 "Pause" in it and the spike draws no text. The border ring is the whole
-of the drawing anyway - everything inside it is flat face grey.
+of the drawing anyway - everything inside it is flat face gray.
 """
 
 import sys

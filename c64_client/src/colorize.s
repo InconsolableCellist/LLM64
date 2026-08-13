@@ -1,10 +1,10 @@
 ;
-; LLM64 Client - inline-colour matrix builder (assembly, SOFT80 only)
+; LLM64 Client - inline-color matrix builder (assembly, SOFT80 only)
 ;
-; colorize_row scans one 80-cell chat row for inline colour markers,
+; colorize_row scans one 80-cell chat row for inline color markers,
 ; rewrites each marker cell to a space in place, and fills a 40-entry
-; colour matrix (one entry per 8x8 cell = two soft-80 glyphs). It runs
-; on every coloured chat redraw, up to 19 rows at a time, so it was a
+; color matrix (one entry per 8x8 cell = two soft-80 glyphs). It runs
+; on every colored chat redraw, up to 19 rows at a time, so it was a
 ; visible cost in C (80-cell scan + 40-byte fill per row). The logic is
 ; a flat per-cell decision with no call overhead - a natural fit for asm.
 ;
@@ -17,7 +17,7 @@
 ;   run = carry; any = carry ? 1 : 0;
 ;   for i in 0..39: matbuf[i] = base
 ;   for i in 0..79:
-;       c = buf[i] & 0x7F           ; bit7 is reverse, not colour
+;       c = buf[i] & 0x7F           ; bit7 is reverse, not color
 ;       if c == MK_CLOSE:           run=0;        buf[i]=' '; any=1
 ;       elif MK_COLOR_LO<=c<=MK_COLOR_HI: run=c&0x0F; buf[i]=' '; any=1
 ;       elif run:                   matbuf[i>>1] = run
@@ -79,7 +79,7 @@ _colorize_row:
         bcc @run_cell           ; c < $11: not a marker
         cmp #MK_COLOR_HI+1
         bcs @run_cell           ; c > $1E: not a marker
-        ; colour marker: start a run of colour (c & 0x0F)
+        ; color marker: start a run of color (c & 0x0F)
         and #$0F
         sta cr_run
         jsr @space

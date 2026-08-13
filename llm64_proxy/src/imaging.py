@@ -20,7 +20,7 @@ from PIL import Image
 
 # Pepto's measured C64 palette (colodore.com lineage), indexed 0-15:
 # black, white, red, cyan, purple, green, blue, yellow,
-# orange, brown, light red, dark grey, grey, light green, light blue, light grey
+# orange, brown, light red, dark gray, gray, light green, light blue, light gray
 PALETTE = [
     (0x00, 0x00, 0x00), (0xFF, 0xFF, 0xFF), (0x68, 0x37, 0x2B), (0x70, 0xA4, 0xB2),
     (0x6F, 0x3D, 0x86), (0x58, 0x8D, 0x43), (0x35, 0x28, 0x79), (0xB8, 0xC7, 0x6F),
@@ -146,7 +146,7 @@ def auto_levels(img, low_pct=2, high_pct=98, gamma=0.85, saturation=1.25):
     AI generations skew dark and low-contrast for this palette; stretch
     the 2-98 percentile luminance range to full scale, brighten mids
     (gamma < 1), and boost saturation so colors land on distinct palette
-    entries instead of all collapsing into the greys.
+    entries instead of all collapsing into the grays.
     """
     from PIL import ImageEnhance
     img = img.convert("RGB")
@@ -428,7 +428,7 @@ def render_preview(bitmap, matrix):
 # Not a C64 format at all, but it lives here because this file is where
 # "a generated PNG becomes what a client can display" happens. A Win16
 # client cannot decode PNG; what it decodes natively - one StretchDIBits
-# call - is a packed DIB: BITMAPINFOHEADER, colour table, bottom-up
+# call - is a packed DIB: BITMAPINFOHEADER, color table, bottom-up
 # pixel rows padded to 4 bytes. So that is what goes on the wire
 # (IMG_BEGIN fmt=2), and saving it to disk client-side is nothing but
 # prepending a BITMAPFILEHEADER.
@@ -444,11 +444,11 @@ DIB_MAX_W, DIB_MAX_H = 320, 200
 # pattern is most of what the eye reads as "1993".
 #
 # The table is the 6x6x6 RGB cube - the halftone palette Windows itself
-# synthesised for 8-bit displays - plus a 16-step grey ramp for skies and
+# synthesised for 8-bit displays - plus a 16-step gray ramp for skies and
 # stone, plus the 16 EGA/VGA entries so period-bright primaries land
-# exactly instead of near-miss. 236 colours; the rest of the 256-entry
+# exactly instead of near-miss. 236 colors; the rest of the 256-entry
 # table is padding, because the DIB header says 256 and the client's
-# StretchDIBits reads a fixed 1024-byte colour table.
+# StretchDIBits reads a fixed 1024-byte color table.
 _CUBE_LEVELS = (0, 51, 102, 153, 204, 255)
 _EGA16 = [
     (0x00, 0x00, 0x00), (0x00, 0x00, 0xAA), (0x00, 0xAA, 0x00),
@@ -504,7 +504,7 @@ def convert_to_dib8(img, max_w=DIB_MAX_W, max_h=DIB_MAX_H, period=True):
 
     `period` is the 1993 treatment: the levels crunch the C64 path has
     always had, then a dither against the fixed palette above instead of
-    an adaptive one. Off gives the old behaviour - a clean adaptive
+    an adaptive one. Off gives the old behavior - a clean adaptive
     quantize, no dither, which is what "high fidelity" looked like.
 
     320x200 is Mode 13h, the resolution the VGA art this is imitating was
@@ -531,7 +531,7 @@ def convert_to_dib8(img, max_w=DIB_MAX_W, max_h=DIB_MAX_H, period=True):
                          dither=Image.Dither.FLOYDSTEINBERG)
     else:
         # Adaptive median cut. Pillow ignores `dither` unless a palette
-        # is given, so this really is undithered - the old behaviour,
+        # is given, so this really is undithered - the old behavior,
         # whatever its docstring used to claim.
         q = img.quantize(colors=256)
     pal = q.getpalette() or []
@@ -564,7 +564,7 @@ def render_preview_dib(dib):
     What the Win16 client's StretchDIBits would put on screen, without a
     Win16 client - the launcher's illustration preview draws this. The
     geometry comes out of the header rather than from the caller, so the
-    two traps this format has (BGR colour table, bottom-up rows padded to
+    two traps this format has (BGR color table, bottom-up rows padded to
     4 bytes) are read back exactly as written: get one wrong and the
     picture shears or turns blue here too, instead of only on the 486.
     """
@@ -572,7 +572,7 @@ def render_preview_dib(dib):
 
     if len(dib) < 40 + 1024:
         raise ValueError("not a packed 8-bit DIB: shorter than its header "
-                         "and colour table")
+                         "and color table")
     size, w, h, planes, bits, comp = struct.unpack("<IiiHHI", dib[:20])
     if (size, planes, bits, comp) != (40, 1, 8, 0):
         raise ValueError(f"expected an uncompressed 8-bit DIB, got "

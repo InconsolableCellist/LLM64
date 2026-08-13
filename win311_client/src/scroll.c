@@ -96,7 +96,7 @@ int sb_wrap_next(SbWrap *w, SbRow *out)
 
     /* Walk forward a row's worth of *cells*. Markers are free: they are
        state changes, not glyphs, which is the whole reason the spike's
-       len-counting wrap broke a coloured line early. */
+       len-counting wrap broke a colored line early. */
     color = w->color;
     attr  = w->attr;
     brk   = 0;
@@ -119,7 +119,7 @@ int sb_wrap_next(SbWrap *w, SbRow *out)
     }
 
     /* Markers sitting right on the break belong to the row that ends
-       there, not to a row of their own - otherwise a colour span that
+       there, not to a row of their own - otherwise a color span that
        closes exactly at the margin produces a blank line. */
     while (i < w->len
            && (mlen = sb_marker_len(w->text + i, w->len - i)) != 0) {

@@ -149,7 +149,7 @@
 #define MARK_HEAD_ON     0x0E
 #define MARK_HEAD_OFF    0x0F
 
-/* Colour past the fifteen the one-byte marker can hold:
+/* Color past the fifteen the one-byte marker can hold:
 
        0x1B 'C' (0x40 | slot)        slot 0..63
 
@@ -177,7 +177,7 @@
    as literal characters. */
 #define HELLO_VERSION           1
 #define CAP_ZERO_WIDTH_MARKERS  0x0001  /* markers occupy no cell */
-#define CAP_RICH_TEXT           0x0002  /* italic/underline/head, 64 colours */
+#define CAP_RICH_TEXT           0x0002  /* italic/underline/head, 64 colors */
 #define CAP_DIB_IMAGES          0x0004  /* images as 8-bit DIBs, fmt 2 */
 #define CAP_MIDI                0x0008  /* music as .MID files */
 #define CAP_STATE_JSON          0x0020  /* STATE forwarded for sheets */

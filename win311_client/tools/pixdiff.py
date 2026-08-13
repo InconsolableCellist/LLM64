@@ -16,7 +16,7 @@ That capture is MAXIMISED, which is why it can verify the caption and the
 menu bar but says nothing at all about a sizing border - a maximised 3.1
 window has none.
 
-Prints an ASCII colour map of both sides per region, so the structure can
+Prints an ASCII color map of both sides per region, so the structure can
 be read rather than guessed at, then the numeric diff.
 """
 
@@ -34,7 +34,7 @@ REF_Y, SPK_Y, BAND = 2, 0, 38       # caption + rule + menu bar + rule
 REGIONS = [
     ("left",    0,   26,  True),    # sysmenu box
     ("right",   983, 38,  True),    # the two arrow buttons
-    ("title",   478, 50,  False),   # centred caption text
+    ("title",   478, 50,  False),   # centered caption text
     ("menubar", 0,   340, False),   # File Link Settings Window Help
 ]
 

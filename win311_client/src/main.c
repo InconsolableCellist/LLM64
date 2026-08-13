@@ -28,7 +28,7 @@
  *   - it runs under Wine's 16-bit subsystem
  *   - WSAAsyncSelect drives the protocol without ever blocking
  *   - the +0x20 length bias round-trips against the real proxy
- *   - the in-band colour markers render as colour
+ *   - the in-band color markers render as color
  *
  * The transcript moved out of this file in Phase 1: it is unwrapped
  * logical lines in far blocks now, wrapped at paint time, so the pane
@@ -78,7 +78,7 @@ typedef struct {
     int        wrap;        /* re-flow to the pane, or keep the layout */
     int        margin;      /* left inset, in pixels */
     HWND       pane;        /* the window drawing it, or NULL */
-    int        live;        /* the scrollback has been initialised */
+    int        live;        /* the scrollback has been initialized */
 } View;
 
 /* Paper. A print job is composed by the proxy and arrives as laid-out
@@ -142,18 +142,18 @@ static unsigned g_prt_blocks, g_prt_total;
 static int      g_prt_formfeed;
 
 /* ---------------------------------------------------------------- */
-/* Colour                                                            */
+/* Color                                                            */
 /* ---------------------------------------------------------------- */
 
 /* Slots the two tables below define: the C64's sixteen, then the
-   extended marker's. A proxy whose colour table has outgrown this
+   extended marker's. A proxy whose color table has outgrown this
    client's will send a slot past the end - a cosmetic miss, and not a
    reason to index off the end of an array (see pal_color). */
 #define PAL_SLOTS  32
 
 /* Pepto's C64 palette, the same table the proxy converts images with
    (llm64_proxy/src/imaging.py). Index 0 is black and never used as a
-   text colour. */
+   text color. */
 static const COLORREF g_pal_screen[PAL_SLOTS] = {
     RGB(0x00,0x00,0x00), RGB(0xFF,0xFF,0xFF), RGB(0x68,0x37,0x2B),
     RGB(0x70,0xA4,0xB2), RGB(0x6F,0x3D,0x86), RGB(0x58,0x8D,0x43),
@@ -174,11 +174,11 @@ static const COLORREF g_pal_screen[PAL_SLOTS] = {
 };
 
 /* The same fourteen marker slots as inks on white paper. Not the C64
-   colours dimmed: half of them are unreadable on white at any
+   colors dimmed: half of them are unreadable on white at any
    brightness - yellow and light green worst of all, and light green is
-   the colour every assistant reply arrives in. So each slot keeps its
+   the color every assistant reply arrives in. So each slot keeps its
    *hue* and takes a value that reads as ink. Index 1, the default text
-   colour, becomes black; index 13 becomes a dark green, which is what
+   color, becomes black; index 13 becomes a dark green, which is what
    makes a reply legible rather than merely present. */
 static const COLORREF g_pal_paper[PAL_SLOTS] = {
     RGB(0x00,0x00,0x00), RGB(0x00,0x00,0x00), RGB(0xB0,0x14,0x14),
@@ -617,7 +617,7 @@ static void pane_copy(void)
 }
 
 /* The markers are still in the text - they are what the runs are split
-   on, and the row arrives already knowing the colour and weight in force
+   on, and the row arrives already knowing the color and weight in force
    at its first cell, which is what makes a span that survives a wrap
    render the same on both rows.
 
@@ -630,8 +630,8 @@ static void pane_copy(void)
    which never hold text - are filled separately.
 
    sel0/sel1 are the row's selected cells [sel0, sel1), painted in the
-   system highlight colours: a run is split where the selection starts
-   or ends, exactly as it is split where a marker changes the colour. */
+   system highlight colors: a run is split where the selection starts
+   or ends, exactly as it is split where a marker changes the color. */
 static void paint_row(HDC hdc, int x0, int y, int right, const SbRow *r,
                       int sel0, int sel1)
 {
@@ -826,7 +826,7 @@ static void send_text_frame(unsigned char type, const char *text)
  *
  * This is what stops the proxy treating us as a C64, and the first thing
  * it buys is correct SPACING. A C64's marker occupies a screen column,
- * so the proxy swallows the space beside every colour tag to keep the
+ * so the proxy swallows the space beside every color tag to keep the
  * line the same length; our painter draws a marker as nothing at all, so
  * that swallowed space is simply missing - "You see asteel doorahead."
  * CAP_ZERO_WIDTH_MARKERS is the whole fix.
@@ -1150,7 +1150,7 @@ static HGLOBAL       g_pic_mem;         /* finished DIB, whole */
 static unsigned long g_pic_size;
 static unsigned      g_pic_w, g_pic_h;
 static char          g_pic_title[64];
-static HPALETTE      g_pic_hpal;        /* its 256 colours, realizable */
+static HPALETTE      g_pic_hpal;        /* its 256 colors, realizable */
 
 /* The transfer in flight. Separate from the finished picture so a
    failed transfer never takes the picture on screen down with it. */
@@ -1306,8 +1306,8 @@ static void huge_store(HGLOBAL mem, unsigned long off,
     GlobalUnlock(mem);
 }
 
-/* Rebuild the realizable palette from the DIB's colour table, for the
-   256-colour drivers this program is nominally for. On a modern deep
+/* Rebuild the realizable palette from the DIB's color table, for the
+   256-color drivers this program is nominally for. On a modern deep
    display RealizePalette is a no-op and none of this matters. */
 static void pic_palette(void)
 {
@@ -4588,7 +4588,7 @@ static void map_paint(HWND hwnd)
         dx = (int)g_map_room[b].gx - (int)g_map_room[a].gx;
         dy = (int)g_map_room[b].gy - (int)g_map_room[a].gy;
         if (dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1) {
-            /* Neighbours: centre to centre, and the boxes drawn on top
+            /* Neighbours: center to center, and the boxes drawn on top
                leave just the tick between them showing. One-way
                passages and stairs are dotted: the eye reads a dotted
                line as "not the same as the others", which is all the
@@ -4602,7 +4602,7 @@ static void map_paint(HWND hwnd)
                    (rb.top + rb.bottom) / 2);
         } else {
             /* Rooms that are NOT grid neighbours - a tunnel under the
-               map, a door the layout could not keep adjacent. A centre
+               map, a door the layout could not keep adjacent. A center
                line would vanish under every box it crossed, so the
                route goes through the gutters: out of the departure
                side, along a gutter, in through the nearest side. Two
@@ -4800,8 +4800,8 @@ static void pic_paint(HWND hwnd)
        every pixel) and it swallows WM_ERASEBKGND, while a checkbox paints
        only its own box and label - so the margins around it belonged to
        nobody, and kept whatever the screen happened to have there when a
-       window was dragged across. Button-face grey, because that is the
-       colour the checkbox's own label background comes back as. */
+       window was dragged across. Button-face gray, because that is the
+       color the checkbox's own label background comes back as. */
     {
         RECT sr = rc;
 
@@ -4847,7 +4847,7 @@ static void pic_paint(HWND hwnd)
         dx = ((int)rc.right - dw) / 2;
         FillRect(hdc, &rc, GetStockObject(BLACK_BRUSH));
         SetStretchBltMode(hdc, STRETCH_DELETESCANS);
-        /* Bits start after the header and the always-256-entry colour
+        /* Bits start after the header and the always-256-entry color
            table (the proxy writes biClrUsed=256, so 40+1024 is a
            constant, not a guess). */
         StretchDIBits(hdc, dx, 0, dw, dh, 0, 0, g_pic_w, g_pic_h,
@@ -5243,7 +5243,7 @@ static void chr_paint(HWND hwnd)
     hdc = BeginPaint(hwnd, &ps);
     GetClientRect(hwnd, &rc);
     /* The button strip along the bottom belongs to the Refresh button,
-       and this window has a grey class background, so the strip needs no
+       and this window has a gray class background, so the strip needs no
        filling - only keeping out of. */
     rc.bottom -= CHR_BTN_H;
     if (rc.bottom < g_ch)
@@ -5730,9 +5730,9 @@ static void start_session(HWND hwnd)
 
     /* The donationware welcome: the same wording as the C64 client's
        banner and the About box - every client, one message. It is
-       still the renderer's self-check: per-line colours plus the bold
+       still the renderer's self-check: per-line colors plus the bold
        marker in the first line exercise the same in-band language the
-       proxy streams, so broken colour shows before the first frame
+       proxy streams, so broken color shows before the first frame
        arrives. (The old Phase 1 dev banner lived here; a user's first
        screen is not the place to discuss re-flow internals.) */
     say(7,  "\x02" "Welcome to LLM64" "\x03");
@@ -5813,7 +5813,7 @@ BOOL FAR PASCAL _export MenuDlgProc(HWND dlg, UINT msg, UINT wParam,
         GetClientRect(dlg, &cr);
         w += (int)(wr.right - wr.left) - (int)cr.right;
         h += (int)(wr.bottom - wr.top) - (int)cr.bottom;
-        /* Centred on the frame, which is where a modal belongs. */
+        /* Centered on the frame, which is where a modal belongs. */
         GetWindowRect(g_frame, &fr);
         x = (int)fr.left + ((int)(fr.right - fr.left) - w) / 2;
         y = (int)fr.top + ((int)(fr.bottom - fr.top) - h) / 2;
@@ -6233,7 +6233,7 @@ BOOL FAR PASCAL _export MsgDlgProc(HWND dlg, UINT msg, UINT wParam,
         MoveWindow(st, sr.left, sr.top, sr.right - sr.left,
                    (sr.bottom - sr.top) + grow, TRUE);
 
-        /* The buttons ride down with it, centred under the text. */
+        /* The buttons ride down with it, centered under the text. */
         GetWindowRect(ok, &tr);
         bw = (int)(tr.right - tr.left);
         bh = (int)(tr.bottom - tr.top);
@@ -6245,7 +6245,7 @@ BOOL FAR PASCAL _export MsgDlgProc(HWND dlg, UINT msg, UINT wParam,
         if (two)
             MoveWindow(cancel, x + bw + gap, y, bw, bh, TRUE);
 
-        /* Then the box around all of it, centred on the frame. */
+        /* Then the box around all of it, centered on the frame. */
         GetWindowRect(dlg, &wr);
         w = (int)(wr.right - wr.left);
         h = (int)(wr.bottom - wr.top) - (int)cr.bottom + y + bh + 10;
@@ -6404,7 +6404,7 @@ static void menu_run(HWND owner, int idx)
     case 'x':
         send_frame(MSG_CANCEL_REQUEST, NULL, 0);
         input_enable(1);
-        set_status("Cancelled.");
+        set_status("Canceled.");
         break;
     case 'e':
         server_dialog(owner);
@@ -6507,8 +6507,8 @@ static void launch_sync(void)
 /* The 50% stipple a 3.1 toolbar used for a latched button - Word 2 and
    Excel 4 both did this, and it is what makes "held down" read as a state
    rather than as a mouse still being held. A monochrome pattern brush
-   takes its two colours from the DC's text and background, so the same
-   brush works in any colour scheme. Built once. */
+   takes its two colors from the DC's text and background, so the same
+   brush works in any color scheme. Built once. */
 static HBRUSH g_stipple;
 
 static HBRUSH stipple_brush(void)
@@ -6537,8 +6537,8 @@ static HBRUSH stipple_brush(void)
 
    The 3.1 palette rather than GetSysColor, for the same reason the
    chrome hardcodes it: COLOR_BTNFACE on a modern machine is #F0F0F0,
-   which put a 2026 grey button on a #C0C0C0 strip. The cost is that a
-   3.11 user's colour scheme no longer reaches the strip - and it never
+   which put a 2026 gray button on a #C0C0C0 strip. The cost is that a
+   3.11 user's color scheme no longer reaches the strip - and it never
    reached the caption either, so the strip was the odd one out. */
 static void launch_draw(LPDRAWITEMSTRUCT di)
 {
@@ -6563,7 +6563,7 @@ static void launch_draw(LPDRAWITEMSTRUCT di)
                every side: the bevel is the signal, the stipple only says
                "and it stayed that way". Face against highlight rather
                than shadow against highlight - at 1:1 that is a faint
-               dither, where grey-on-white was a checkerboard loud enough
+               dither, where gray-on-white was a checkerboard loud enough
                to bury the bevel it sits inside. */
             fr.left += 4;
             fr.top += 4;
@@ -6613,7 +6613,7 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
     switch (msg) {
     case WM_CREATE:
         g_frame = hwnd;
-        /* Colours before anything can paint: the background brush lives
+        /* Colors before anything can paint: the background brush lives
            with the theme, and WM_CTLCOLOR hands it out. */
         theme_apply(g_theme);
         if (!sb_init(&g_conv_view.sb)) {
@@ -6785,8 +6785,8 @@ long FAR PASCAL _export FrameProc(HWND hwnd, UINT msg, UINT wParam,
         }
         return 0;
 
-    /* A 256-colour driver arbitrates the hardware palette through
-       these; the picture's colours are the only ones we bargain for.
+    /* A 256-color driver arbitrates the hardware palette through
+       these; the picture's colors are the only ones we bargain for.
        On a deep display neither ever matters. */
     case WM_QUERYNEWPALETTE:
         if (g_pic_hpal && g_pic_wnd) {
@@ -7181,7 +7181,7 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
             return 1;
 
         /* Document windows. No class background: the conversation is
-           covered by its pane and its input box, and painting grey
+           covered by its pane and its input box, and painting gray
            under them only buys a flash on resize. */
         wc.style = CS_HREDRAW | CS_VREDRAW;
         wc.lpfnWndProc = ConvProc;
@@ -7269,11 +7269,11 @@ int PASCAL WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmdline, int show)
     }
 
     /* WS_CLIPCHILDREN is not decoration on an MDI frame: without it the
-       frame's own erase - its class brush is light grey - is not clipped
+       frame's own erase - its class brush is light gray - is not clipped
        away from the windows sitting in its client area, so every relayout
-       that exposes a strip of frame painted grey over whatever was there,
+       that exposes a strip of frame painted gray over whatever was there,
        and an MDI child's CAPTION only came back when that child's
-       non-client area happened to be invalidated. The symptom was grey
+       non-client area happened to be invalidated. The symptom was gray
        slabs where titlebars belong, most visibly during a conversation
        load. */
     {

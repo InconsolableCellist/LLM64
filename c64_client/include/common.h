@@ -163,7 +163,7 @@ typedef enum {
                                          paused for the IEC write */
 #define MSG_PRINT_END           0x64  /* 'd' - close the channel */
 
-/* Home Assistant. The proxy formats, colours and resamples; these
+/* Home Assistant. The proxy formats, colors and resamples; these
    frames carry placed cells and computed pixel columns. */
 #define MSG_GET_HA              0x45  /* 'E' - [view] send me this screen */
 #define MSG_HA_ACTION           0x46  /* 'F' - [key][view]; the proxy

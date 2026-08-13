@@ -132,13 +132,13 @@ class MockHandler(BaseHTTPRequestHandler):
             text = ('[[MUSIC: festive]] The carnival begins! Lanterns '
                     'bob between the stalls.')
         elif 'COLORTEST' in upper:
-            # Colour markup split across SSE chunk boundaries, so the
+            # Color markup split across SSE chunk boundaries, so the
             # proxy's hold-back has to reassemble a tag before the
-            # marker transform runs. Both a colour run and **bold**.
-            text = ('You approach the [color=grey]steel door[/color], '
+            # marker transform runs. Both a color run and **bold**.
+            text = ('You approach the [color=gray]steel door[/color], '
                     'your torch guttering. Go **north** now.')
         elif 'RICHTEST' in upper:
-            # Everything only a rich-text client can render: a colour past
+            # Everything only a rich-text client can render: a color past
             # the C64's fifteen (so the three-byte extended marker), and
             # each attribute. A C64 asking for this must see the words and
             # none of the tags - which is the assertion worth making, so

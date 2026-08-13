@@ -52,7 +52,7 @@ static const char S_EDIT[] = "Edit the proxy address.";
 static const char S_UNCHANGED[] = "Config unchanged.";
 static const char S_EMPTY[] = "Empty field - config unchanged.";
 static const char S_SAVED[] = "Config saved.";
-static const char S_SAVEFAIL[] = "Save failed - drive 8 present?";
+static const char S_SAVEFAIL[] = "Save failed - DRIVE 8 present?";
 
 #define FLD_HOST 0
 #define FLD_PORT 1

@@ -34,7 +34,7 @@ def check(name, got, want):
 
 # --- the DIB itself ---------------------------------------------------
 
-# A generator-shaped image: 1024x640, distinct corner colours so
+# A generator-shaped image: 1024x640, distinct corner colors so
 # orientation is observable after the resample.
 src = Image.new("RGB", (1024, 640), (40, 90, 160))
 for x in range(120):
@@ -59,7 +59,7 @@ check("total length is header+table+rows",
       len(dib), 40 + 1024 + stride * h)
 
 # Bottom-up: the SOURCE's top-left red block must live in the LAST rows
-# of the pixel data. Look the stored index up in the colour table.
+# of the pixel data. Look the stored index up in the color table.
 pix = dib[40 + 1024:]
 idx = pix[(h - 1) * stride]              # last stored row = top image row
 b, g, r = dib[40 + idx * 4:40 + idx * 4 + 3]
@@ -84,12 +84,12 @@ check("odd width pads to 4", len(d2), 40 + 1024 + 40 * 20)
 #
 # What makes the picture read as period art rather than as a downsampled
 # modern painting: a FIXED palette (so there is something to dither
-# against) and the dither itself. The proof is in the colour table, which
+# against) and the dither itself. The proof is in the color table, which
 # is the same table for every picture in period mode and a per-image one
 # without it.
 
 
-def table_colours(d):
+def table_colors(d):
     return [tuple(d[40 + i * 4:40 + i * 4 + 3]) for i in range(256)]
 
 
@@ -101,16 +101,16 @@ for y in range(160):
 dp, _, _ = convert_to_dib8(grad, period=True)
 dc, _, _ = convert_to_dib8(grad, period=False)
 check("the period table is the fixed palette, not this image's",
-      table_colours(dp) == table_colours(convert_to_dib8(
+      table_colors(dp) == table_colors(convert_to_dib8(
           src, period=True)[0]), True)
 check("...and the clean one is chosen per image",
-      table_colours(dc) == table_colours(convert_to_dib8(
+      table_colors(dc) == table_colors(convert_to_dib8(
           src, period=False)[0]), False)
 
 # And the dither itself is on. Compared against the same fixed palette
-# applied with NO error diffusion: a nearest-colour mapping is what the
+# applied with NO error diffusion: a nearest-color mapping is what the
 # smooth ramp would collapse to, so a large fraction of pixels differing
-# from it is the diffusion doing its work. (Counting colour transitions
+# from it is the diffusion doing its work. (Counting color transitions
 # along a row does not prove this - a coarse palette produces bands
 # either way.)
 ref = Image.new("P", (1, 1))

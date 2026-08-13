@@ -124,7 +124,7 @@ disk.
 
 Finishing writes a `[wizard]` table into `config.toml`. That table is
 the only thing stopping it opening unasked, so delete it if you want the
-first-run behaviour back.
+first-run behavior back.
 
 ### Write a config
 
@@ -331,8 +331,8 @@ cast, species, action, framing, place, light. That is not cosmetic:
 and OpenAI configs are untouched.
 
 Two more things about the preset are deliberate. Its prefix asks for
-flat colour, cel shading and thick outlines, because that is what
-survives 16 colours at 160x200 -- airbrushed detail becomes dither
+flat color, cel shading and thick outlines, because that is what
+survives 16 colors at 160x200 -- airbrushed detail becomes dither
 mush. And it carries no "keep them anthro" clause, unlike the other
 presets: this checkpoint needs no convincing, and on fixed seeds that
 clause put a beast in an explicitly unpeopled scene and dragged
@@ -374,7 +374,7 @@ click instead.
    flight.
 
 You get three views of one generation: what the backend drew, the C64
-multicolor conversion (16 colours, with the caption band burned in), and
+multicolor conversion (16 colors, with the caption band burned in), and
 the Windows 320x200 one. The original is there to tell the two failure
 modes apart -- a picture that is wrong in the original is a prompt
 problem, one that is fine there and mud on the C64 is a subject problem.
@@ -427,7 +427,7 @@ endpoint (`--llm-url`, the same llama.cpp server the proxy uses), or
 `--tags` with a prebuilt tag file to skip it. `--no-loudness` skips the
 one stage that needs `pyresidfp` + `py65`, at the cost of volume
 normalization. `tools/sid_build.py --info` prints the links and the
-licence position; `--dry-run` shows what is already done.
+license position; `--dry-run` shows what is already done.
 
 If the proxy lives on another machine, finish with
 
@@ -469,7 +469,7 @@ real library lifts the mean regard of what actually plays from 0.52 to
 0.69 while still drawing one pick in nine from the bottom third. It is
 deliberately a weighting and not a filter: most of HVSC is obscure demo
 music nobody wrote about, and unheard is not the same as bad. Your own
-jukebox favourites outrank all of it.
+jukebox favorites outrank all of it.
 
 #### What this repo does and does not carry
 

@@ -647,7 +647,7 @@ Idle ──F1──> Sending Request ──ACK──> Waiting for Response
 1. User presses F3 during response
 2. Set `request_pending = 0`
 3. Send CANCEL_REQUEST message
-4. Display "Cancelled" status
+4. Display "Canceled" status
 5. Discard any subsequent CHAT_CHUNKs until CHAT_DONE received
 
 ## Build System

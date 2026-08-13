@@ -197,7 +197,7 @@ check_eq('a file that existed goes back verbatim', existing.read_text(),
 check('a file the wizard created is removed', not created.exists())
 check_eq('and afterwards there is nothing left to undo', rb.changed(), [])
 
-# Restoring twice is not an error, and neither is cancelling a run that
+# Restoring twice is not an error, and neither is canceling a run that
 # only ever read - both are ordinary ways to press the button.
 check_eq('a second restore is a no-op', rb.restore(), [])
 

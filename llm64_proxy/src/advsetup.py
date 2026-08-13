@@ -5,7 +5,7 @@ no network, no model, no conversation. feed() takes what the player
 typed and returns (reply_text, action), where action tells the caller
 what to actually do. Everything the player can reach is therefore
 unit-testable without a model or an emulator, which matters because the
-interesting behaviour is the edit/cascade rules rather than the prose.
+interesting behavior is the edit/cascade rules rather than the prose.
 
 The character sub-steps are FLATTENED into the same stage list rather
 than nested. They are decisions like any other, so the review screen,
@@ -101,12 +101,12 @@ CUSTOM_OK = ('race', 'class')
 # own, where a skill is just a claim about who you used to be.
 CUSTOM_MULTI_OK = ('skills',)
 
-# Kit-shop nav hints. Item numbers are GLOBAL across the whole catalogue
+# Kit-shop nav hints. Item numbers are GLOBAL across the whole catalog
 # (see _gear_cat_body), so they mean the same thing on every screen and a
 # player who knows the book can type a whole kit from memory without
 # opening a single shelf.
 MSG_OVERVIEW = ("One number opens that shelf. Several numbers take those "
-                "items straight off the catalogue.")
+                "items straight off the catalog.")
 MSG_SHELF = "Numbers take or put back, or b to go back."
 
 
@@ -142,7 +142,7 @@ class AdventureSetup:
         # None = the category overview, a slug = that list is open,
         # 'own' = the player's own things, 'done' = the approve screen.
         self.cat = None
-        self.kit = []        # catalogue items, by name
+        self.kit = []        # catalog items, by name
         self.kit_own = []    # things the player typed
         self.own_at = {}     # own item -> the shelf it was invented on
         self.page = 0        # which page of a long shelf is showing
@@ -302,7 +302,7 @@ class AdventureSetup:
         return self.rules.get('equipment') or {}
 
     def _gear_items(self) -> list:
-        """The catalogue this character may buy from."""
+        """The catalog this character may buy from."""
         return chargen.gear_options(self.rules, self.answers.get('class', ''))
 
     def _gear_cats(self) -> list:
@@ -319,7 +319,7 @@ class AdventureSetup:
         return out
 
     def _gear_numbers(self) -> dict:
-        """name -> its number in the WHOLE catalogue.
+        """name -> its number in the WHOLE catalog.
 
         Numbering is global rather than per-shelf so a number means one
         thing everywhere: a player who knows the book can type a kit
@@ -417,7 +417,7 @@ class AdventureSetup:
         mine = [n for n in self.kit_own if self.own_at.get(n) == c['slug']]
         for name in mine:
             out.append(" +  -  %s" % name)
-        # The example is deliberately not "1 3": numbers are catalogue-
+        # The example is deliberately not "1 3": numbers are catalog-
         # wide, so a low number typed on a high shelf takes something
         # from another one, and an example implying otherwise would set
         # the wrong expectation.
@@ -577,10 +577,10 @@ class AdventureSetup:
             self.answers['scores'] = chargen.roll_scores(self.rules, self.rng)
         if st['kind'] == 'spend':
             self.cat = None
-            catalogue = {it['name'] for it in self._gear_items()}
+            catalog = {it['name'] for it in self._gear_items()}
             chosen = self.answers.get(st['key']) or []
-            self.kit = [n for n in chosen if n in catalogue]
-            self.kit_own = [n for n in chosen if n not in catalogue]
+            self.kit = [n for n in chosen if n in catalog]
+            self.kit_own = [n for n in chosen if n not in catalog]
             # Which shelf each own item came from is display-only and
             # is not persisted in the answer, so a resumed kit shows
             # them all under 'Your own things' rather than guessing.
@@ -708,7 +708,7 @@ class AdventureSetup:
 
     def _confirm_screen(self, key, name) -> str:
         """The 'be a Kobold? (Y/n)' gate. This is the ONE place the blurb
-        is shown (it is off the list now), so colour the name to make the
+        is shown (it is off the list now), so color the name to make the
         choice pop."""
         blurb = chargen.blurb(self.rules, key, name)
         art = 'an' if name[:1].lower() in 'aeiou' else 'a'
@@ -873,7 +873,7 @@ class AdventureSetup:
         return self._toggle(toks)
 
     def _toggle(self, toks):
-        """Take or put back by catalogue number. Numbers are global, so
+        """Take or put back by catalog number. Numbers are global, so
         this is deliberately NOT limited to the open shelf: typing 45
         while standing in Weapons takes item 45 wherever it lives, which
         is the whole point of numbering the book rather than the page.
@@ -928,7 +928,7 @@ class AdventureSetup:
         return self._add_own(t, 'own')
 
     def _add_own(self, text, slug):
-        """Bring along something the catalogue does not stock.
+        """Bring along something the catalog does not stock.
 
         EVERY '+' starts a new item, not just the first. Splitting on
         only the first one turned "rope + a lucky coin" into a single

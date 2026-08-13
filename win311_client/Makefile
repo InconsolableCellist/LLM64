@@ -191,7 +191,7 @@ spike-floppy: build/CAPSPK16.EXE build/MDISPK16.EXE
 	  '' \
 	  'What to check in MDISPK16, in order of how much it matters:' \
 	  '' \
-	  ' 1. MAXIMISE. Does the child fill the grey area with no caption,' \
+	  ' 1. MAXIMISE. Does the child fill the gray area with no caption,' \
 	  '    and does the FRAME caption become "LLM64 - [Picture]"?' \
 	  '    Expected gap: the maximised child sysmenu box and restore' \
 	  '    arrow should appear in the menu bar beside "Window" and will' \

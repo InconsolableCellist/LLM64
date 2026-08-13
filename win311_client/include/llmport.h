@@ -78,7 +78,7 @@
    Win16 handle IS a word. */
 #define LLM_HWND(r)     ((HWND)(WORD)(r))
 
-/* The control-colour messages. 3.1 has exactly one, WM_CTLCOLOR, and
+/* The control-color messages. 3.1 has exactly one, WM_CTLCOLOR, and
    says which kind of control is asking in the high word of lParam. */
 #define LLM_IS_CTLCOLOR(m)      ((m) == WM_CTLCOLOR)
 #define LLM_CTLCOLOR_KIND(m, l) ((int)HIWORD(l))

@@ -21,10 +21,10 @@ You need a running proxy first: see
   items, notebook and map. Toggle them with `Ctrl+1..7`, the Window menu,
   or the launcher strip along the top. Each window reopens where you left
   it.
-- Replies stream in as the model produces them, with the proxy's colour
+- Replies stream in as the model produces them, with the proxy's color
   and bold markers rendered.
-- Pictures arrive as 320x200 256-colour DIBs, generated for this client
-  rather than converted from the C64's 16-colour version. The picture
+- Pictures arrive as 320x200 256-color DIBs, generated for this client
+  rather than converted from the C64's 16-color version. The picture
   window lists every image in the conversation.
 - MIDI music through the MIDI Mapper (see [Music](#music)).
 - The character sheet and the map are drawn from data the proxy sends (rather than 
@@ -146,7 +146,7 @@ make run HOST=192.168.1.21 PORT=6400        # or the real proxy
 the INI, and uses `~/.wine-llm64` as its `WINEPREFIX`.
 
 Wine runs the protocol and the drawing correctly, but not the Windows
-shell: accelerators, menu behaviour and window management need a VM or a
+shell: accelerators, menu behavior and window management need a VM or a
 real machine before you can call them working. For sound, see
 [Getting sound out of Wine](#getting-sound-out-of-wine).
 
@@ -218,8 +218,8 @@ Two things are optional but worth having:
   `sequencer` device and lets the Control Panel decide how it is
   synthesised. With nothing configured it says so in the status strip and
   carries on silently.
-- **A 256-colour display driver**, so the pictures show with their own
-  palette. A 16-colour VGA driver still displays them, dithered by GDI.
+- **A 256-color display driver**, so the pictures show with their own
+  palette. A 16-color VGA driver still displays them, dithered by GDI.
 
 The address comes from `LLM64.INI` in the same directory as the EXE:
 
@@ -362,7 +362,7 @@ which is what lets a resize re-flow text already on screen. Two
 consequences:
 
 - Markers occupy no cell, because the wrap counts screen cells rather than
-  bytes. A coloured line must not break early.
+  bytes. A colored line must not break early.
 - Rows are not NUL-terminated. A row is a slice of an arena block, and in
   protected mode reading one byte past the end of that block faults, so
   the painter stops at `len`.
@@ -419,7 +419,7 @@ nothing under Wine 11.0, and neither do F1/F2/F3 from the app's own table:
 `LoadAccelerators` succeeds and `TranslateAccelerator` is inert. Every
 mouse route works, and on Windows 95 OSR2 the accelerators work as
 written. Test anything that depends on Windows' keyboard handling, menu
-behaviour or window management on a VM or real hardware.
+behavior or window management on a VM or real hardware.
 
 **The GUI harness types with XTEST.** `tools/wine_smoke.sh` starts its own
 Xvfb, because `xdotool type` goes to whatever has focus and would type

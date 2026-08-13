@@ -19,13 +19,13 @@
  * an emulator or a proxy anywhere in the loop.
  *
  * Text is stored with the proxy's in-band markers still in it (docs/08:
- * 0x01 close, 0x02/0x03 bold, 0x10|c colour, and for a rich-text client
+ * 0x01 close, 0x02/0x03 bold, 0x10|c color, and for a rich-text client
  * the italic/underline/heading markers and the three-byte extended
- * colour). They occupy no screen cell, which is precisely why wrapping
+ * color). They occupy no screen cell, which is precisely why wrapping
  * has to be marker-aware and the spike's byte-counting wrap was subtly
  * short.
  *
- * A marker is not always ONE byte: the extended colour marker is three.
+ * A marker is not always ONE byte: the extended color marker is three.
  * Scan with sb_marker_len() rather than testing bytes, or the operand
  * bytes get counted as glyphs and every line carrying one wraps short.
  */
@@ -63,7 +63,7 @@ typedef struct {
     unsigned      off;      /* byte offset within that block */
     unsigned      len;      /* bytes, markers included */
     unsigned      rows;     /* display rows at the current width */
-    unsigned char color;    /* colour in force at the first cell */
+    unsigned char color;    /* color in force at the first cell */
     unsigned char who;      /* SB_WHO_*, stamped at commit */
 } SbLine;
 
@@ -82,7 +82,7 @@ typedef struct {
        append-only. It is committed on a newline. */
     char      open[SB_MAX_LINE];
     unsigned  open_len;
-    unsigned char open_color;   /* colour at the open line's first cell */
+    unsigned char open_color;   /* color at the open line's first cell */
 
     /* Where the open line's final display row starts, so appending a
        character re-wraps one row rather than the whole line. */
@@ -90,13 +90,13 @@ typedef struct {
     unsigned      open_rows;    /* rows before open_tail */
     unsigned char open_tail_color;
 
-    unsigned char color;        /* colour for text appended from now on */
+    unsigned char color;        /* color for text appended from now on */
     unsigned char origin;       /* SB_WHO_* for lines committed from now on */
     unsigned      cols;         /* display width, in cells */
     unsigned long total_rows;   /* committed rows; the open line is extra */
 } Scrollback;
 
-/* Colour slots. The one-byte marker carries 1..15; the extended marker
+/* Color slots. The one-byte marker carries 1..15; the extended marker
    reaches 63, so a painter must mask with this and not with 0x0F. */
 #define SB_COLOR_MASK   0x3F
 
@@ -118,8 +118,8 @@ typedef struct {
 typedef struct {
     const char   *text;
     unsigned      len;
-    unsigned char color;    /* colour here */
-    unsigned char base;     /* the logical line's colour, for MARK_CLOSE */
+    unsigned char color;    /* color here */
+    unsigned char base;     /* the logical line's color, for MARK_CLOSE */
     unsigned char attr;     /* SB_ATTR_* in force at the first cell */
     unsigned char who;      /* SB_WHO_* of the logical line (sb_view_next
                                fills it; a bare sb_wrap_next does not) */
@@ -154,9 +154,9 @@ int      sb_init(Scrollback *sb);
 void     sb_free(Scrollback *sb);
 void     sb_clear(Scrollback *sb);
 
-/* Colour for text appended from here on. Applied to the open line
+/* Color for text appended from here on. Applied to the open line
    itself when nothing has been written to it yet - otherwise the first
-   chunk of a reply inherits the colour of whatever preceded it. */
+   chunk of a reply inherits the color of whatever preceded it. */
 void     sb_color(Scrollback *sb, unsigned char color);
 
 /* Who the lines committed from here on belong to (SB_WHO_*). The
@@ -167,7 +167,7 @@ void     sb_putc(Scrollback *sb, char c);   /* '\n' closes the line */
 void     sb_puts(Scrollback *sb, const char *s);
 void     sb_newline(Scrollback *sb);
 
-/* A whole line in one colour, closed at both ends: the shape almost
+/* A whole line in one color, closed at both ends: the shape almost
    every status or error message wants. */
 void     sb_say(Scrollback *sb, unsigned char color, const char *s);
 
@@ -196,12 +196,12 @@ int      sb_wrap_next(SbWrap *w, SbRow *out);
    cell. Kept because most markers are one byte and a caller that only
    asks "is this a glyph?" reads better for it - but anything WALKING the
    text has to use sb_marker_len, or it will treat the two operand bytes
-   of an extended colour marker as text. */
+   of an extended color marker as text. */
 int      sb_is_marker(unsigned char c);
 
 /* Fold the marker at p into the running render state. THE painter and
    THE wrapper both call this, and that is the point: a row painted with
-   different state than it was wrapped with is a row whose colours creep
+   different state than it was wrapped with is a row whose colors creep
    as the window resizes. One state machine, two callers. */
 void     sb_mark_apply(const char *p, unsigned len, unsigned char base,
                        unsigned char *color, unsigned char *attr);

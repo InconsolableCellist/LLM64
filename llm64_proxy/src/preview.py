@@ -2,7 +2,7 @@
 
 Pictures are the one part of config.toml you cannot judge by reading it.
 What reaches the screen is a style prefix you did not write, a generator
-you did not watch, and a converter that throws away all but 16 colours -
+you did not watch, and a converter that throws away all but 16 colors -
 and the only way to know whether a change to any of those helped is to
 look at a picture. That normally costs a whole session: boot the client,
 play into a scene, type /pic, squint, edit the config, restart.
@@ -70,7 +70,7 @@ SAMPLE_SCENES = (
      'ivy over broken pews, twilight, shafts of light, fog, dark '
      'fantasy'),
     ('Torchlit crypt',
-     'A low vaulted crypt of cracked grey stone, a single guttering torch '
+     'A low vaulted crypt of cracked gray stone, a single guttering torch '
      'in an iron bracket throwing long shadows across toppled sarcophagi '
      'and a floor of dust and bone fragments, cold blue dark beyond the '
      'reach of the flame - an empty, unpeopled scene.'),
@@ -78,7 +78,7 @@ SAMPLE_SCENES = (
      'The low beamed common room of a roadside inn, firelight and hanging '
      'lanterns picking out scarred oak tables, smoke hazing the air, rain '
      'streaking the small thick windows - the only figure present is a '
-     'grey-bearded innkeeper in a stained leather apron wiping a tankard '
+     'gray-bearded innkeeper in a stained leather apron wiping a tankard '
      'behind the bar.'),
     ('Forest road at dusk',
      'A rutted cart road winding between enormous moss-furred pines under '
@@ -128,7 +128,7 @@ class Preview:
     original: object = None   # PIL image: the generator's own output
     c64: object = None        # PIL image: the C64 blob rendered back
     vga: object = None        # PIL image: the Win16 DIB rendered back
-    bg: int = 0               # C64 background colour index
+    bg: int = 0               # C64 background color index
     stem: object = None       # Path prefix of the saved files, or None
     meta: dict = field(default_factory=dict)
 

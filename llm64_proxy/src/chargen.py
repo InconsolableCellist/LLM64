@@ -61,7 +61,7 @@ def gear_options(rules: dict, class_name: str) -> list:
     plus whatever names it.
 
     A class the rules have never heard of (the player typed their own)
-    gets the WHOLE catalogue. The old reading - give it only the
+    gets the WHOLE catalog. The old reading - give it only the
     unrestricted items - sounded like honesty and played like a
     punishment: exactly one weapon in the whole book is unrestricted, so
     a custom class opened the weapon shelf and found a dagger and
@@ -81,7 +81,7 @@ def gear_options(rules: dict, class_name: str) -> list:
 
 
 def gear_cost(rules: dict, names) -> int:
-    """What a kit costs. Anything not in the catalogue is the player's
+    """What a kit costs. Anything not in the catalog is the player's
     own custom item and costs the custom price."""
     gear = rules.get('equipment') or {}
     by_name = {it['name']: it['cost'] for it in gear.get('items', [])}

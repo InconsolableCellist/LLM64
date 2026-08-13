@@ -1,4 +1,4 @@
-"""Inline markup: [color=grey]steel door[/color] -> marker cells.
+"""Inline markup: [color=gray]steel door[/color] -> marker cells.
 
 See docs/08-inline-color.md for the original design and
 docs/16-windows-311-client.md section 7 for how it became per-client.
@@ -6,12 +6,12 @@ The short version:
 
 Cell values 0x00-0x1F render as a space on the soft-80 client (soft80.s
 clamps a font index that underflows to glyph 0), so a marker can live
-IN the text as an ordinary cell. That is what makes this free - colour
+IN the text as an ordinary cell. That is what makes this free - color
 rides inside the 80 columns it decorates, costing no scrollback RAM.
 
 Because a marker occupies a column ON THE C64, we do not ADD one: we
 swallow the space beside the tag. Spacing on screen is then identical to
-the plain text, and since the C64's colour matrix is one entry per TWO
+the plain text, and since the C64's color matrix is one entry per TWO
 characters, the only cells ever caught by that granularity are the
 marker-spaces themselves - which are invisible.
 
@@ -19,7 +19,7 @@ marker-spaces themselves - which are invisible.
 A client that draws markers as zero-width (the Windows client's painter
 advances by the run length and a marker contributes nothing) never
 needed the column, so taking the space from it deletes a real space:
-"You see a [color=grey]steel door[/color] ahead." arrives as
+"You see a [color=gray]steel door[/color] ahead." arrives as
 "You see asteel doorahead." Profile.marker_cells decides.
 
 Tags are NOT stripped from stored history: the model should see its own
@@ -57,7 +57,7 @@ M_ULINE_OFF = 0x07
 M_HEAD_ON = 0x0E
 M_HEAD_OFF = 0x0F
 
-# Colour beyond the sixteen the one-byte marker can encode:
+# Color beyond the sixteen the one-byte marker can encode:
 #
 #     0x1B 'C' (0x40 | slot)      slot 0..63
 #
@@ -65,7 +65,7 @@ M_HEAD_OFF = 0x0F
 # are C strings), a newline, or another marker - which keeps a client's
 # marker scanner able to resynchronise on any byte. Three bytes buys 64
 # slots; the one-byte form still carries 1..15, so the extended marker
-# only appears when a colour actually needs it.
+# only appears when a color actually needs it.
 M_ESC = 0x1B
 ESC_COLOR = 0x43           # 'C'
 ESC_OPERAND_BIAS = 0x40
@@ -82,7 +82,7 @@ BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
 # underscores on purpose: UNICODE_TO_ASCII turns a bullet into '*', so a
 # single-asterisk italic rule would eat every bullet list, and '_' is
 # ordinary inside a filename or an identifier. Bracket tags cannot
-# collide with either, and they read like the colour tag beside them.
+# collide with either, and they read like the color tag beside them.
 ATTR_TAGS = {
     'i': (M_ITALIC_ON, M_ITALIC_OFF),
     'u': (M_ULINE_ON, M_ULINE_OFF),
@@ -104,7 +104,7 @@ def _swallow_before(out: list) -> None:
 
 
 def _emit_color(out: bytearray, slot: int) -> None:
-    """Append whichever colour marker can carry this slot.
+    """Append whichever color marker can carry this slot.
 
     Slot 11 is the exception, and it was a bug for as long as a palette
     had one: M_COLOR_BASE | 11 is 0x1B, which IS M_ESC. A client scanning
@@ -112,7 +112,7 @@ def _emit_color(out: bytearray, slot: int) -> None:
     at the next byte for the 'C' verb, does not find it, and gives up on
     the whole marker: the 0x1B lands in the text as an undrawable glyph
     ("the []slate rooftops"), or, when the tinted phrase happens to start
-    with C, eats two characters and sets a nonsense colour.
+    with C, eats two characters and sets a nonsense color.
 
     Only PALETTE_RICH has a slot 11 (darkgrey), so only a client that
     asked for rich text ever sees this - and such a client necessarily
@@ -129,8 +129,8 @@ def _emit_color(out: bytearray, slot: int) -> None:
 def colorize_for_wire(text: str, profile=C64) -> bytes:
     """Text with markup -> ASCII bytes with in-band marker cells.
 
-    Unknown colour names strip to plain text: a tag must never reach the
-    screen as literal characters, and a missing colour is a cosmetic
+    Unknown color names strip to plain text: a tag must never reach the
+    screen as literal characters, and a missing color is a cosmetic
     absence rather than garbage. The same goes for an attribute tag sent
     to a client with one typeface.
 
@@ -200,11 +200,11 @@ def strip_markup(text: str) -> str:
 def prompt_snippet(profile=C64) -> str:
     """Teaches the markup. Deliberately short - the adventure prompt
     already carries state and music instructions - and deliberately
-    strict about sparing use: everything coloured is nothing coloured.
+    strict about sparing use: everything colored is nothing colored.
 
     Only the vocabulary is per-client. The DISCIPLINE is not: a model
-    told it may decorate freely does, and a wall of colour reads worse
-    than none on a 16-colour VGA than it does on a VIC-II.
+    told it may decorate freely does, and a wall of color reads worse
+    than none on a 16-color VGA than it does on a VIC-II.
     """
     attrs = (
         " Use [i]...[/i] for a title or a remembered voice, [u]...[/u] "
@@ -215,7 +215,7 @@ def prompt_snippet(profile=C64) -> str:
     )
     return (
         "\nColour: wrap a noun in [color=NAME]...[/color] to tint it on "
-        "the player's screen, and **word** for emphasis. Colours: "
+        "the player's screen, and **word** for emphasis. Colors: "
         + ", ".join(sorted(set(profile.palette))) +
         ". Tag the WHOLE noun phrase, not just its head word: write "
         "[color=blue]pool of dark water[/color] and "
@@ -223,7 +223,7 @@ def prompt_snippet(profile=C64) -> str:
         "[color=blue]pool[/color] of dark water. Adjectives and 'of' "
         "phrases belong inside the tag. Use it SPARINGLY - objects the "
         "player can take, exits, and hazards. Most sentences should have "
-        "no colour at all. Never colour a whole sentence, and never nest "
+        "no color at all. Never color a whole sentence, and never nest "
         "tags." + attrs
     )
 

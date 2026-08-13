@@ -605,8 +605,8 @@ def test_sidecars():
     from types import SimpleNamespace
     from src.images import ImageService, build_sidecar, _backend_label
 
-    # backend labelling: model appended when the backend carries one.
-    check("fixture labelled by bare name",
+    # backend labeling: model appended when the backend carries one.
+    check("fixture labeled by bare name",
           _backend_label(SimpleNamespace(name="fixture")) == "fixture")
     check("model appended when present",
           _backend_label(SimpleNamespace(name="gemini", model="g-2.5"))

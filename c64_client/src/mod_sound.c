@@ -5,7 +5,7 @@
  * progress bar against the tune's real length, and a meter driven off
  * the SID's own voice-3 oscillator ($D41B) - the classic way to get
  * audio feedback out of the chip. It reflects voice 3 only, which is
- * why it is labelled that rather than dressed up as a master level.
+ * why it is labeled that rather than dressed up as a master level.
  *
  * Everything except the meter comes from the proxy in one NOWPLAYING
  * frame - the client never knew a tune's duration (nothing in a SID
@@ -212,10 +212,10 @@ static void pn_blank(uint8_t row) {
     pn_line(row, MC_TEXT);
 }
 
-static void pn_text(uint8_t row, const char* pet, uint8_t colour) {
+static void pn_text(uint8_t row, const char* pet, uint8_t color) {
     pn_fill();
     pn_write(TX, pet, 0);
-    pn_line(row, colour);
+    pn_line(row, color);
 }
 
 static void jb_draw_song(void) {

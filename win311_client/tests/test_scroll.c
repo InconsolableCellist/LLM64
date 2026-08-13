@@ -150,7 +150,7 @@ int main(void)
     render(&sb, buf, sizeof(buf));
     check(strstr(buf, "supercalif") != NULL, "its first half is kept");
 
-    /* 4. Markers cost no cells. The same sentence with colour markers
+    /* 4. Markers cost no cells. The same sentence with color markers
        in it must occupy the same rows as without - the spike counted
        them as characters and wrapped early. */
     sb_clear(&sb);
@@ -164,21 +164,21 @@ int main(void)
     check(widest(&sb) <= 20, "and do not overflow the width either");
 
     /* 5. Marker state is carried into the row it continues into: a
-       colour opened before a wrap is still in force after it. */
+       color opened before a wrap is still in force after it. */
     sb_clear(&sb);
     sb_width(&sb, 10);
     sb_say(&sb, 13, "\x12" "aaaa bbbb cccc");
     check(sb_view(&sb, 1, &v) && sb_view_next(&v, &r),
           "the second row exists");
-    check(r.color == 2, "and inherits the colour opened on the first");
+    check(r.color == 2, "and inherits the color opened on the first");
 
-    /* 6. A close marker returns to the line's own colour, not to the
-       colour some earlier line happened to end in. */
+    /* 6. A close marker returns to the line's own color, not to the
+       color some earlier line happened to end in. */
     sb_clear(&sb);
     sb_width(&sb, 40);
     sb_say(&sb, 7, "plain \x12" "red\x01 plain again");
     check(sb_view(&sb, 0, &v) && sb_view_next(&v, &r), "row fetched");
-    check(r.base == 7, "the row knows its line's base colour");
+    check(r.base == 7, "the row knows its line's base color");
 
     /* 7. Streaming: text arrives without newlines and the open line has
        to stay visible and correctly wrapped as it grows. */
@@ -258,7 +258,7 @@ int main(void)
     check(buf[i] == '\0', "and nothing else is introduced at the seam");
 
     /* --- rich text (docs/16 section 7) ------------------------------
-       The extended colour marker is THREE bytes, and that is the one
+       The extended color marker is THREE bytes, and that is the one
        thing about it that can break everything else: a wrapper counting
        bytes instead of markers charges two cells for it, and every line
        carrying one wraps short. */
@@ -288,7 +288,7 @@ int main(void)
         sb_puts(&sb, "aaaa bbbb cccc dddd eeee");
         sb_newline(&sb);
         check(sb_rows(&sb) == rows_plain,
-              "a 3-byte colour marker costs no cells");
+              "a 3-byte color marker costs no cells");
         check(widest(&sb) <= 20, "and does not overflow the width");
 
         render(&sb, buf, sizeof(buf));
@@ -299,7 +299,7 @@ int main(void)
         /* The slot has to arrive intact and de-biased. Observed on the
            SECOND row, because r.color is the state at a row's first cell
            and a marker sitting at position 0 has not been applied yet -
-           the same reason the one-byte colour case above reads row 1. */
+           the same reason the one-byte color case above reads row 1. */
         sb_clear(&sb);
         sb_width(&sb, 10);
         sb_color(&sb, 1);
@@ -308,7 +308,7 @@ int main(void)
         sb_newline(&sb);
         check(sb_view(&sb, 1, &v) && sb_view_next(&v, &r), "row fetched");
         check(r.color == 20, "the extended slot decodes to itself");
-        check(r.base == 1, "and the line's base colour is untouched");
+        check(r.base == 1, "and the line's base color is untouched");
 
         /* A marker cut off by the end of a row is not a marker. Rows are
            slices of an arena block, so consuming bytes that are not
@@ -318,7 +318,7 @@ int main(void)
         check(sb_marker_len(esc, 1) == 0, "nor is a lone ESC");
         check(sb_marker_len("x", 1) == 0, "a glyph is not a marker");
 
-        /* Attributes carry across a wrap exactly as colour does, and
+        /* Attributes carry across a wrap exactly as color does, and
            they are independent of each other. */
         sb_clear(&sb);
         sb_width(&sb, 10);

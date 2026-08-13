@@ -101,7 +101,7 @@ uint8_t ui_cell_from_petscii(uint8_t c) {
     return cell_from_petscii(c);
 }
 
-/* Inline colour markup (docs/08-inline-color.md). Marker cells travel
+/* Inline color markup (docs/08-inline-color.md). Marker cells travel
    INSIDE the text: the soft-80 renderer draws anything below 0x20 as a
    space (soft80.s clamps an underflowing font index to glyph 0), so a
    marker costs the column the proxy swallowed a space from. Nothing
@@ -145,8 +145,8 @@ void ui_blit_row(uint8_t row, const uint8_t* cells, uint8_t color) {
 }
 
 #ifdef SOFT80
-/* Per-PAIR colour for one chat row. The C64's matrix is one entry per
-   8x8 cell = two soft-80 glyphs, so a pair takes the run colour when it
+/* Per-PAIR color for one chat row. The C64's matrix is one entry per
+   8x8 cell = two soft-80 glyphs, so a pair takes the run color when it
    holds a run glyph; the proxy's space-swallow means the only cells that
    can be caught by that granularity are the marker-spaces themselves.
    Markers are rewritten to spaces in place - rowbuf is scratch that
@@ -154,9 +154,9 @@ void ui_blit_row(uint8_t row, const uint8_t* cells, uint8_t color) {
 /* Non-static: the asm colorize_row (colorize.s) fills it. */
 uint8_t matbuf[40];
 
-/* The 80-cell scan + 40-byte fill, per coloured chat row, lives in
+/* The 80-cell scan + 40-byte fill, per colored chat row, lives in
    colorize.s as a bit-exact port of the old C loop (marker cells -> run
-   colour + rewrite to space; matbuf[i>>1] holds the run). */
+   color + rewrite to space; matbuf[i>>1] holds the run). */
 uint8_t __fastcall__ colorize_row(uint8_t* buf, uint8_t carry, uint8_t base);
 
 /* Chat rows only: chrome (status, title, editor) never carries markers
@@ -206,7 +206,7 @@ void ui_blit_span(uint8_t row, const uint8_t* cells, uint8_t first,
 
 /* --- chat ring ------------------------------------------------------ */
 
-/* Colour-run state for the inline markup (defined with the append path
+/* Color-run state for the inline markup (defined with the append path
    below; declared here because commit_line records the carry). */
 static uint8_t run_color, run_at_line_start;
 
@@ -217,11 +217,11 @@ static void cur_reset(void) {
 
 static void commit_line(void) {
     memcpy(line_text[line_head], cur, TEXT_COLS);
-    /* Wrap carry (docs/08-inline-color.md §4): the colour run in force
+    /* Wrap carry (docs/08-inline-color.md §4): the color run in force
        when this line STARTED rides the spare high nibble, so a run that
        crosses the break resumes without the proxy re-emitting a marker.
        Costs no RAM. The rainbow sentinel is stored whole and never
-       carries - which is why the palette forbids colour 15, so an
+       carries - which is why the palette forbids color 15, so an
        encoded byte can never be mistaken for it. */
 #ifdef SOFT80
     line_color[line_head] = (cur_color == 0xFF)
@@ -260,8 +260,8 @@ void chat_start(uint8_t role) {
     view_scroll = 0;
 }
 
-/* Recolour the lines that follow. Closes the current line at the old
-   colour first, so each call cleanly begins a new run of same-coloured
+/* Recolor the lines that follow. Closes the current line at the old
+   color first, so each call cleanly begins a new run of same-colored
    lines within one chat block. Works in both builds: the 40-col path
    stores cur_color per line, the soft-80 path encodes it as the base. */
 void chat_color(uint8_t color) {
@@ -306,8 +306,8 @@ void chat_append_ascii_char(uint8_t c) {
            word like that space did, then leads the next one.
            40 columns consumes markers without storing them: a cell there
            is a screen code, so 0x01-0x1E would print as letters. The
-           hardware could colour per character, but that build paints one
-           colour per row and adventure ships on soft-80. */
+           hardware could color per character, but that build paints one
+           color per row and adventure ships on soft-80. */
         flush_word();
         run_color = c & 0x0F;
 #ifdef SOFT80

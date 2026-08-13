@@ -252,14 +252,14 @@ class MusicDirectiveFilter:
         self.roll_texts = []  # rendered [dice: ...] lines, for strip_notes
 
     # Openers worth holding a partial tail for (see _could_become_directive)
-    # Colour markup is NOT extracted here - the tags stay in the text so
+    # Color markup is NOT extracted here - the tags stay in the text so
     # saved history and the model's own context keep them (see
     # docs/08-inline-color.md); they are turned into marker cells at
     # egress. They are listed only so a tag split across stream chunks
     # is held back instead of going out half-written.
     _PREFIXES = ("[[MUSIC:", "[[IMAGE:", "[[STATE:", "[[MAP:", "[[ROLL:",
                  "[MUSIC:", "[IMAGE:", "[MAP:",
-                 "[COLOR", "[COLOUR", "[/COLOR", "[/COLOUR")
+                 "[COLOR", "[COLOR", "[/COLOR", "[/COLOR")
 
     def _extract(self, text: str, final: bool = False) -> str:
         def grab(m):

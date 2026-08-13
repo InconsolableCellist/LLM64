@@ -163,7 +163,7 @@ class ClientHandler:
                 await self.protocol.process_byte(data[0])
 
         except asyncio.CancelledError:
-            self.logger.info("Client handler cancelled")
+            self.logger.info("Client handler canceled")
         except Exception as e:
             self.logger.error(f"Error handling client: {e}")
         finally:

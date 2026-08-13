@@ -75,7 +75,7 @@ static void demo_paint(HWND hwnd, HDC hdc)
              "Drag the caption. Drag any edge or corner to resize - the\r\n"
              "corner grips are 22 px, as 3.1's are, and the ticks in the\r\n"
              "border show you where they end.\r\n\r\n"
-             "The menu bar is ours too: white, as 3.1's is, not the grey\r\n"
+             "The menu bar is ours too: white, as 3.1's is, not the gray\r\n"
              "95 changed it to. The popups are real HMENUs handed to\r\n"
              "TrackPopupMenu, so arrow keys and mnemonics still work.",
              -1, &r, DT_LEFT | DT_TOP | DT_NOPREFIX);

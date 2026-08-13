@@ -2,7 +2,7 @@
 """Listen to what the selector actually chooses, mood by mood.
 
 The tags say what a tune is FOR. Nothing in them says whether the result
-is pleasant, and a soundtrack that is correctly labelled and unlistenable
+is pleasant, and a soundtrack that is correctly labeled and unlistenable
 is a failed feature. The SID library has tools/sid_review.py for exactly
 this reason.
 

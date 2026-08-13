@@ -133,7 +133,7 @@ model = "gemini-2.5-flash-image"
 #   you move it here instead; setting both applies both.
 #
 #   For a C64 client, style_prefix's built-in text is already right: bold
-#   16-colour, flat areas, strong silhouettes - which is what survives a
+#   16-color, flat areas, strong silhouettes - which is what survives a
 #   160x200 dither. For a Windows 3.11 / DOS client, more detail survives,
 #   so a VGA look pays off:
 #

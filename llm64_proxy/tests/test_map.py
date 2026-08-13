@@ -327,7 +327,7 @@ for ln in lines:
     ok("line fits 77 columns", len(ln) <= 77, f"{len(ln)}: {ln!r}")
     ok("no bold markup in the art", '**' not in ln, ln)
 
-# What the client actually receives, one colour tag per line as the
+# What the client actually receives, one color tag per line as the
 # proxy sends it: the tag costs one column, the close costs one more.
 wire = ["[color=cyan]" + ln for ln in lines]
 wire[-1] += "[/color]"
@@ -335,9 +335,9 @@ for ln in wire:
     cols = len(colorize_for_wire(ln))
     ok("wire line fits 78 columns", cols <= 78, f"{cols}: {ln!r}")
     ok("no line is exactly 80", cols != 80, ln)
-ok("exactly one colour run is opened",
+ok("exactly one color run is opened",
    sum(x.count('[color=') for x in wire) == len(wire), wire)
-ok("the colour run is closed exactly once",
+ok("the color run is closed exactly once",
    sum(x.count('[/color]') for x in wire) == 1, wire)
 
 body = "\n".join(lines)

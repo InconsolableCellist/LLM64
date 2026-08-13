@@ -40,7 +40,7 @@ supported in Win32.
 
 The hard part is that **modern Windows will draw your window for you**,
 and it will draw it as Windows 11. The title bar, the borders, the system
-colours, the menus, the scrollbars and the file dialog are all things the
+colors, the menus, the scrollbars and the file dialog are all things the
 OS supplies, and every one of them is wrong by 30 years. Keeping the
 retro look means taking over that drawing. That is where the real lines
 of code are, and it is a design decision, not a port.
@@ -125,11 +125,11 @@ buttons, and on Windows 11 rounded corners and a drop shadow. There is no
 flag that gives you a 1993 caption. This is the single most jarring thing
 and the only fix is to own the non-client area.
 
-**2. The system colour scheme.** With no visual-styles manifest you get
-*classic drawing* but *modern colours*: `COLOR_BTNFACE` is 240,240,240,
-not the 3.1 grey of C0C0C0, and `COLOR_MENU` is white. You cannot change
+**2. The system color scheme.** With no visual-styles manifest you get
+*classic drawing* but *modern colors*: `COLOR_BTNFACE` is 240,240,240,
+not the 3.1 gray of C0C0C0, and `COLOR_MENU` is white. You cannot change
 this per process -- `SetSysColors` is global and DWM ignores much of it.
-The code already helps itself here: most of its greys come from
+The code already helps itself here: most of its grays come from
 `GetStockObject(LTGRAY_BRUSH)`, which is a hardcoded C0C0C0 and survives.
 But the 11 `GetSysColor`/`GetSystemMetrics` calls will return 2026
 values.
@@ -140,7 +140,7 @@ Windows 95, not Windows 3.1: three caption buttons instead of 3.1's
 sysmenu box plus a down-arrow and an up-arrow. Closer than the frame, but
 still two years wrong.
 
-**4. Menus.** Classic-drawn but with modern colours, per (2).
+**4. Menus.** Classic-drawn but with modern colors, per (2).
 
 **5. Scrollbars.** The closest of the lot. Classic Win32 scrollbars are
 very nearly the 3.1 article; the deltas are the arrow glyph and hot-track
@@ -200,7 +200,7 @@ rounding the corners off a 1993 window.
 ## 4. Fidelity tiers
 
 **Tier 0 -- it runs.** The §1 port, nothing else. Retro content inside a
-Windows 11 frame with 2026 greys. *1-2 days.* Useful as a checkpoint;
+Windows 11 frame with 2026 grays. *1-2 days.* Useful as a checkpoint;
 not shippable as an aesthetic.
 
 **Tier 1 -- 1993 inside the frame.** *~700-1,000 new lines, 3-5 days.*
@@ -224,7 +224,7 @@ not shippable as an aesthetic.
 **Tier 2 -- own the window frame.** *~600-1,000 lines, 4-7 days, and the
 real risk.*
 - The frame becomes `WS_POPUP` with no NC area, and you draw the 3.1
-  caption yourself: solid navy when active, grey when not, bold white
+  caption yourself: solid navy when active, gray when not, bold white
   System-font title, sysmenu box on the left, down-arrow and up-arrow on
   the right, no close button. Plus the 4px 3D sizing border and
   `WM_NCHITTEST` for the eight resize zones and the caption drag.
@@ -254,7 +254,7 @@ decision made while looking at a screenshot of Tier 1.
 ## 5. What gets *better*
 
 Not all of this is loss. The Win32 build fixes several things the README
-currently has to apologise for:
+currently has to apologize for:
 
 - **Accelerators work.** `Ctrl+F4`, `Ctrl+F5`, `F1`/`F2`/`F3` are dead
   under Wine's 16-bit layer, which is the biggest caveat in the client
@@ -313,7 +313,7 @@ two of them could move the estimate:
 | | New/changed lines | Days |
 |---|---|---|
 | Tier 0 -- mechanical port, one tree, two targets | ~300-400 diff | 1-2 |
-| Tier 1 -- colours, owner-drawn controls, own font, own file dialog | ~700-1,000 | 3-5 |
+| Tier 1 -- colors, owner-drawn controls, own font, own file dialog | ~700-1,000 | 3-5 |
 | Tier 2 -- own the frame and the child captions | ~600-1,000 | 4-7 |
 | Tier 3 -- integer pixel scaling | ~250-400 | 2-3 |
 

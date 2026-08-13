@@ -27,7 +27,7 @@ from typing import Dict
 # renumbering one silently misreads every old client.
 
 CAP_ZERO_WIDTH_MARKERS = 0x0001  # markers occupy no screen cell
-CAP_RICH_TEXT          = 0x0002  # italic/underline/heading, 64 colours
+CAP_RICH_TEXT          = 0x0002  # italic/underline/heading, 64 colors
 CAP_DIB_IMAGES         = 0x0004  # images as 8-bit DIBs (IMG_BEGIN fmt=2)
 CAP_MIDI               = 0x0008  # music as .MID files (MIDI_* frames)
 CAP_STATE_JSON         = 0x0020  # the adventure STATE block, forwarded
@@ -39,10 +39,10 @@ CAP_MAP_DATA           = 0x0080  # the map as structure (MAP_DATA)
 CAP_PRINT_GDI          = 0x0010  # phase 6: a printer DC sink
 
 
-# --- the wire colour table --------------------------------------------
+# --- the wire color table --------------------------------------------
 #
 # Slots 1-15 are the C64's, in the C64's order, because the one-byte
-# colour marker (0x10|c) encodes exactly this and both clients already
+# color marker (0x10|c) encodes exactly this and both clients already
 # render it. Slots 16+ exist only in the extended marker and so only for
 # a client that asked for rich text.
 #
@@ -118,14 +118,14 @@ class ClientProfile:
     # Does an in-band marker occupy a screen column?
     #
     # On the C64 it does: cell values 0x00-0x1F draw as a space, which is
-    # what makes colour free, and the transform therefore SWALLOWS the
+    # what makes color free, and the transform therefore SWALLOWS the
     # space beside a tag so the spacing comes out identical to the plain
     # text. A client that draws markers as zero-width must not have that
-    # space taken from it, or every coloured phrase loses the space on
+    # space taken from it, or every colored phrase loses the space on
     # each side of it ("You see asteel doorahead.").
     marker_cells: bool = True
 
-    # Italic, underline, headings, and the extended colour marker.
+    # Italic, underline, headings, and the extended color marker.
     rich_text: bool = False
 
     # Images leave as an 8-bit DIB rendered from the retained original
@@ -170,7 +170,7 @@ class ClientProfile:
     # frames), for a client that draws its own.
     map_data: bool = False
 
-    # Colour name -> wire slot.
+    # Color name -> wire slot.
     palette: Dict[str, int] = field(default_factory=lambda: PALETTE_C64)
 
     @property

@@ -93,7 +93,7 @@ int  chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result);
  */
 /* Tell the chrome about the MDI client, so a MAXIMISED child's sysmenu
    box and restore button appear in the menu bar - which is where 3.1 puts
-   them, and the one piece of MDI's behaviour that cannot come free,
+   them, and the one piece of MDI's behavior that cannot come free,
    because the bar is drawn rather than handed to MDI. */
 void chrome_set_mdi(HWND mdiclient);
 
@@ -164,7 +164,7 @@ void chrome_checkbox_face(HDC hdc, int x, int y, int checked, int disabled);
  * for these messages. It reads the dialog procedure's own return value.
  * Routed the usual way the brush arrives as TRUE, the control falls back
  * to a default, and the symptom is a label that erases white and then
- * draws its text on grey. So it goes FIRST, ahead of chrome_dialog_msg,
+ * draws its text on gray. So it goes FIRST, ahead of chrome_dialog_msg,
  * and returns directly:
  *
  *     LONG r;
@@ -184,7 +184,7 @@ int  chrome_ctlcolor(UINT msg, UINT wParam, LONG lParam, LONG *result);
  * the bare triangle every later Windows uses.
  *
  * So this is a control of our own. It is the only piece of chrome here
- * that has to handle behaviour as well as pixels - auto-repeat on the
+ * that has to handle behavior as well as pixels - auto-repeat on the
  * arrows and the trough, and a draggable thumb - because unlike a menu
  * or a caption button there is no system component left underneath to
  * do it.

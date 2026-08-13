@@ -6,7 +6,7 @@ is written to data/adventures/. A world you liked can then be replayed
 with a different character, and an expensive prep pass is never paid for
 twice.
 
-Server-side for the same reason favourites are: the C64 cannot hold
+Server-side for the same reason favorites are: the C64 cannot hold
 them, and they should outlive a disk swap.
 """
 

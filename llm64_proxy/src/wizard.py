@@ -67,9 +67,9 @@ def scroll_host(parent):
     Pack the fixed furniture (a button row) BEFORE calling this: the
     canvas takes every pixel the earlier packs left.
     """
-    # tk.Canvas takes its colour from the X defaults, not the ttk theme,
+    # tk.Canvas takes its color from the X defaults, not the ttk theme,
     # so an unstyled one is a dark slab wherever the content does not
-    # reach the bottom of the page. Borrow the colour it is sitting on.
+    # reach the bottom of the page. Borrow the color it is sitting on.
     canvas = tk.Canvas(parent, highlightthickness=0,
                        background=ttk.Style().lookup('TFrame', 'background'))
     vsb = ttk.Scrollbar(parent, orient='vertical', command=canvas.yview)
@@ -292,7 +292,7 @@ class SetupWizard(tk.Toplevel):
                    font=('TkDefaultFont', 12, 'bold'), pad=(0, 0, 0, 6))
         if not step.required:
             self._para('Optional - the proxy runs without this.',
-                       colour='#777', pad=(0, 0, 0, 6))
+                       color='#777', pad=(0, 0, 0, 6))
         self._para(step.intro)
         if step.fields:
             self._fields_box(step.fields)
@@ -300,9 +300,9 @@ class SetupWizard(tk.Toplevel):
         if builder:
             builder(step)
         if step.outro:
-            self._para(step.outro, colour='#555', pad=(0, 10, 0, 0))
+            self._para(step.outro, color='#555', pad=(0, 10, 0, 0))
         if step.revisit:
-            self._para(step.revisit, colour='#555', pad=(0, 10, 0, 0))
+            self._para(step.revisit, color='#555', pad=(0, 10, 0, 0))
 
         self.btn_back.state(['disabled'] if index == 0 else ['!disabled'])
         last = index == len(STEPS) - 1
@@ -337,12 +337,12 @@ class SetupWizard(tk.Toplevel):
 
     # ---- page furniture ----
 
-    def _para(self, text, colour=None, font=None, pad=(0, 0, 0, 8),
+    def _para(self, text, color=None, font=None, pad=(0, 0, 0, 8),
               parent=None):
         lbl = ttk.Label(parent or self.page, text=text, wraplength=WRAP,
                         justify='left')
-        if colour:
-            lbl.configure(foreground=colour)
+        if color:
+            lbl.configure(foreground=color)
         if font:
             lbl.configure(font=font)
         lbl.pack(anchor='w', padx=(pad[0], 0),
@@ -434,10 +434,10 @@ class SetupWizard(tk.Toplevel):
             status.configure(text='not checked yet', foreground='#777')
             text = ''
         else:
-            colour = {True: '#227722', False: '#cc2222'}.get(result.ok,
+            color = {True: '#227722', False: '#cc2222'}.get(result.ok,
                                                              '#777')
             status.configure(text=f'{MARKS[result.ok]} {result.summary}',
-                             foreground=colour)
+                             foreground=color)
             text = result.detail
         detail.configure(state='normal')
         detail.delete('1.0', 'end')
@@ -786,7 +786,7 @@ class SetupWizard(tk.Toplevel):
         if env:
             self._para('OPENAI_API_KEY is set in this environment, so it '
                        'is what the proxy will use whatever the key field '
-                       'says.', colour='#b8860b')
+                       'says.', color='#b8860b')
         self._check_box((('Test the connection', self._check_llm),))
 
     def _page_network(self, _step):
@@ -826,7 +826,7 @@ class SetupWizard(tk.Toplevel):
         ttk.Label(box, foreground='#777', wraplength=WRAP, justify='left',
                   font=('TkDefaultFont', 8),
                   text='What you get back is the C64 render - the same '
-                       '16-colour conversion the client is sent, not the '
+                       '16-color conversion the client is sent, not the '
                        'original. The launcher\'s Illustrations tab shows '
                        'the original and the Windows version beside it, '
                        'and keeps a history to compare against.').pack(
@@ -911,10 +911,10 @@ class SetupWizard(tk.Toplevel):
         for title, body in setupwiz.music_commands(base):
             box = ttk.LabelFrame(self.page, text=title, padding=8)
             box.pack(fill='x', pady=(4, 8))
-            # An unstyled tk.Text takes its colours from the X defaults
+            # An unstyled tk.Text takes its colors from the X defaults
             # rather than the ttk theme, which on some servers is white
             # on near-black in the middle of a light window. Borrow an
-            # entry's colours so it reads as the block of text to copy
+            # entry's colors so it reads as the block of text to copy
             # that it is - disabled still selects and copies.
             text = tk.Text(box, height=body.count('\n') + 2, wrap='word',
                            font=('TkFixedFont', 9), relief='flat',
@@ -955,9 +955,9 @@ class SetupWizard(tk.Toplevel):
                 continue
             result = self.results.get(step.key)
             mark = MARKS[getattr(result, 'ok', None)]
-            colour = {True: '#227722', False: '#cc2222'}.get(
+            color = {True: '#227722', False: '#cc2222'}.get(
                 getattr(result, 'ok', None), '#777')
-            ttk.Label(box, text=mark, foreground=colour, width=2).grid(
+            ttk.Label(box, text=mark, foreground=color, width=2).grid(
                 row=row, column=0, sticky='w')
             ttk.Label(box, text=step.title + ('' if step.required
                                               else ' (optional)')).grid(
@@ -986,7 +986,7 @@ class SetupWizard(tk.Toplevel):
         self._para('Reopen this wizard any time with the Setup wizard '
                    'button in the launcher. Nothing here is one-way, and '
                    'the steps you left alone are still waiting.',
-                   colour='#555', pad=(0, 8, 0, 0))
+                   color='#555', pad=(0, 8, 0, 0))
 
     # ---- finishing ----
 
@@ -1035,7 +1035,7 @@ class SetupWizard(tk.Toplevel):
         if not messagebox.askyesno(
                 'Discard these changes?',
                 f'The wizard has already written what you finished. '
-                f'Cancelling puts it back the way it was:\n\n{names}\n\n'
+                f'Canceling puts it back the way it was:\n\n{names}\n\n'
                 f'Anything you set in this run is lost.',
                 parent=self, default='no'):
             return
@@ -1046,7 +1046,7 @@ class SetupWizard(tk.Toplevel):
                 'Some of it went back, some did not:\n\n'
                 + '\n'.join(problems), parent=self)
         else:
-            self._say('Cancelled - config.toml is back as it was')
+            self._say('Canceled - config.toml is back as it was')
         self._close()
 
     def _close(self):

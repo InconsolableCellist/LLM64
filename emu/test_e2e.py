@@ -455,7 +455,7 @@ def main():
 
                 # Adventure mode. /adventure now opens the chooser
                 # (docs/09-adventure-setup.md); option 1 is the old
-                # behaviour - kickoff straight through the API, with the
+                # behavior - kickoff straight through the API, with the
                 # mock answering the hidden 'Begin the adventure'.
                 monitor.keyboard_feed('/adventure\r')
                 wait_for_screen(monitor, r'surprise me', 30,
@@ -1179,7 +1179,7 @@ def main():
                         raise AssertionError(
                             f'jukebox should show manual mode:\n{scr}')
                     print('  PASS: jukebox shows manual music mode')
-                    # 'f' favourites the playing tune. Fed UNSHIFTED,
+                    # 'f' favorites the playing tune. Fed UNSHIFTED,
                     # which is the case that was broken: cc65 compiles a
                     # 'f' literal to PETSCII, so comparing it against the
                     # ASCII from petscii_to_ascii() only ever matched
@@ -1187,8 +1187,8 @@ def main():
                     monitor.keyboard_feed('f')
                     wait_for_screen(monitor, r'\*favorite\*', 15,
                                     artifacts, f'{tag}-jb-fav')
-                    print('  PASS: jukebox f (unshifted) marks a favourite')
-                    # 'f' favourites the playing tune: the panel marks
+                    print('  PASS: jukebox f (unshifted) marks a favorite')
+                    # 'f' favorites the playing tune: the panel marks
                     # it immediately and the proxy ACKs.
                     monitor.keyboard_feed_petscii(b'\x85')   # F1 closes
                     wait_ready(monitor, 15, artifacts, f'{tag}-jb-closed')
@@ -1208,7 +1208,7 @@ def main():
                     # /adventure front door (docs/09-adventure-setup.md):
                     # chooser -> four stages -> review -> edit one line
                     # and come back -> begin. Zero client bytes, so this
-                    # is purely proxy behaviour seen through the C64.
+                    # is purely proxy behavior seen through the C64.
                     # Silence first, or the music assertion below is
                     # vacuous - an earlier test may have left a tune
                     # running. /auto hands the soundtrack back, so the
@@ -1372,7 +1372,7 @@ def main():
                     # state block's `location` (docs/10), so one turn in
                     # there is exactly one room. This is also the ONLY
                     # check that the leading-space trick survives the
-                    # client - every map line opens with a colour tag so
+                    # client - every map line opens with a color tag so
                     # the art keeps its indentation (docs/10 5.3), and
                     # that was read from source, never seen on a screen.
                     monitor.keyboard_feed('/map\r')
@@ -1393,11 +1393,11 @@ def main():
                     wait_for_screen(monitor, r'chat mode', 20,
                                     artifacts, f'{tag}-adv-done')
 
-                    # Inline colour (docs/08-inline-color.md). Two
+                    # Inline color (docs/08-inline-color.md). Two
                     # things must hold: the SHADOW shows plain text with
                     # ordinary spacing - proving markers render as the
                     # space they replaced, not as glyphs or gaps - and
-                    # the colour MATRIX actually carries the run colour.
+                    # the color MATRIX actually carries the run color.
                     monitor.keyboard_feed('colortest\r')
                     scr = wait_for_screen(monitor, r'steel door', 40,
                                           artifacts, f'{tag}-color')
@@ -1409,17 +1409,17 @@ def main():
                             f'space:\n{line!r}')
                     if '[' in line or 'color' in line.lower():
                         raise AssertionError(f'tag leaked: {line!r}')
-                    print('  PASS: colour markers render as plain spacing')
-                    # GREY is 12; the matrix stores fg in the high nibble,
+                    print('  PASS: color markers render as plain spacing')
+                    # GRAY is 12; the matrix stores fg in the high nibble,
                     # one entry per 8x8 cell (two characters).
                     row = scr.splitlines().index(line)
                     mat = monitor.read_memory(0xCC00 + row * 40,
                                               0xCC00 + row * 40 + 39)
                     if not any((b >> 4) == 12 for b in mat):
                         raise AssertionError(
-                            f'no grey pairs in the colour matrix for the '
-                            f'coloured row: {bytes(mat).hex()}')
-                    print('  PASS: colour matrix carries the run colour')
+                            f'no gray pairs in the color matrix for the '
+                            f'colored row: {bytes(mat).hex()}')
+                    print('  PASS: color matrix carries the run color')
                     wait_ready(monitor, 40, artifacts, f'{tag}-color-done')
                     # Picture tally in the status corner. This
                     # conversation is fresh, so it must read 00 - the

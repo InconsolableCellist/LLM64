@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inline colour markup -> marker cells. Run: python3 tests/test_markup.py
+"""Inline color markup -> marker cells. Run: python3 tests/test_markup.py
 
 The property that matters most is SPACING: a marker occupies a column,
 so the rendered line must come out character-for-character identical to
@@ -30,17 +30,17 @@ def rendered(data: bytes) -> str:
                    for b in data)
 
 
-GREY = M_COLOR_BASE | PALETTE['grey']
+GRAY = M_COLOR_BASE | PALETTE['gray']
 RED = M_COLOR_BASE | PALETTE['red']
 
 # --- the headline case ------------------------------------------------
-src = "the [color=grey]steel door[/color] to the north"
+src = "the [color=gray]steel door[/color] to the north"
 out = colorize_for_wire(src)
 check("marker replaces the space before the tag", out,
-      b"the" + bytes([GREY]) + b"steel door" + bytes([M_CLOSE]) + b"to the north")
+      b"the" + bytes([GRAY]) + b"steel door" + bytes([M_CLOSE]) + b"to the north")
 check("spacing survives", rendered(out), "the steel door to the north")
 
-# --- punctuation is hoisted so it colours with the word ---------------
+# --- punctuation is hoisted so it colors with the word ---------------
 out = colorize_for_wire("a [color=red]sword[/color], rusted")
 check("close hoisted past the comma", out,
       b"a" + bytes([RED]) + b"sword," + bytes([M_CLOSE]) + b"rusted")
@@ -56,9 +56,9 @@ out = colorize_for_wire("go **north** now")
 check("bold markers", out,
       b"go " + bytes([M_BOLD_ON]) + b"north" + bytes([M_BOLD_OFF]) + b" now")
 
-# --- unknown colours strip rather than leak ---------------------------
+# --- unknown colors strip rather than leak ---------------------------
 out = colorize_for_wire("a [color=chartreuse]frog[/color] sits")
-check("unknown colour strips the tag", out, b"a frog" + bytes([M_CLOSE]) + b"sits")
+check("unknown color strips the tag", out, b"a frog" + bytes([M_CLOSE]) + b"sits")
 if b'[' in out or b'color' in out.lower():
     failures.append(f"tag leaked to the wire: {out!r}")
 
@@ -67,26 +67,26 @@ check("malformed open left alone but never as a tag",
       b'[color]' in out, True)
 
 # --- spelling / spacing / case tolerance ------------------------------
-for variant in ("[colour=grey]", "[COLOR: grey]", "[ color = Grey ]"):
+for variant in ("[colour=grey]", "[COLOR: gray]", "[ color = Gray ]"):
     out = colorize_for_wire("x " + variant + "y[/color] z")
     check(f"tolerates {variant}", out,
-          b"x" + bytes([GREY]) + b"y" + bytes([M_CLOSE]) + b"z")
+          b"x" + bytes([GRAY]) + b"y" + bytes([M_CLOSE]) + b"z")
 
 # --- nesting-free sanity: two runs in a line --------------------------
-out = colorize_for_wire("a [color=red]b[/color] and [color=grey]c[/color] d")
+out = colorize_for_wire("a [color=red]b[/color] and [color=gray]c[/color] d")
 check("two runs", rendered(out), "a b and c d")
 
 # --- strip_markup for anything that is not the C64 --------------------
-check("strip", strip_markup("the [color=grey]steel door[/color], ok"),
+check("strip", strip_markup("the [color=gray]steel door[/color], ok"),
       "the steel door, ok")
 check("strip bold", strip_markup("go **north**"), "go north")
 
 # --- must not collide with the other bracket syntaxes -----------------
 for probe in ("[color=red]", "[/color]"):
     if DIRECTIVE_RE.search(probe):
-        failures.append(f"directive filter matched colour markup: {probe!r}")
+        failures.append(f"directive filter matched color markup: {probe!r}")
     if ROLL_RE.search(probe):
-        failures.append(f"dice matched colour markup: {probe!r}")
+        failures.append(f"dice matched color markup: {probe!r}")
 for probe in ("[[MUSIC: eerie]]", "[MUSIC: eerie]", "[roll:1d20]"):
     if colorize_for_wire(probe) != probe.encode():
         failures.append(f"colorize mangled another syntax: {probe!r}")
@@ -96,11 +96,11 @@ f = MusicDirectiveFilter()
 parts, held = [], "the [color=gr"
 parts.append(f.feed(held))
 if '[color=gr' in parts[0]:
-    failures.append("partial colour tag was released to the wire")
-parts.append(f.feed("ey]door[/color] there") + f.flush())
+    failures.append("partial color tag was released to the wire")
+parts.append(f.feed("ay]door[/color] there") + f.flush())
 whole = ''.join(parts)
 check("held tag reassembles intact", whole,
-      "the [color=grey]door[/color] there")
+      "the [color=gray]door[/color] there")
 
 # --- streaming: markup cut across chunks must survive -----------------
 # The transform sees arbitrary slices, so anything that could still
@@ -113,7 +113,7 @@ def stream(chunks):
     out.extend(colorize_for_wire(hold))
     return bytes(out)
 
-whole = "the [color=grey]steel door[/color], go **north** now"
+whole = "the [color=gray]steel door[/color], go **north** now"
 want = colorize_for_wire(whole)
 for cut in range(1, len(whole)):
     got = stream([whole[:cut], whole[cut:]])
@@ -131,7 +131,7 @@ if stream(list(whole)) != want:
 #
 # The C64 swallows the space beside a tag because its marker occupies a
 # column. A client whose markers are zero-width must keep that space, or
-# every coloured phrase loses one on each side.
+# every colored phrase loses one on each side.
 
 from src.markup import (M_ITALIC_ON, M_ITALIC_OFF, M_ULINE_ON, M_ULINE_OFF,
                         M_HEAD_ON, M_HEAD_OFF, M_ESC, ESC_COLOR,
@@ -143,7 +143,7 @@ from src.profiles import (C64, WIN16, ClientProfile, from_hello,
 
 def visible(data: bytes, profile) -> str:
     """What the client actually shows. C64 markers draw as a space;
-    zero-width markers draw as nothing at all, and the extended colour
+    zero-width markers draw as nothing at all, and the extended color
     marker takes its two operand bytes with it."""
     out = []
     i = 0
@@ -166,7 +166,7 @@ def visible(data: bytes, profile) -> str:
 
 
 plain = "You see a steel door ahead."
-src = "You see a [color=grey]steel door[/color] ahead."
+src = "You see a [color=gray]steel door[/color] ahead."
 
 # The headline defect: identical on screen for BOTH clients, by
 # different means - the C64 by swallowing a space it gets back as a
@@ -176,7 +176,7 @@ check("win16 spacing survives",
       visible(colorize_for_wire(src, WIN16), WIN16), plain)
 check("win16 keeps the space the c64 swallows",
       colorize_for_wire(src, WIN16),
-      b"You see a " + bytes([GREY]) + b"steel door" + bytes([M_CLOSE])
+      b"You see a " + bytes([GRAY]) + b"steel door" + bytes([M_CLOSE])
       + b" ahead.")
 
 # The default must not have moved: every existing caller passes no
@@ -193,7 +193,7 @@ check("rich text emits attribute markers",
       + b", " + bytes([M_ULINE_ON]) + b"signed" + bytes([M_ULINE_OFF])
       + b", " + bytes([M_HEAD_ON]) + b"Chapter One" + bytes([M_HEAD_OFF]))
 
-# One typeface means the tag strips, exactly as an unknown colour does.
+# One typeface means the tag strips, exactly as an unknown color does.
 # What must never happen is a bracket reaching the screen.
 c64_attr = visible(colorize_for_wire(attr, C64), C64)
 check("a c64 sees the words and none of the tags", c64_attr,
@@ -203,7 +203,7 @@ for bad in ('[', ']', 'i]', 'u]'):
         failures.append(f"attribute tag leaked to the c64 screen: {bad!r} "
                         f"in {c64_attr!r}")
 
-# --- the extended colour marker ---------------------------------------
+# --- the extended color marker ---------------------------------------
 
 check("a slot past 15 uses the three-byte marker",
       colorize_for_wire("a [color=teal]bowl[/color] here", WIN16),
@@ -229,13 +229,13 @@ check("that phrase shows no stray glyph",
           "the [color=darkgrey]slate[/color] roof", WIN16), WIN16),
       "the slate roof")
 
-# The general rule, over the whole palette: no one-byte colour marker may
+# The general rule, over the whole palette: no one-byte color marker may
 # be a byte a client reads as something else.
 for name, slot in PALETTE_RICH.items():
     if slot <= 15 and (0x10 | slot) == M_ESC:
         got = colorize_for_wire(f"a [color={name}]bowl[/color]", WIN16)
         if bytes([M_ESC, ESC_COLOR, ESC_OPERAND_BIAS | slot]) not in got:
-            failures.append(f"colour {name} (slot {slot}) emits a bare "
+            failures.append(f"color {name} (slot {slot}) emits a bare "
                             f"escape byte as a one-byte marker")
 
 # Every operand has to stay clear of NUL, CR/LF and the marker range, or
@@ -245,15 +245,15 @@ for name, slot in PALETTE_RICH.items():
         continue
     operand = ESC_OPERAND_BIAS | slot
     if operand < 0x20 or operand in (0x0A, 0x0D) or operand > 0x7F:
-        failures.append(f"colour {name} (slot {slot}) encodes to an unsafe "
+        failures.append(f"color {name} (slot {slot}) encodes to an unsafe "
                         f"operand {operand:#04x}")
 
 # A name the C64 has no slot for must strip rather than encode to
-# something else - the C64 renders 0x1B as a space, not as a colour.
+# something else - the C64 renders 0x1B as a space, not as a color.
 teal_c64 = colorize_for_wire("a [color=teal]bowl[/color] here", C64)
 if M_ESC in teal_c64:
-    failures.append("extended colour marker reached the c64")
-check("an out-of-range colour strips on the c64",
+    failures.append("extended color marker reached the c64")
+check("an out-of-range color strips on the c64",
       visible(teal_c64, C64), "a bowl here")
 
 # Rich names must not have redefined a name the C64 already had, or the
@@ -266,7 +266,7 @@ for name, slot in PALETTE_C64.items():
 check("rich text gets a real blue", PALETTE_RICH['blue'], 6)
 check("...and the c64 keeps its substitute", PALETTE_C64['blue'], 14)
 
-# Every palette slot must name a real colour.
+# Every palette slot must name a real color.
 for name, slot in PALETTE_RICH.items():
     if slot >= len(WIRE_COLORS):
         failures.append(f"{name} -> slot {slot}, past WIRE_COLORS")

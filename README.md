@@ -81,7 +81,7 @@ Join my Discord for support/updates, and/or my X/Twitter:
 | Built with | cc65 (C + 6502 asm) | Open Watcom V2, cross-compiled from Linux | mingw-w64, from the same sources |
 | Talks to the proxy through | a SwiftLink-compatible 6551 ACIA at `$DE00`, dialling Hayes AT | a TCP socket, Winsock 1.1 | the same socket, Winsock 2 |
 | Screen | 80 columns of soft-80 bitmap on a 64 KB machine | MDI: a desk of windows you arrange | the same desk, its 3.1 chrome drawn by the client |
-| Pictures | 160x200 multicolour, Pepto palette, dithered | 320x200 8-bit DIB, period palette, dithered | the same DIBs |
+| Pictures | 160x200 multicolor, Pepto palette, dithered | 320x200 8-bit DIB, period palette, dithered | the same DIBs |
 | Music | SIDs relocated to `$B000` and streamed into RAM | `.MID` files through the MIDI Mapper | `.MID` files through the built-in GS synth |
 | `/print` | a real printer on IEC device 4 (or the proxy's CUPS queue) | virtual paper in a Notebook window (or real printer with CUPS) | the same Notebook |
 | Install steps | [c64_client/README.md](c64_client/README.md) | [win311_client/README.md](win311_client/README.md) | [win311_client/README.md](win311_client/README.md#on-modern-windows-10-and-11) |
@@ -166,11 +166,11 @@ Floyd–Steinberg dither) with an LLM-written caption burned into the frame.
 
 The Windows client gets the same picture
 as a 320×200 8-bit DIB (Mode 13h dimensions, a fixed period palette,
-Floyd–Steinberg against it) rather than the C64's 16-colour blob.
+Floyd–Steinberg against it) rather than the C64's 16-color blob.
 
 You can browse past pictures associated with the current conversation using `/pics`
 
-![A generated scene on the C64: multicolour bitmap with the caption burned in](screenshots/c64_pic.png)
+![A generated scene on the C64: multicolor bitmap with the caption burned in](screenshots/c64_pic.png)
 
 The Windows client also has a checkbox to auto-generate a picture on every new room, not just when the narrator chooses.
 
@@ -201,11 +201,11 @@ for how that library is built; the SID library for the C64 is
 ### Home Assistant
 
 Press `o` in the F1 menu and your Home Assistant dashboard comes up on the
-C64: every entity of a Lovelace view, its state coloured by what it means,
+C64: every entity of a Lovelace view, its state colored by what it means,
 and a live graph along the bottom. Rows update by themselves as things
 change -- open a door and the row flips while you watch.
 
-![The Home view on a real C64: two columns of entities, states in colour, a power graph along the bottom](screenshots/c64_homeassistant.jpg)
+![The Home view on a real C64: two columns of entities, states in color, a power graph along the bottom](screenshots/c64_homeassistant.jpg)
 
 Nothing in it is configured per-entity. The screen is derived from *your*
 Lovelace config -- which cards, in what order, under what heading -- plus
@@ -217,10 +217,10 @@ A letter beside a row means you can act on it. What that does depends on
 what the thing is: a switch toggles, a cover or a lock asks first, and
 anything with more than two states gets an editor. The thermostat and the
 sliders get `+`/`-` with the entity's own step and commit on `RETURN`;
-lights get brightness, white temperature and a colour picker made of the
+lights get brightness, white temperature and a color picker made of the
 C64's own sixteen.
 
-![The light editor: brightness and white-temperature bars, the C64 palette as a colour picker, and three presets](screenshots/c64_homeassistant_light.jpg)
+![The light editor: brightness and white-temperature bars, the C64 palette as a color picker, and three presets](screenshots/c64_homeassistant_light.jpg)
 
 `F7` lists your views and dashboards, `F4`/`F6` page a long one, and `R`
 refreshes. Set it up with a `[homeassistant]` block in `config.toml`; the
@@ -360,12 +360,12 @@ Your house, on the C64: a Home Assistant module that shows a Lovelace
 view as an 80-column screen and lets you drive it.
 
 - **The overview.** Every entity of a view on one screen, its state
-  coloured by what it means, a live hires graph along the bottom, and a
+  colored by what it means, a live hires graph along the bottom, and a
   letter beside anything you can act on. Rows update by themselves as
   things change.
 - **Editors for the things that are not toggles.** A setpoint you nudge
   with `+` and `-` and commit with `RETURN`, and a light with
-  brightness, white temperature and a colour picker made of the C64's
+  brightness, white temperature and a color picker made of the C64's
   own sixteen.
 - **It reads your dashboard, not a config file.** Which entities, in
   what order, under what heading comes from your own Lovelace config;

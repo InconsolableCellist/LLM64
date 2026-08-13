@@ -13,7 +13,7 @@
  *
  * (a) is worth an hour before committing to (b). This program is that
  * hour. The captions here are deliberately rough - the question is
- * BEHAVIOURAL, and a pixel-perfect child caption proves nothing about
+ * BEHAVIORAL, and a pixel-perfect child caption proves nothing about
  * whether DefMDIChildProc will fight us.
  *
  * What it has to survive, in order of how likely it is to break:

@@ -14,7 +14,7 @@ client is only ever tested against the proxy released beside it.
 Your house, on the C64.
 
 **Home Assistant on the dashboard screen.** A new overlay module shows a
-Lovelace view as an 80-column screen: every entity, its state in colour,
+Lovelace view as an 80-column screen: every entity, its state in color,
 a live graph along the bottom, and a letter beside anything you can act
 on. Doors, switches and sensors update by themselves as they change --
 no key to press. The thermostat and the lights get editors of their own,
@@ -31,9 +31,9 @@ Point it at somebody else's instance and it renders theirs.
 
 - **The overview**, from any view of any dashboard: two 38-column panes,
   sections kept whole, all 37 entities of a real Home view on one screen
-  with nothing scrolling. Colour says what the state means rather than
+  with nothing scrolling. Color says what the state means rather than
   which domain it came from -- green is nothing to see, red is an open
-  door, yellow is motion, grey is unavailable.
+  door, yellow is motion, gray is unavailable.
 - **Live updates.** The proxy holds one WebSocket and pushes a row when
   a watched entity moves, so a door opening flips the row while you
   watch it. Only rows whose bytes actually changed go on the wire; one
@@ -45,8 +45,8 @@ Point it at somebody else's instance and it renders theirs.
   room. `+` and `-` move the target and nothing is sent until `RETURN`:
   a Z-Wave thermostat answers slowly, and a service call per keypress
   queues writes it cannot keep up with.
-- **A light editor** with brightness, white temperature and colour --
-  and the colour picker is the C64's own sixteen, which is both the joke
+- **A light editor** with brightness, white temperature and color --
+  and the color picker is the C64's own sixteen, which is both the joke
   and the correct size. Which controls appear is read from the light's
   `supported_color_modes`.
 - **Covers, locks and the vacuum ask first.** The default comes from
@@ -73,7 +73,7 @@ Point it at somebody else's instance and it renders theirs.
   wherever its own first two bytes pointed and the machine executed
   whatever was already in the slot. Modules six and seven now have
   theirs.
-- Graphs are rasterised by the proxy and copied by the client. The
+- Graphs are rasterized by the proxy and copied by the client. The
   bitmap lives under the KERNAL, where writes reach RAM but reads return
   ROM, so a read-modify-write per pixel ORed ROM into the picture.
 - Home Assistant frames are paced like images and SIDs. An unpaced
@@ -108,7 +108,7 @@ system as it goes.
 - `LLM32.EXE`, a 32-bit build for Windows 10/11 and Wine. `make both`
   builds it alongside the 16-bit `LLM64.EXE`; `include/llmport.h` is the
   only file that knows which target it is compiling for.
-- The 16-bit build is unchanged in behaviour and still targets real
+- The 16-bit build is unchanged in behavior and still targets real
   3.11, which is the point of building both every time.
 - Two latent bugs the second compiler found: a truncated `MDICREATE`
   result that handed back a nonexistent window on Win32, and a subclass
@@ -156,7 +156,7 @@ the spikes.
 - The input line is multiline: Shift+Enter, grows to four rows, real
   word-grained undo/redo (Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y, Ctrl+_), Up/Down
   history, and Ctrl+V/X spelled out for the 3.1 EDIT control.
-- The transcript selects with the mouse and copies with Ctrl+C -- colour
+- The transcript selects with the mouse and copies with Ctrl+C -- color
   markers skipped, soft wraps rejoined -- and your own lines sit on a
   faint band. Escape clears the selection first, then cancels the reply.
 - The mouse wheel scrolls the transcript, by both routes Windows
@@ -233,7 +233,7 @@ toolbar, and it is re-runnable by design.
   created. It names the files and asks first.
 - Finishing writes a `[wizard]` table into `config.toml`. That table is
   the only thing stopping it opening unasked; delete it to get the
-  first-run behaviour back.
+  first-run behavior back.
 
 ### Proxy -- illustrations
 

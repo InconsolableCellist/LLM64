@@ -67,7 +67,7 @@ instead of a constant. See §7.
    C64 client                    │  wire  │        proxy
    ───────────────────────────── │ ────── │ ─────────────────────────
    scrollback, wrapping, editor  │        │  conversation + history
-   keyboard, screen, colours     │ framed │  modes / adventure / map
+   keyboard, screen, colors     │ framed │  modes / adventure / map
    SID playback, bitmap display  │ binary │  LLM streaming, dice
    IEC printer channel           │ frames │  image gen + C64 conversion
                                  │        │  SID library + relocation
@@ -89,8 +89,8 @@ Three facts make the port unusually cheap:
    is the adventure map, drawn to `MAP_WIDTH = 78`, and `/print`, laid
    out to `printer_width`. So a Windows client can be any width it likes
    for free.
-3. **The colour model is a byte stream, not an escape language.**
-   `0x01` = close, `0x02`/`0x03` = bold on/off, `0x10|c` = colour *c*
+3. **The color model is a byte stream, not an escape language.**
+   `0x01` = close, `0x02`/`0x03` = bold on/off, `0x10|c` = color *c*
    (1..14). Trivial to interpret in a `WM_PAINT` handler.
 
 ---
@@ -151,7 +151,7 @@ redundant but harmless; the offset tag makes each chunk self-placing.
 | `protocol.c` + `crc.s` | 300 | **Port ~1:1.** The frame state machine is the one piece of real reuse. |
 | `main.c` | 1573 | **Rewrite, keep the design.** The message dispatch (`case MSG_*`, lines 679-1100) and the SID/IMG/PRINT transfer state machines are the specification for the Windows equivalents. Maybe 60% survives as pseudocode, 0% as source. |
 | `serial.s` | 800 | **Delete.** ACIA registers, IRQ/NMI ring buffers, Hayes dialling, baud switching. Replaced by ~250 lines of Winsock. |
-| `soft80.s`, `font48.s`, `colorize.s`, `display.c` | 1600 | **Delete.** Bitmap 80-column renderer, 4×8 font, colour-matrix painter, screen-code scrollback. Replaced by a GDI text pane (~600 lines). The *scrollback data structure* (pre-wrapped lines + per-line colour) is worth copying wholesale. |
+| `soft80.s`, `font48.s`, `colorize.s`, `display.c` | 1600 | **Delete.** Bitmap 80-column renderer, 4×8 font, color-matrix painter, screen-code scrollback. Replaced by a GDI text pane (~600 lines). The *scrollback data structure* (pre-wrapped lines + per-line color) is worth copying wholesale. |
 | `keyboard.s` | 342 | **Delete.** Hand-rolled matrix scan for n-key rollover; Windows gives you `WM_CHAR`. |
 | `music.s` | 137 | **Delete.** 6502 SID player driven from the raster IRQ. |
 | `editor.c` | 190 | **Replace** with a multiline `EDIT` control, subclassed for Return-sends and Ctrl-A/E/K/D (~120 lines). |
@@ -240,14 +240,14 @@ when one is opened again.
   Save, Print…, Print Setup…, Exit), `&Edit` (Cut/Copy/Paste on the
   input box, Find… , Find in All…), `&Mode` (Chat, Adventure, Character…,
   Assistant, Claude Code), `&Media` (Illustrate, Pictures…, Jukebox…,
-  Stop Music), `&Settings` (Server…, Model…, Fonts, Colours), `&Help`
+  Stop Music), `&Settings` (Server…, Model…, Fonts, Colors), `&Help`
   (Commands, About). The proxy's `MENU_LIST` entries append to `&Mode`
   at runtime, so a server-side menu change still needs no client rebuild.
 - **Output pane** -- *not* an `EDIT` control. The stock multiline edit
   tops out in the tens of kilobytes, repaints badly, and cannot do
-  per-run colour. Own the pane: a child window, a fixed-pitch font
+  per-run color. Own the pane: a child window, a fixed-pitch font
   (`Terminal`/`FixedSys`, or ship a bitmap font), `TextOut` per run
-  between colour markers, a real scroll bar via `SetScrollRange`/
+  between color markers, a real scroll bar via `SetScrollRange`/
   `SetScrollPos`, `WM_MOUSEWHEEL` doesn't exist yet so PgUp/PgDn and the
   bar are the controls. This is the same job `display.c` already does,
   minus the pain.
@@ -262,16 +262,16 @@ when one is opened again.
 **Modal windows**
 
 - **Picture viewer** -- `DialogBox` with a client area, `StretchDIBits`,
-  the caption in the title bar, OK/Save As…/Print. On a 256-colour
+  the caption in the title bar, OK/Save As…/Print. On a 256-color
   driver, build a `LOGPALETTE` from the Pepto values in `imaging.py` and
-  `RealizePalette`; on a 16-colour VGA driver, GDI dithers to the fixed
+  `RealizePalette`; on a 16-color VGA driver, GDI dithers to the fixed
   VGA palette and it looks even more like 1993.
 - **Conversation manager** -- `LISTBOX` (`LBS_OWNERDRAWFIXED` for the
   star), Load/Delete/Star/Close, paging identical to `mod_convmgr.c`.
-- **Jukebox** -- listbox of moods/tunes, Play/Stop/Favourite, driven by
+- **Jukebox** -- listbox of moods/tunes, Play/Stop/Favorite, driven by
   `GET_NOWPLAYING` and `MENU_LIST`.
 - **Settings** -- server IP/port, model (from `MODEL_LIST`), fonts,
-  colours; persisted to `LLM64.INI`.
+  colors; persisted to `LLM64.INI`.
 - **Help / About** -- the About box with a bitmap is obligatory.
 
 **Printing** -- `File > Print...` opens `PrintDlg` from `COMMDLG` and the
@@ -285,25 +285,25 @@ all: see §8.
 ### 6.1 Images -- three paths, in cost order
 
 `IMG_BEGIN` already carries a format byte (1 = multicolor, 0 = hires) and
-a background colour. The multicolor blob is 8000 bytes bitmap + 1000
-screen + 1000 colour + bg = 10,001 bytes at 160×200 in the Pepto
+a background color. The multicolor blob is 8000 bytes bitmap + 1000
+screen + 1000 color + bg = 10,001 bytes at 160×200 in the Pepto
 palette.
 
 - **Path A (zero proxy change):** decode the blob client-side into a
-  256-colour DIB and blit it. ~80 lines. You get the exact C64 image,
+  256-color DIB and blit it. ~80 lines. You get the exact C64 image,
   chunky pixels, burned-in caption and all. Because the transfer already
   works and is already flow-controlled, this can ship on day one.
 - **Path B (optional upgrade):** the proxy keeps the *original* PNG for
   every generated image (`data/images/<conv>/<epoch>.png`). Add
   `fmt = 2` meaning "a Windows DIB follows", and have Pillow emit a
-  256-colour BMP at, say, 640×400. Win16 cannot decode PNG; it decodes
+  256-color BMP at, say, 640×400. Win16 cannot decode PNG; it decodes
   DIBs natively. ~100 lines of Python, no new client code beyond
   `StretchDIBits`.
 
 - **Path C (the right long-term answer):** the *profile* picks both the
-  art prompt and the format. A C64 scene is prompted for "flat colour
-  areas, strong silhouettes, 16-colour palette" because that is what
-  survives the converter; a 1993 PC scene wants "256-colour VGA pixel
+  art prompt and the format. A C64 scene is prompted for "flat color
+  areas, strong silhouettes, 16-color palette" because that is what
+  survives the converter; a 1993 PC scene wants "256-color VGA pixel
   art, dithered, 320×200 DOS adventure game art", which is a different
   picture, not a different encoding of the same one. `images.py` already
   has the hook -- `DEFAULT_STYLE_PREFIX` and `[images].style_prefix` --
@@ -363,13 +363,13 @@ This turns the hardest media problem into the easiest one:
 - **No sound card:** MIDI silently no-ops. The feature is already
   optional everywhere it appears.
 
-### 6.3 Fonts and colour
+### 6.3 Fonts and color
 
-The colour markers map to the C64 palette; on Windows you can either
-match Pepto exactly (nice on a 256-colour driver) or snap to the 16 VGA
-colours (nice on a 16-colour driver, and more authentically Windows).
+The color markers map to the C64 palette; on Windows you can either
+match Pepto exactly (nice on a 256-color driver) or snap to the 16 VGA
+colors (nice on a 16-color driver, and more authentically Windows).
 Make it a setting. A period-correct default: `Terminal` at 8×12, C64
-colours, black background -- an obvious fake-C64 look -- versus `FixedSys`
+colors, black background -- an obvious fake-C64 look -- versus `FixedSys`
 on white, which looks like a 1993 business app. Both are one `CreateFont`
 call apart.
 
@@ -580,9 +580,9 @@ emulator anywhere in the loop.
 
 | Phase | Deliverable | Proves |
 |---|---|---|
-| **0 -- spike** ✅ | Win16 app: connect, `PING`, streamed chat, colour markers, menu bar, status strip | the *whole* toolchain risk (see below) |
+| **0 -- spike** ✅ | Win16 app: connect, `PING`, streamed chat, color markers, menu bar, status strip | the *whole* toolchain risk (see below) |
 | **1 -- MVP** ◐ | Far-memory scrollback with re-flow ✅, bold ✅, MDI frame and document windows ✅; editor keys, `HINT` chrome, `MENU_LIST`, help still to do | it is a usable client |
-| **2 -- dialogs** ◐ | Server settings ✅; conversation manager, model picker, fonts/colours, find/history still to do | feature parity with the F-keys |
+| **2 -- dialogs** ◐ | Server settings ✅; conversation manager, model picker, fonts/colors, find/history still to do | feature parity with the F-keys |
 | **3 -- pictures** | Blob → DIB modal viewer (Path A, no proxy change) | media transfer end-to-end |
 | **4 -- profiles** | `CLIENT_HELLO`, the proxy's `ClientProfile`, negotiated widths and payloads, per-profile art (§7) | the proxy is multi-client, not C64-with-exceptions |
 | **5 -- MIDI** | `MIDI_*` frames, a mood-tagged GM corpus, MCI playback, jukebox dialog | the era's music, and the last new subsystem |
@@ -603,14 +603,14 @@ Built and run on 2026-07-27, on this machine:
   `Received: PING (length=0)` with a valid CRC and answers `ACK`.
 - **A full chat round trip renders**: typed line → `CHAT_REQUEST` →
   streamed `CHAT_CHUNK`s → `CHAT_DONE`, word-wrapped in the pane.
-- **The colour markers render as colour** -- the in-band `0x10|c` cells
+- **The color markers render as color** -- the in-band `0x10|c` cells
   drawn from the Pepto palette, which is the one design claim in §1 that
   was worth seeing rather than believing.
 - **The wire unit test passes on the host**, +0x20 wrap case included.
 
 Two bugs found and fixed in the doing, both of the kind only a running
-program surfaces: a line's base colour was stamped at line creation, so
-the first chunk of a reply inherited the *user's* colour; and the
+program surfaces: a line's base color was stamped at line creation, so
+the first chunk of a reply inherited the *user's* color; and the
 startup banner was written before the pane had been sized, so it wrapped
 at the placeholder width of 10 columns.
 
@@ -644,7 +644,7 @@ Three bugs of the kind only this exercise surfaces:
    the end of a segment is a fault rather than a stray character. The
    Phase 0 code got away with the same loop because its lines *were*
    terminated arrays.
-2. **The wrap counted bytes, not cells**, so any line carrying colour
+2. **The wrap counted bytes, not cells**, so any line carrying color
    markers broke early -- invisible in the spike because the only marked
    line was short.
 3. **The over-long-line seam cut mid-word.** `SB_MAX_LINE` has to break
@@ -685,7 +685,7 @@ That is worth more than the keystroke. **Wine proves the protocol and
 the drawing; it does not prove the shell.** Winsock, the framing, the
 transcript and every pixel of the pane are testable under Wine in
 seconds. Anything resting on Windows' own keyboard handling, menu
-behaviour or window management is not, and has to be believed only after
+behavior or window management is not, and has to be believed only after
 a real machine has been asked.
 
 ### The first real-machine run, and what it asked for
@@ -717,7 +717,7 @@ The dialog also fixes the reconnect ordering trap: it returns its intent
 as a result code rather than calling into the socket from inside a modal
 proc that is already half torn down.
 
-### Paper, and the colour it is printed on
+### Paper, and the color it is printed on
 
 Two changes that turned out to be the same change. Both landed after the
 Win95 run.
@@ -738,7 +738,7 @@ someone else's document. The transcript re-flows because a conversation
 has no layout of its own to respect.
 
 **A palette that is not the C64's.** White paper, black ink, by default.
-This is not the Pepto table dimmed: half of those colours are illegible
+This is not the Pepto table dimmed: half of those colors are illegible
 on white at any brightness, and the two worst are yellow and the light
 green that every assistant reply arrives in. So the light theme keeps
 each marker slot's *hue* and gives it a value that reads as ink -- index 1
@@ -784,7 +784,7 @@ popup have to be distinct.
 7. **Wine cannot test the shell.** Not a risk to the design but a
    standing limit on the harness: Winsock, the framing, the transcript
    and every pixel of the pane are testable under Wine in seconds, while
-   keyboard handling, menu behaviour and window management have to be
+   keyboard handling, menu behavior and window management have to be
    confirmed on a real machine. The MDI accelerators are the case that
    proved it (§10) -- inert under Wine, correct on Windows 95.
 
@@ -863,7 +863,7 @@ what the model wrote, so the re-injected prompt state is unchanged.
 
 ### Bugs this batch closed
 
-- `_emit_color` emitted the one-byte marker for colour slot 11, and
+- `_emit_color` emitted the one-byte marker for color slot 11, and
   `0x10|11` **is** `0x1B`, the marker escape byte - so `[color=darkgrey]`
   reached the screen as a box glyph glued to the word ("the []slate
   rooftops"), or ate two characters when the phrase began with C. Slot 11
@@ -891,14 +891,14 @@ what the model wrote, so the re-injected prompt state is unchanged.
 ### Pictures look like 1993 now
 
 `convert_to_dib8` was "downscale to 640x400 and quantize to 256 adaptive
-colours", and the docstring's claim of Floyd-Steinberg was false - Pillow
+colors", and the docstring's claim of Floyd-Steinberg was false - Pillow
 ignores `dither` unless a palette is given, so nothing dithered. A palette
 fitted per image is also why the art kept the diffusion model's smooth
 gradients. It is now 320x200 (Mode 13h, and the client upscales with pixel
 replication), `auto_levels` first, then a real Floyd-Steinberg dither
 against the **fixed** palette in `imaging.period_palette()` - the 6x6x6
-cube, a 16-step grey ramp, the 16 EGA entries. `[images] dib_style =
-"clean"` restores the old behaviour. Wire cost fell from ~161 KB to
+cube, a 16-step gray ramp, the 16 EGA entries. `[images] dib_style =
+"clean"` restores the old behavior. Wire cost fell from ~161 KB to
 ~65 KB, which is also the client's largest single allocation.
 
 ## 14. Handoff
@@ -1006,7 +1006,7 @@ negotiated rather than assumed.
 - Wine's 16-bit `TranslateMDISysAccel` is inert: Ctrl+F4 and Ctrl+F5 do
   nothing there and work on real Windows. Do not debug the client over
   it -- and more generally, do not conclude anything about keyboard,
-  menu or window-management behaviour from Wine alone.
+  menu or window-management behavior from Wine alone.
 - Anything written to the transcript before the first `WM_SIZE` wraps at
   the placeholder pane width. That is why the banner is emitted from
   `start_session()` and not `WM_CREATE`.

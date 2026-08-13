@@ -17,7 +17,7 @@ Nobody is going to sit through 10k tunes, so tunes are dealt
 best-regarded first when tools/sid_rank.py has built a ranking: your
 listening time goes to the music the game is most likely to play, and
 each tune shows what the scene thinks of it. --order random for the
-old behaviour.
+old behavior.
 
 Usage:
   tools/sid_review.py                       # best-regarded unreviewed tunes
@@ -568,7 +568,7 @@ class Reviewer:
                 if not self.advance_after(lambda: self.commit(True, why)):
                     return False
             else:
-                self.msg = 'block cancelled (a reason is required)'
+                self.msg = 'block canceled (a reason is required)'
         elif c == ord('u'):
             self.revert()
         elif c == ord('r'):

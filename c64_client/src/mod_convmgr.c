@@ -44,7 +44,7 @@ static const char S_DELETED[] = "Deleted.";
 static const char S_STARRED[] = "Star toggled.";
 static const char S_REFUSED[] = "Server refused - try again.";
 static const char S_DELETING[] = "Deleting...";
-static const char S_DELCANC[] = "Delete cancelled.";
+static const char S_DELCANC[] = "Delete canceled.";
 static const char S_DELCONF[] = "Delete selected conversation? y = yes";
 static const char S_STARING[] = "Toggling star...";
 static const char S_READY[]  = "Ready.";

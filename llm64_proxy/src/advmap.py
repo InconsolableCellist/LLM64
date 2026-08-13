@@ -3,7 +3,7 @@
 See docs/10-adventure-map.md. A PURE module in the manner of
 advsetup.py - no network, no model, no conversation, no asyncio. It
 takes and returns plain dicts, which is what makes the interesting
-behaviour (ingest and layout) testable without a model or an emulator.
+behavior (ingest and layout) testable without a model or an emulator.
 
 The map is built from three signals, in priority order:
 
@@ -603,7 +603,7 @@ def layout(m) -> dict:
             taken[spot] = other
             pos[other] = spot
             queue.append(other)
-    # Normalise so min x and min y are 0
+    # Normalize so min x and min y are 0
     minx = min(p[0] for p in pos.values())
     miny = min(p[1] for p in pos.values())
     return {s: (x - minx, y - miny) for s, (x, y) in pos.items()}
@@ -620,7 +620,7 @@ def _draw(m, pos, cols, rows, at):
     rooms = m['rooms']
     if not pos:
         return [], 0
-    # Window: centred on where you are, so the crop keeps the part of
+    # Window: centered on where you are, so the crop keeps the part of
     # the map the player is actually standing in.
     ax, ay = pos.get(at, (0, 0))
     x0 = max(0, min(ax - cols // 2,
@@ -676,11 +676,11 @@ def _draw(m, pos, cols, rows, at):
 
 
 def render_ascii(m, width: int = 78, rows: int = None) -> list:
-    """The whole /map screen, without colour tags - the caller adds
+    """The whole /map screen, without color tags - the caller adds
     those (section 5.3). The LEGEND is the truth and the picture is
     ornament, so if the drawing is ever wrong nothing important is lost.
 
-    Every line is at most `width` - 1 characters: the caller's colour
+    Every line is at most `width` - 1 characters: the caller's color
     tag owns the first column, which is also what stops the client
     dropping the leading spaces of the art.
     """

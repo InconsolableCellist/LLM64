@@ -3,7 +3,7 @@
 
 The picture that reaches paper has to be the C64's own - decoded from
 the blob, not the source painting - and the dots have to be ORDERED, so
-that an area the C64 drew in one flat colour prints as one flat texture
+that an area the C64 drew in one flat color prints as one flat texture
 instead of error-diffusion noise. Both are asserted here against
 synthetic blobs; what a page looks like in the hand is a hardware
 question (13.11 records that comparison).
@@ -27,8 +27,8 @@ def check(name, got, want):
 
 def blob_mc(bitmap_byte=0x00, screen=0x00, colram=0x00, bg=0x00):
     """A multicolor blob of 1000 identical cells. bitmap 0x00 = every
-    pixel is code 00 = the background colour, so the whole picture is
-    one flat colour - which is the case ordered dithering has to render
+    pixel is code 00 = the background color, so the whole picture is
+    one flat color - which is the case ordered dithering has to render
     as one repeating pattern."""
     return (bytes([bitmap_byte]) * 8000 + bytes([screen]) * 1000
             + bytes([colram]) * 1000 + bytes([bg]))
@@ -51,7 +51,7 @@ for bad in (b'', bytes(10), bytes(10000), bytes(10002)):
 
 # --- the halftone -----------------------------------------------------
 
-# White background (colour 1) at scale 4: one C64 pixel = one 4x4 cell.
+# White background (color 1) at scale 4: one C64 pixel = one 4x4 cell.
 white = printpic.halftone(printpic.decode(blob_mc(bg=0x01)), scale=4)
 check('halftone size is scale x the frame', white.size, (1280, 800))
 check('1-bit, which is all the printer has', white.mode, '1')
@@ -65,11 +65,11 @@ same = all(
     == [tile[y][x] for y in range(4) for x in range(4)]
     for y0 in range(0, 800, 4) for x0 in range(0, 1280, 4))
 if not same:
-    failures.append('a flat C64 colour must halftone to one repeating '
+    failures.append('a flat C64 color must halftone to one repeating '
                     'tile - that is what ordered dithering buys')
 
 # Black stays fully black and white fully white: the ends of the range
-# must not dither, or every picture prints through a grey veil.
+# must not dither, or every picture prints through a gray veil.
 black = printpic.halftone(printpic.decode(blob_mc(bg=0x00)), scale=2)
 check('black is solid', black.convert('L').getextrema(), (0, 0))
 check('white is solid', white.convert('L').getextrema(), (255, 255))

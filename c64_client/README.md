@@ -260,6 +260,6 @@ src/diag.s        crash post-mortem, compiled in with DIAG=1
 include/          headers, and the generated buildhash.h
 intro/            the shareware intro and its own three-voice tune
 c64-soft80.cfg    linker config capping the program below $C000, where
-                  the ASCII shadow, colour matrix and bitmap live
+                  the ASCII shadow, color matrix and bitmap live
 build/            llm64.prg, the overlay modules, llm64.d64
 ```

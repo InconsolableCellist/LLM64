@@ -6,7 +6,7 @@
 ; the pending word not yet full - three lines of C, but cc65 wrapped
 ; each iteration in a full call to chat_append_ascii_char plus a call to
 ; cell_from_ascii. This inlines only that case; everything else (space,
-; CR, LF, the 0x01-0x1E inline-colour/bold markers, and the word-full
+; CR, LF, the 0x01-0x1E inline-color/bold markers, and the word-full
 ; hard wrap) still routes to chat_append_ascii_char, so the wrap/marker
 ; state machine lives in exactly one place.
 ;

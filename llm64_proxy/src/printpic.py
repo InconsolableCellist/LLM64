@@ -6,25 +6,25 @@ printcups.py delivers; this turns the C64's own picture into something a
 1-bit printer can lay down.
 
 What gets printed is the BLOB, not the source image: 8000 bytes of
-multicolor bitmap plus screen, colour RAM and background - exactly the
+multicolor bitmap plus screen, color RAM and background - exactly the
 bytes the C64 displays, caption band and all - decoded back through
-imaging.render_preview_mc. So the page carries the machine's 16-colour,
+imaging.render_preview_mc. So the page carries the machine's 16-color,
 160x200 rendering, not the 1024x1024 painting the model produced. That
 is the whole point of printing it.
 
-Colour has to become dots, and HOW decides whether it still looks like a
+Color has to become dots, and HOW decides whether it still looks like a
 C64 picture. Three orders of operation were printed and compared on a
 203 dpi thermal (docs/14 13.11):
 
   dither at 160x200, then enlarge   - error diffusion at C64 resolution
-                                      turns every flat colour area into
+                                      turns every flat color area into
                                       noise; the scene stops reading
   enlarge, then Floyd-Steinberg     - good tone, but still scatters
                                       error inside areas the C64 drew
-                                      as one flat colour
+                                      as one flat color
   enlarge, then ORDERED halftone    - what this module does
 
-An ordered matrix gives every pixel of the same colour the identical dot
+An ordered matrix gives every pixel of the same color the identical dot
 pattern, so flat stays flat and edges stay hard, and at scale 4 the 4x4
 matrix is exactly one halftone cell per C64 pixel - the pixel grid and
 the dot grid line up instead of beating against each other. That is why

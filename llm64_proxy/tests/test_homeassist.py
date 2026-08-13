@@ -51,7 +51,7 @@ def test_cell_replaces_anything_the_font_lacks_with_a_space():
 
 
 def test_mat_packs_foreground_high_background_low():
-    # a cell has an ink and a ground: two colours, not one over black
+    # a cell has an ink and a ground: two colors, not one over black
     assert mat(1, 6) == 0x16
     assert mat(CYAN) == 0x30
 
@@ -351,7 +351,7 @@ def test_frames_never_exceed_the_wire_payload_limit():
     assert covered == list(range(ROWS))
 
 
-def test_row_bytes_are_colour_then_cells():
+def test_row_bytes_are_color_then_cells():
     r = Row()
     r.put(0, 'Hi')
     r.ink(0, 2, GREEN)

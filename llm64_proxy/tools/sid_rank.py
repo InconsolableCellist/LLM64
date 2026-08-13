@@ -21,7 +21,7 @@ has it collected in one place:
   csdb      average user rating of the releases the tune appears in.
             Optional: this one needs the network (see --csdb-ratings).
 
-Plus your own verdicts, which outrank all of it: jukebox favourites are
+Plus your own verdicts, which outrank all of it: jukebox favorites are
 boosted, and anything blocked in src/sid_overrides.json is dropped.
 
 Absence of evidence is NOT evidence of badness here - most of HVSC is
@@ -82,7 +82,7 @@ NON_MUSIC_COMPO_RE = re.compile(r'game|intro|demo|graphic|gfx|wild',
 # Re-use saturates: 30 releases and 300 both mean "everybody knows it".
 USAGE_FULL = 30
 
-FAVOURITE_BONUS = 0.20     # your jukebox 'f' key outranks the scene
+FAVORITE_BONUS = 0.20     # your jukebox 'f' key outranks the scene
 
 
 # --- MySQL dump reading ----------------------------------------------
@@ -374,11 +374,11 @@ def main():
 
     db = json.loads(args.db.read_text())
     tunes = db['tunes']
-    favourites = set()
+    favorites = set()
     fav_path = dbdir / 'favorites.json'
     if fav_path.exists():
         try:
-            favourites = set(json.loads(fav_path.read_text()))
+            favorites = set(json.loads(fav_path.read_text()))
         except ValueError:
             pass
     blocked = {k for k, v in sid_overrides.load().items()
@@ -402,9 +402,9 @@ def main():
         if t['id'] in blocked:
             continue                  # you already said no; do not rank it
         value, parts, why = score(sigs[t['id']], ratings, args.csdb_ratings)
-        if t['id'] in favourites:
-            value = min(1.0, value + FAVOURITE_BONUS)
-            why = '; '.join(filter(None, ['your favourite', why]))
+        if t['id'] in favorites:
+            value = min(1.0, value + FAVORITE_BONUS)
+            why = '; '.join(filter(None, ['your favorite', why]))
         raw[t['id']] = (value, parts, why)
 
     # Published rank is the percentile within YOUR library, not the raw

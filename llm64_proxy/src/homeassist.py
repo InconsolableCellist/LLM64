@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 BLACK, WHITE, RED, CYAN = 0, 1, 2, 3
 PURPLE, GREEN, BLUE, YELLOW = 4, 5, 6, 7
 ORANGE, BROWN, PINK, DKGREY = 8, 9, 10, 11
-GREY, LTGREEN, LTBLUE, LTGREY = 12, 13, 14, 15
+GRAY, LTGREEN, LTBLUE, LTGREY = 12, 13, 14, 15
 
 COLS = 80          # soft-80 cells per row
-PAIRS = 40         # colour matrix entries per row (one per 8x8 cell)
+PAIRS = 40         # color matrix entries per row (one per 8x8 cell)
 ROWS = 25
 
 # Ink by meaning, not by domain.
@@ -50,7 +50,7 @@ def cell(ch: str, reverse: bool = False) -> int:
 def mat(fg: int, bg: int = BLACK) -> int:
     """Matrix byte: fg high nibble, bg low.
 
-    A cell is 8x8 and holds two 4x8 glyphs, so colour changes every two
+    A cell is 8x8 and holds two 4x8 glyphs, so color changes every two
     columns. Both an ink and a ground, as mod_menu uses.
     """
     return ((fg & 15) << 4) | (bg & 15)
@@ -375,7 +375,7 @@ def rasterize(ys: Sequence[int], cell0: int, ncells: int,
     """Trace -> finished hires bytes, one block per text row.
 
     Only the cells the graph owns are sent, so a label beside it is not
-    overwritten. The client cannot rasterise itself: the bitmap lives
+    overwritten. The client cannot rasterize itself: the bitmap lives
     under the KERNAL, where writes reach RAM but reads return ROM.
 
     Within a row, byte (x>>3)*8 + (y&7), bit 7-(x&7).
@@ -417,7 +417,7 @@ def scale_to_band(values: Sequence[float], height_px: int,
 # =====================================================================
 
 class Row:
-    """One 80-cell text row plus its 40-entry colour matrix."""
+    """One 80-cell text row plus its 40-entry color matrix."""
 
     __slots__ = ('cells', 'colors')
 
@@ -432,7 +432,7 @@ class Row:
                 self.cells[c] = cell(ch, reverse)
 
     def ink(self, col: int, ncols: int, fg: int, bg: int = BLACK) -> None:
-        """Colour a span, snapped to the 2-column matrix grid."""
+        """Color a span, snapped to the 2-column matrix grid."""
         start, end = max(0, col) // 2, min(COLS, col + ncols + 1) // 2
         for p in range(start, end):
             self.colors[p] = mat(fg, bg)
@@ -634,7 +634,7 @@ def render_view(view: dict, states: Dict[str, dict],
     if npages > 1:
         hint += f'   F4/F6 page {page + 1}/{npages}'
     foot.put(0, hint.ljust(COLS), reverse=True)
-    foot.ink(0, COLS, GREY)
+    foot.ink(0, COLS, GRAY)
     # The graph occupies cells 8-39 of rows 22-23; cells 0-7 carry its
     # label, so the plot frame must not overwrite them.
     sc.plots = []
@@ -648,7 +648,7 @@ def render_view(view: dict, states: Dict[str, dict],
         unit = unit.replace('\u00b0', '')
         r22, r23 = sc.row(22), sc.row(23)
         r22.put(0, str(name)[:15])
-        r22.ink(0, 16, GREY)
+        r22.ink(0, 16, GRAY)
         if lo is None:
             r23.put(0, f'{hours}h')
         else:
@@ -720,7 +720,7 @@ def _chrome(sc: 'Screen', title: str, keys: str, right: str = '') -> None:
     head.ink(0, COLS, CYAN)
     foot = sc.row(24)
     foot.put(0, (' ' + keys).ljust(COLS - len(right)) + right, reverse=True)
-    foot.ink(0, COLS, GREY)
+    foot.ink(0, COLS, GRAY)
 
 
 def render_climate(entity_id: str, states: Dict[str, dict],
@@ -749,13 +749,13 @@ def render_climate(entity_id: str, states: Dict[str, dict],
         sc.row(9).ink(2, 14, WHITE)
 
     sc.row(2).put(24, 'NOW')
-    sc.row(2).ink(24, 4, GREY)
+    sc.row(2).ink(24, 4, GRAY)
     if isinstance(current, (int, float)):
         big_digits(sc, 4, 24, f'{current:.0f}', LTGREEN)
 
     x = 46
     sc.row(2).put(x, 'STATE')
-    sc.row(2).ink(x, 6, GREY)
+    sc.row(2).ink(x, 6, GRAY)
     lines = [
         (4, f"{a.get('hvac_action') or st.get('state') or ''}"),
         (5, f"fan  {a.get('fan_mode') or '-'}"),
@@ -770,7 +770,7 @@ def render_climate(entity_id: str, states: Dict[str, dict],
     modes = a.get('hvac_modes') or []
     cur_mode = st.get('state')
     sc.row(11).put(2, 'MODE')
-    sc.row(11).ink(2, 6, GREY)
+    sc.row(11).ink(2, 6, GRAY)
     mx = 10
     for m in modes[:6]:
         lab = f' {m.upper()[:8]} '
@@ -826,7 +826,7 @@ def render_number(entity_id: str, states: Dict[str, dict],
 
     # where the value sits in its range, as a bar of reverse cells
     sc.row(11).put(2, 'RANGE')
-    sc.row(11).ink(2, 8, GREY)
+    sc.row(11).ink(2, 8, GRAY)
     span = (hi - lo) or 1.0
     filled = int(round((shown - lo) / span * 60))
     bar = sc.row(12)
@@ -847,7 +847,7 @@ def render_number(entity_id: str, states: Dict[str, dict],
     return sc
 
 
-# The C64's sixteen as light colours: the (x, y) each one asks for.
+# The C64's sixteen as light colors: the (x, y) each one asks for.
 PALETTE_XY = [
     (0.000, 0.000), (0.313, 0.329), (0.640, 0.330), (0.170, 0.340),
     (0.280, 0.130), (0.170, 0.700), (0.150, 0.060), (0.420, 0.505),
@@ -863,7 +863,7 @@ TEMP_RAMP = [BROWN, ORANGE, ORANGE, YELLOW, YELLOW, LTGREY, WHITE, WHITE,
 
 def render_light(entity_id: str, states: Dict[str, dict],
                  label: str = '', presets: Optional[Sequence[dict]] = None) -> Screen:
-    """Brightness, white temperature and colour. Which appear is read
+    """Brightness, white temperature and color. Which appear is read
     from the light's supported_color_modes."""
     st = states.get(entity_id, {})
     a = st.get('attributes', {})
@@ -877,7 +877,7 @@ def render_light(entity_id: str, states: Dict[str, dict],
 
     sc = Screen()
     _chrome(sc, label or entity_id,
-            '[ ] bright   < > temp   0-F colour   1-9 preset   STOP back',
+            '[ ] bright   < > temp   0-F color   1-9 preset   STOP back',
             'ON ' if on else 'OFF ')
 
     grp = a.get('group_entities') or []
@@ -917,7 +917,7 @@ def render_light(entity_id: str, states: Dict[str, dict],
         y += 5
 
     if any(m in modes for m in ('xy', 'hs', 'rgb', 'rgbw', 'rgbww')):
-        sc.row(y).put(2, 'COLOUR')
+        sc.row(y).put(2, 'COLOR')
         sc.row(y).ink(2, 8, YELLOW)
         sw, nm, hx = sc.row(y + 1), sc.row(y + 2), sc.row(y + 3)
         for i in range(16):
@@ -988,7 +988,7 @@ def render_confirm(base: Screen, question: str, keys: str = 'Y = yes    N = no')
     """Modal box over whatever is behind it.
 
     A cell has an ink and a ground, so white-on-red works; two inks in
-    one cell do not, hence a coloured ground rather than reverse video.
+    one cell do not, hence a colored ground rather than reverse video.
     """
     top, left, width = 8, 18, 44
     for r in range(top, top + 7):

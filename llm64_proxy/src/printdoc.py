@@ -62,7 +62,7 @@ SHEET_RE = re.compile(r'\b(inventory|character|char|sheet|stats)\b', re.I)
 # 13.13). Being wrong here is silent and total, where being wrong the
 # other way only costs a model call.
 DOC_RE = re.compile(
-    r'\b(summary|summarize|summarise|synopsis|history|story|tale|recap|'
+    r'\b(summary|summarize|summarize|synopsis|history|story|tale|recap|'
     r'account|chronicle|journal|diary|log|timeline|events|narrative|'
     r'transcript|report|happened|so far|write[- ]?up)\b', re.I)
 
@@ -385,14 +385,14 @@ def finish(title: str, body: str, width: int = 78, date: str = None,
     return out.encode('ascii', 'replace').decode('ascii')
 
 
-# --- the kit catalogue -------------------------------------------------
+# --- the kit catalog -------------------------------------------------
 #
 # Deterministic, like the character sheet and for the same reason: the
-# catalogue is proxy data that never enters the prompt, so asking the
+# catalog is proxy data that never enters the prompt, so asking the
 # model for it gets a plausible invention rather than the 94 items the
 # shop actually stocks - and the numbers would not match the screen,
 # which is the entire point of printing it.
-CATALOG_RE = re.compile(r'\b(catalog|catalogue|shop|shelves|kit list)\b',
+CATALOG_RE = re.compile(r'\b(catalog|catalog|shop|shelves|kit list)\b',
                         re.I)
 
 
@@ -400,7 +400,7 @@ def wants_catalog(arg: str) -> bool:
     """True for '/print the entire catalog' and friends.
 
     The CALLER must also check that character creation is actually open
-    (protocol.py). A roleplay scene can easily put a catalogue in front
+    (protocol.py). A roleplay scene can easily put a catalog in front
     of the player - a fence's stock list, a ship's manifest - and
     printing the adventure kit shop instead of what they were reading
     would be baffling."""
@@ -408,7 +408,7 @@ def wants_catalog(arg: str) -> bool:
 
 
 def render_catalog(rules: dict, items, title_note='') -> str:
-    """The shop, in catalogue order, with the SAME numbers the screen
+    """The shop, in catalog order, with the SAME numbers the screen
     shows - a printed number that does not work when typed back in would
     be worse than no printout."""
     gear = (rules or {}).get('equipment') or {}

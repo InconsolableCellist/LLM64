@@ -112,8 +112,8 @@ PRESETS = {
     # same picture. The prefix competes with the scene for a fixed CLIP
     # budget, and this checkpoint needs no convincing to draw fur.
     #
-    # The flatness tags are the C64's, not taste: flat colour, thick
-    # outlines and a limited palette survive 16 colours and a 160x200
+    # The flatness tags are the C64's, not taste: flat color, thick
+    # outlines and a limited palette survive 16 colors and a 160x200
     # grid; the airbrushed detail "absurdres" buys turns to dither mush.
     #
     # This checkpoint knows the whole e621 rating range. Nothing here
@@ -130,7 +130,7 @@ PRESETS = {
         "style_prefix": (
             "masterpiece, best quality, amazing quality, very aesthetic, "
             "newest, source_furry, dark fantasy adventure game "
-            "illustration, flat colour, cel shading, thick outlines, "
+            "illustration, flat color, cel shading, thick outlines, "
             "limited palette, strong silhouettes, high value contrast, "
             "one dominant light source, "),
         "prompt_format": "tags",

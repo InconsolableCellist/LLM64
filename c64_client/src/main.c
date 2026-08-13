@@ -585,7 +585,7 @@ static uint8_t mod_open(const char* name, void (*run)(void)) {
     music_hold_end();
     diag_crumb(DC_MODLOADED);
     if (ok) run();
-    else ui_status("Module load failed - boot disk?");
+    else ui_status("Module load failed - boot DISK?");
     diag_crumb(DC_MODDONE);
     return ok;
 }
@@ -787,7 +787,7 @@ static void handle_message(uint8_t msg_type) {
                 chat_clear();
                 ui_status("New conversation. Ready.");
             } else if (pending_ack == PA_CANCEL) {
-                ui_status("Cancelled. Ready.");
+                ui_status("Canceled. Ready.");
             }
             pending_ack = PA_NONE;
             break;
@@ -1081,7 +1081,7 @@ static void handle_message(uint8_t msg_type) {
             if (cbm_write(LFN_PRT, p, len) != (int)len) {
                 prt_close();
                 proto_send_nak();
-                ui_status("Printer error - job cancelled.");
+                ui_status("Printer error - job canceled.");
                 break;
             }
             serial_rx_resume();
@@ -1186,7 +1186,7 @@ static void cancel_stream(void) {
     if (state != ST_WAITING && state != ST_STREAMING) return;
     pending_ack = PA_CANCEL;
     proto_send_cancel();
-    ui_status("Cancelling...");
+    ui_status("Canceling...");
 }
 
 /* --- local menu actions ----------------------------------------------
@@ -1235,7 +1235,7 @@ static void diskcopy_open(void) {
         ui_status("Ready.");
     } else {
         serial_rx_resume();
-        ui_status("Module load failed - boot disk?");
+        ui_status("Module load failed - boot DISK?");
     }
     chat_redraw();
 }
@@ -1391,10 +1391,10 @@ static void handle_key(uint8_t k) {
 #define RETRY_HINT_PING    "No server response - any key retries."
 #endif
 
-/* One coloured line of the donationware banner. The break is emitted as a
+/* One colored line of the donationware banner. The break is emitted as a
    raw 0x0A rather than a '\n' literal: cc65's C64 charmap folds '\n' to
    CR, which chat_append_ascii_char ignores. Passing s=="" just breaks a
-   blank line at the current colour. */
+   blank line at the current color. */
 static void welcome_line(uint8_t color, const char* s) {
     chat_color(color);
     chat_append_petscii(s);
@@ -1493,9 +1493,9 @@ int main(void) {
     chat_finish();
 
     /* Donationware banner. Client-side and unconditional so it greets
-       every fresh connect regardless of proxy version. Colours are per
+       every fresh connect regardless of proxy version. Colors are per
        line (soft-80 renders them; the 40-col build shows one base
-       colour), and no line may exceed 40 columns - the 40-col build has
+       color), and no line may exceed 40 columns - the 40-col build has
        nowhere to put the rest.
 
        The wording and the amount are the README's and the Windows

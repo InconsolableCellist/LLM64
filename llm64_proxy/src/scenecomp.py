@@ -74,7 +74,7 @@ _PLAIN_WORDS = (
     "ordinary adjectives, the vocabulary of a photo caption. Two rules "
     "that matter more than they look:\n"
     "- NO PROPER NOUNS. A name means nothing to an image model. "
-    "\"Bruc\" is nothing; \"grey wolf in ring mail\" is a picture. "
+    "\"Bruc\" is nothing; \"gray wolf in ring mail\" is a picture. "
     "\"The Hollow Chapel\" is nothing; \"ruined stone chapel\" is a "
     "picture.\n"
     "- NO LITERARY PHRASING. Translate the narrator's language into "
@@ -98,7 +98,7 @@ def _tag_task(fmt_note: str = '') -> str:
         "than a human.\n"
         "2. WHO THEY ARE: for each character actually in the shot, their "
         "settled look as tags - anthro, the species, snout, "
-        "ears, fur or scales and their colours, tail, clothing. Copy "
+        "ears, fur or scales and their colors, tail, clothing. Copy "
         "these from the descriptions given below rather than inventing "
         "them, and keep it to the SIX or so most recognisable tags per "
         "character: a long costume inventory crowds out the scene. "
@@ -136,7 +136,7 @@ def _tag_task(fmt_note: str = '') -> str:
 
 
 def tidy_tags(text, truncated=False):
-    """A tag-list reply, normalised.
+    """A tag-list reply, normalized.
 
     One line (models like to wrap), no empty or duplicate tags, and -
     when the reply hit the caller's length cap - no half-written tag

@@ -22,14 +22,14 @@
 
 /* A maximised 3.1 window has NO border - it is flush to the screen, which
    is why the reference capture's sysmenu box starts at x=0. Getting this
-   wrong puts a grey margin around the caption and is the first thing that
+   wrong puts a gray margin around the caption and is the first thing that
    reads as not-quite-right. */
 #define FRAME_W()   (g_maxed ? 0 : FRAME)
 #define RULE        1       /* the black line under the caption */
 #define MENU_H      18      /* measured: same height as the caption */
 
-/* 3.1's COLOR_MENU is WHITE. Windows 95 made it button-grey and every
-   later "classic" theme kept grey, so a grey menu bar is a 1995 tell as
+/* 3.1's COLOR_MENU is WHITE. Windows 95 made it button-gray and every
+   later "classic" theme kept gray, so a gray menu bar is a 1995 tell as
    loud as the caption buttons. Measured off the reference: rows y21..y38
    are pure #FFFFFF with a black rule under them. */
 #define C_MENU      RGB(0xFF, 0xFF, 0xFF)
@@ -182,13 +182,13 @@ static void raised_box(HDC hdc, const RECT *bx, int pressed)
 }
 
 /* The sysmenu box is NOT a button. It has no bevel at all - just the face
-   colour - and only the glyph inside is drawn: a 13x3 bar with a black
+   color - and only the glyph inside is drawn: a 13x3 bar with a black
    outline, a single white row inside it, and a drop shadow offset one
    pixel down and right. Every retro mock-up draws a minus sign here. */
 static void sysmenu_box(HDC hdc, const RECT *bx, int barw)
 {
     int t = bx->top;
-    int a = bx->left + (BTN_W - barw) / 2;   /* centred in the box */
+    int a = bx->left + (BTN_W - barw) / 2;   /* centered in the box */
     int b = a + barw - 1;
 
     fill(hdc, bx, C_FACE);
@@ -208,7 +208,7 @@ static void sysmenu_box(HDC hdc, const RECT *bx, int barw)
 #define BAR_CHILD  7
 
 /* Four rows, 7-5-3-1 px wide, solid black. Deliberately not Polygon():
-   at this size the rasteriser's triangle is not the reference's shape,
+   at this size the rasterizer's triangle is not the reference's shape,
    and the difference is a third of the glyph. */
 static void arrow(HDC hdc, int apex_x, int top, int up)
 {
@@ -470,7 +470,7 @@ static void popup_convert(HMENU h)
     }
 }
 
-/* Build a popup out of a table. MF_OWNERDRAW keeps every behaviour -
+/* Build a popup out of a table. MF_OWNERDRAW keeps every behavior -
    arrow keys, mnemonics, dismissal - and hands us only the pixels. */
 static HMENU popup_from(const MItem *items, int n)
 {
@@ -552,7 +552,7 @@ static void popup_draw(DRAWITEMSTRUCT FAR *dis)
     SelectObject(dis->hDC, of);
 }
 
-/* Open the control menu under the sysmenu box, and grey what does not
+/* Open the control menu under the sysmenu box, and gray what does not
    apply - Restore is dead unless maximised, Maximize is dead when it
    already is. 3.1 did exactly this. */
 static void sysmenu_drop(HWND hwnd)
@@ -704,7 +704,7 @@ static void menu_paint(HWND hwnd, HDC hdc)
     /* A maximised child's chrome lives in the bar: its sysmenu box on the
        left and its restore button on the right, with the menu titles
        moved over to make room. This is the one piece of 3.1's MDI
-       behaviour that does not come free - MDI inserts those into the menu
+       behavior that does not come free - MDI inserts those into the menu
        it was handed, and this bar is drawn, not handed over. */
     {
         RECT sys, res;
@@ -821,7 +821,7 @@ static void cap_paint(HWND hwnd, HDC hdc)
         hline(hdc, rc.right - 1 - b, rc.right - 1 - a, yb, C_FRAME);
     }
 
-    /* Caption: one flat colour, no gradient. */
+    /* Caption: one flat color, no gradient. */
     r.left = f; r.right = rc.right - f;
     r.top  = f; r.bottom = f + CAP_H;
     fill(hdc, &r, active ? C_ACTIVE : C_INACTIVE);
@@ -830,9 +830,9 @@ static void cap_paint(HWND hwnd, HDC hdc)
 
     btn_rects(hwnd, &sys, &mn, &mx);
 
-    /* Title. Centred in the GAP between the two button clusters, which is
-       NOT centred on the caption: the clusters are asymmetric - one box
-       left, two right - so the gap's centre sits about 10 px left of the
+    /* Title. Centered in the GAP between the two button clusters, which is
+       NOT centered on the caption: the clusters are asymmetric - one box
+       left, two right - so the gap's center sits about 10 px left of the
        window's. Measured, after getting this backwards once. The
        reference's text starts at x=481 on a 1024-wide screen and only the
        gap puts it there. */
@@ -889,7 +889,7 @@ static void cap_paint(HWND hwnd, HDC hdc)
              "with a pixel differ rather than remembered.\r\n\r\n"
              "Drag the caption. Drag any edge or corner to resize.\r\n"
              "The buttons work. The corners are square on Windows 11.\r\n\r\n"
-             "The menu bar is ours too - white, as 3.1's is, not the grey\r\n"
+             "The menu bar is ours too - white, as 3.1's is, not the gray\r\n"
              "95 changed it to. The popups are real HMENUs handed to\r\n"
              "TrackPopupMenu, so arrow keys and mnemonics still work.",
              -1, &r, DT_LEFT | DT_TOP | DT_NOPREFIX);
@@ -930,7 +930,7 @@ static LRESULT cap_hittest(HWND hwnd, LPARAM lParam)
         /* Anywhere in the border within CORNER of a corner resizes
            diagonally - which is exactly what the tick marks delimit, so
            the grip you can see and the grip you can grab agree. A 4 px
-           corner (the old behaviour) is very hard to hit on purpose. */
+           corner (the old behavior) is very hard to hit on purpose. */
         int nl = (x < CORNER), nr = (x >= rc.right - CORNER);
         int nt = (y < CORNER), nb = (y >= rc.bottom - CORNER);
 
@@ -1113,7 +1113,7 @@ void chrome_child_paint(HWND hwnd, HDC hdc, int active)
     r.left = f; r.right = w - f;
     r.top = f;  r.bottom = f + CAP_H;
     /* An INACTIVE child caption is white, where the frame's is button
-       grey. Measured; reusing the frame's colour looks almost right. */
+       gray. Measured; reusing the frame's color looks almost right. */
     fill(hdc, &r, active ? C_ACTIVE : C_MENU);
     hline(hdc, f, w - f - 1, f + CAP_H, C_FRAME);
 
@@ -1155,7 +1155,7 @@ static int child_is_active(HWND hwnd)
  *
  * A window DC covers the whole window, client area included, so filling
  * the window rect here scribbles over everything the application drew:
- * the transcript, the picture, the music panel all go flat grey and stay
+ * the transcript, the picture, the music panel all go flat gray and stay
  * that way until something happens to invalidate them. Excluding the
  * client rect first is what makes this non-client painting rather than
  * vandalism. The frame does not need it because the frame HAS no
@@ -1603,7 +1603,7 @@ int chrome_dialog_msg(HWND dlg, UINT msg, UINT wParam, LONG lParam,
 /* ---- controls -------------------------------------------------------
  *
  * The last surfaces the host still draws for us. A push button on
- * Windows 11 is a 1995 button in 2026 grey - square corners, a one pixel
+ * Windows 11 is a 1995 button in 2026 gray - square corners, a one pixel
  * bevel, and a #F0F0F0 face on our #C0C0C0 strip. A real 3.1 button is
  * rounder and deeper than that, and the differences are all measurable:
  *
@@ -1626,7 +1626,7 @@ static void dot(HDC hdc, int x, int y, COLORREF c)
 
 /* The four corner pixels, which is what rounds a 3.1 button off. White
    on all four - bottom right included, where a bevel would put shadow.
-   Measured; guessing gave face grey, and those four pixels were the only
+   Measured; guessing gave face gray, and those four pixels were the only
    thing between this and the reference. */
 static void round_off(HDC hdc, const RECT *r)
 {
@@ -1716,7 +1716,7 @@ void chrome_checkbox_face(HDC hdc, int x, int y, int checked, int off)
 }
 
 /* The label. Disabled text in 3.1 is embossed rather than merely pale:
-   the string is drawn twice, white one pixel down and right, then grey
+   the string is drawn twice, white one pixel down and right, then gray
    on top of it. */
 static void btn_text(HDC hdc, HWND hwnd, RECT *tr, UINT fmt, int off)
 {
@@ -1752,8 +1752,8 @@ static void btn_paint(HWND hwnd, HDC hdc)
     int off = !IsWindowEnabled(hwnd);
 
     GetClientRect(hwnd, &rc);
-    /* Face grey unconditionally, rather than asking the parent what
-       colour it is. Every button in this program sits on an LTGRAY_BRUSH
+    /* Face gray unconditionally, rather than asking the parent what
+       color it is. Every button in this program sits on an LTGRAY_BRUSH
        strip or on a dialog, and both of those are #C0C0C0 now; asking
        WM_CTLCOLOR would route through DefWindowProc on the way and get
        2026's answer back. */
@@ -1886,8 +1886,8 @@ void chrome_controls(HWND parent)
     }
 }
 
-/* The 3.1 palette for whatever the host would otherwise colour itself:
-   static text and buttons on face grey, edits and lists on white, all of
+/* The 3.1 palette for whatever the host would otherwise color itself:
+   static text and buttons on face gray, edits and lists on white, all of
    it with black text. Without this a dialog on Windows 11 is #F0F0F0
    with #C0C0C0 chrome around it, which reads as a rendering fault rather
    than as a style. */
@@ -2025,7 +2025,7 @@ int chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result)
     }
 
     case WM_NCACTIVATE:
-        /* Repaint for the caption colour, and return TRUE so Windows does
+        /* Repaint for the caption color, and return TRUE so Windows does
            not try to draw a caption we do not have. */
         g_active = (wParam != 0);
         inval_bar(hwnd, 0);
@@ -2164,7 +2164,7 @@ int chrome_msg(HWND hwnd, UINT msg, UINT wParam, LONG lParam, LONG *result)
  * line, with neighbours sharing the black between them. The thumb is
  * drawn exactly like an arrow button with no glyph in it.
  *
- * Behaviour is ours too, which is what makes this the longest piece of
+ * Behavior is ours too, which is what makes this the longest piece of
  * chrome in the file. There is no system scrollbar left underneath to
  * do the auto-repeat or the drag.
  */
@@ -2272,7 +2272,7 @@ static void sb_block(HDC hdc, const RECT *b, int pressed)
    down and not a separate drawing. */
 static void sb_arrow(HDC hdc, const RECT *b, int up, int pressed)
 {
-    int cx = b->left + 1 + 7;           /* centre of the 15 px interior */
+    int cx = b->left + 1 + 7;           /* center of the 15 px interior */
     int y0 = b->top + 5 + (pressed ? 1 : 0);
     int i;
 

@@ -67,7 +67,7 @@ static uint8_t* const rowbase[25] = {
 
 /* HA_PLOT: [row][cell0][ncells] then ncells*8 finished bitmap bytes.
    Only the graph's own cells are written, so the label beside it
-   survives. The proxy rasterises because reads here return KERNAL ROM
+   survives. The proxy rasterizes because reads here return KERNAL ROM
    and a read-modify-write would OR ROM into the picture. */
 static void ha_plot(void) {
     const uint8_t* pl = proto_get_payload(&proto);
@@ -79,7 +79,7 @@ static void ha_plot(void) {
            (uint16_t)ncells << 3);
 }
 
-/* Colour matrix then cells, already placed by the proxy. */
+/* Color matrix then cells, already placed by the proxy. */
 static void ha_row(uint8_t row, const uint8_t* col, const uint8_t* cells) {
     memcpy(MAT(row), col, 40);
     memcpy(rbuf, cells, 80);

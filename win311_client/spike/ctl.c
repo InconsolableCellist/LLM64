@@ -118,7 +118,7 @@ int PASCAL WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         return 1;
     old = SelectObject(dc, bmp);
 
-    /* Face grey behind everything, because that is what a 3.1 button
+    /* Face gray behind everything, because that is what a 3.1 button
        sits on and what shows through its knocked-out corners. */
     face = CreateSolidBrush(RGB(0xC0, 0xC0, 0xC0));
     SetRect(&r, 0, 0, W, H);
