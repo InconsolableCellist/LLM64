@@ -101,6 +101,7 @@ class HASession:
     async def _pump(self) -> None:
         """Coalesce bursts: a multisensor reporting five attributes at
         once should repaint once."""
+        fails = 0
         try:
             while True:
                 await self._dirty.wait()
@@ -109,8 +110,21 @@ class HASession:
                 self._dirty.clear()
                 try:
                     await self.push()
+                    fails = 0
+                except (ConnectionError, OSError) as exc:
+                    # The client is gone. Keepalive will close the socket
+                    # shortly; stop rendering for it now rather than
+                    # repainting a screen nobody is looking at.
+                    logger.info('home assistant: client went away (%s)', exc)
+                    self.close()
+                    return
                 except Exception:                       # noqa: BLE001
                     logger.exception('home assistant push failed')
+                    fails += 1
+                    if fails >= 5:
+                        logger.warning('home assistant: giving up on this screen')
+                        self.close()
+                        return
         except asyncio.CancelledError:
             raise
 
@@ -148,7 +162,11 @@ class HASession:
                 band['blocks'] = self._plot_blocks
         return sc
 
-    async def push(self, full: bool = False) -> None:
+    async def push(self, full: bool = False, ack: bool = False) -> None:
+        """Repaint. `ack` guarantees at least one frame goes out, so a
+        keystroke always produces an answer: with diffing, a key that
+        changes nothing sends nothing, and the client cannot tell that
+        from a dead link."""
         if not self.client:
             return
         if self.screen_kind == 'view':
@@ -195,6 +213,8 @@ class HASession:
             for i, (old, new) in enumerate(zip(self._last, blobs)):
                 if old != new:
                     await self.send_rows(i, bytes([i, 1]) + new)
+        if ack and blobs == self._last and not full:
+            await self.send_rows(24, bytes([24, 1]) + blobs[24])
         self._last = blobs
 
         await self._push_plots(sc)
@@ -273,6 +293,7 @@ class HASession:
             return
         entry = self._keymap.get(k) or self._keymap.get(k.lower())
         if not entry:
+            await self.push(ack=True)      # heard you, nothing to do
             return
         act = entry.get('action')
 
@@ -306,7 +327,7 @@ class HASession:
             await self.push()
             return
         await self._do(entry)
-        await self.push()
+        await self.push(ack=True)
 
     def _verb(self, entry: dict) -> str:
         eid = entry.get('entity') or ''

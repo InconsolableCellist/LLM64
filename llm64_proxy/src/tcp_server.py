@@ -24,10 +24,37 @@ class ClientHandler:
         self.protocol = ProtocolHandler(self.conv_manager, api_client)
         self.protocol.set_write_callback(self.write)
 
+    def _keepalive(self):
+        """Notice a client that went away without saying so.
+
+        A C64 reaches us through a modem bridge, and when that link dies
+        the socket is left half open: no FIN, no RST, so reads block
+        forever and writes buffer into nothing. The proxy goes on
+        rendering screens for a machine that is not listening, and the
+        C64 sees a frozen screen that ignores its keys. Keepalive is
+        what turns that into a close.
+
+        Idle 60s, probe every 15s, 4 failures - dead inside two minutes,
+        which is quick enough to be back before anyone retypes a
+        password and slow enough not to bother a working link.
+        """
+        sock = self.writer.get_extra_info('socket')
+        if sock is None:
+            return
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            for opt, val in (('TCP_KEEPIDLE', 60), ('TCP_KEEPINTVL', 15),
+                             ('TCP_KEEPCNT', 4)):
+                if hasattr(socket, opt):
+                    sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, opt), val)
+        except OSError as exc:
+            self.logger.debug("keepalive not available: %s", exc)
+
     async def handle(self):
         """Main client handler loop"""
         addr = self.writer.get_extra_info('peername')
         self.logger.info(f"Client connected from {addr}")
+        self._keepalive()
 
         try:
             while True:

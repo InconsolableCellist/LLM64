@@ -36,6 +36,7 @@ void mod_ha_run(void);
 
 static const char S_WAIT[]  = "   asking the proxy...";
 static const char S_LOST[]  = "No reply - f8 closes, r retries.";
+static const char S_SILENT[] = "Link silent - f8 closes, r retries.";
 
 static uint8_t  rbuf[80];
 static uint8_t  pend;          /* waiting on HA_ROWS */
@@ -44,6 +45,10 @@ static uint8_t  req_retry;
 static uint8_t  cur_view;
 
 #define REQ_UNITS 90
+/* A keystroke is always answered by at least one row, so silence after
+   one means the link is gone. sys_ticks[1] steps about every 4.3s. */
+#define ACT_UNITS 4
+static uint8_t act_at, act_wait;
 
 /* Bitmap row bases. Writes to $E000 reach RAM; READS return KERNAL ROM,
    which is why the proxy sends finished bytes and this only ever
@@ -92,6 +97,8 @@ static void ha_rows_frame(void) {
     uint8_t count = pl[1];
     const uint8_t* p = &pl[2];
     uint8_t i;
+
+    act_wait = 0;                 /* the proxy answered */
     for (i = 0; i < count; ++i) {
         ha_row(first + i, p, p + 40);
         p += 120;
@@ -114,6 +121,10 @@ static uint8_t ha_msg(uint8_t t) {
 }
 
 static void ha_tick(void) {
+    if (act_wait && (uint8_t)(sys_ticks[1] - act_at) >= ACT_UNITS) {
+        act_wait = 0;
+        ui_status(S_SILENT);
+    }
     if (!pend) return;
     if ((uint8_t)(sys_ticks[1] - req_at) < REQ_UNITS) return;
     if (!req_retry) { req_retry = 1; ha_request(cur_view); ui_status(S_WAIT); }
@@ -154,6 +165,8 @@ static void ha_key(uint8_t k) {
     arg[0] = petscii_to_ascii(k);
     arg[1] = cur_view;
     proto_send_message(MSG_HA_ACTION, arg, 2);
+    act_at = sys_ticks[1];
+    act_wait = 1;
     /* No status line: row 24 is the proxy's key hints, and covering it
        hides the way back out. The screen redraw is the feedback. */
 }
@@ -161,6 +174,7 @@ static void ha_key(uint8_t k) {
 void mod_ha_run(void) {
     pend = 0;
     req_retry = 0;
+    act_wait = 0;
     cur_view = 0;
     chat_area_clear_screen();
     mod_modal_begin(ha_msg, ha_key);
