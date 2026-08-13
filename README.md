@@ -18,7 +18,9 @@ You can:
 2. Chat with an AI Assistant personality, the raw model, or with SillyTavern-compatible
    character cards
 3. Integrate with Claude Code and drive the session (even updating itself!)
-4. Intelligently print any content (e.g., "/print my character sheet" or 
+4. Watch and drive your Home Assistant dashboard -- doors, lights, the
+   thermostat and the sprinklers -- from the F1 menu
+5. Intelligently print any content (e.g., "/print my character sheet" or 
    "/print please give me a summary of the story so far, with plot points and
    the result of combat" or "/print the complete recipe we just discussed")
 
@@ -195,6 +197,34 @@ Mapper (on modern Windows, the built-in GS synth) from a separate
 mood-tagged library. See [Music for the Windows client](llm64_proxy/README.md#music-for-the-windows-client-midi)
 for how that library is built; the SID library for the C64 is
 [here](llm64_proxy/README.md#building-the-sid-music-library-the-c64s-music).
+
+### Home Assistant
+
+Press `o` in the F1 menu and your Home Assistant dashboard comes up on the
+C64: every entity of a Lovelace view, its state coloured by what it means,
+and a live graph along the bottom. Rows update by themselves as things
+change -- open a door and the row flips while you watch.
+
+![The Home view on a real C64: two columns of entities, states in colour, a power graph along the bottom](screenshots/c64_homeassistant.jpg)
+
+Nothing in it is configured per-entity. The screen is derived from *your*
+Lovelace config -- which cards, in what order, under what heading -- plus
+each entity's `domain`, `device_class` and unit. Rearrange the dashboard in
+Home Assistant and the C64 follows on the next refresh; point it at someone
+else's instance and it renders theirs.
+
+A letter beside a row means you can act on it. What that does depends on
+what the thing is: a switch toggles, a cover or a lock asks first, and
+anything with more than two states gets an editor. The thermostat and the
+sliders get `+`/`-` with the entity's own step and commit on `RETURN`;
+lights get brightness, white temperature and a colour picker made of the
+C64's own sixteen.
+
+![The light editor: brightness and white-temperature bars, the C64 palette as a colour picker, and three presets](screenshots/c64_homeassistant_light.jpg)
+
+`F7` lists your views and dashboards, `F4`/`F6` page a long one, and `R`
+refreshes. Set it up with a `[homeassistant]` block in `config.toml`; the
+token comes from the environment.
 
 ### Conversations, Misc.
 
