@@ -132,6 +132,12 @@ static void ha_key(uint8_t k) {
         proto_send_message(MSG_HA_ACTION, arg, 2);
         return;                   /* the proxy draws it; do not re-ask */
     }
+    if (k == 138 || k == 139) {   /* f4 / f6 - page a long view */
+        arg[0] = (k == 139) ? 0x4E : 0x50;   /* ASCII 'N' / 'P' */
+        arg[1] = 0;
+        proto_send_message(MSG_HA_ACTION, arg, 2);
+        return;
+    }
     if (k == 140) {               /* f8 - leave the module entirely */
         mod_modal_end();
         return;

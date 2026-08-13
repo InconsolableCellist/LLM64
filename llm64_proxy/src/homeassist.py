@@ -445,6 +445,8 @@ class Screen:
         self.plots: List[dict] = []      # {'row','rows','x0','ys'}
         self.keymap: Dict[str, dict] = {}   # hotkey -> {'entity','action'}
         self.labels: Dict[str, str] = {}    # entity -> shortened name
+        self.page = 0
+        self.npages = 1
 
     def row(self, n: int) -> Row:
         return self.rows[n]
@@ -537,7 +539,8 @@ def render_view(view: dict, states: Dict[str, dict],
                 title: str = '',
                 overrides: Optional[Dict[str, str]] = None,
                 confirm_domains: Optional[set] = None,
-                plot_label: Optional[tuple] = None) -> Screen:
+                plot_label: Optional[tuple] = None,
+                page: int = 0) -> Screen:
     """Overview screen for one view: two 38-column panes, sections kept
     whole where they fit."""
     confirm_domains = CONFIRM_DOMAINS if confirm_domains is None else confirm_domains
@@ -569,52 +572,66 @@ def render_view(view: dict, states: Dict[str, dict],
     # Break to the second pane when the first cannot hold a whole
     # section.
     TOP, BOTTOM = 1, 21
-    panes = [(0, TOP), (40, TOP)]
-    pane = 0
-    keys = iter(HOTKEYS)
+    PER_PANE = BOTTOM - TOP + 1
+    PER_PAGE = PER_PANE * 2
+
+    # Flatten to lines, then flow. A section bigger than one pane has to
+    # continue into the next rather than jump to it whole: Downstairs is
+    # thirty entities under one heading, and keeping it together left
+    # the left pane empty and dropped everything past row 21.
+    lines: List[tuple] = []
     for heading, ents in sections:
-        need = len(ents) + (1 if heading else 0)
-        base, y = panes[pane]
-        if y + need > BOTTOM + 1 and pane == 0:
-            pane = 1
-            base, y = panes[pane]
         if heading:
-            r = sc.row(y)
-            r.put(base, (' ' + heading)[:38].ljust(38), reverse=True)
+            lines.append(('head', heading))
+        lines.extend(('ent', e) for e in ents)
+
+    # A heading alone at the foot of a pane belongs to the next one.
+    slots: List[Optional[tuple]] = []
+    for ln in lines:
+        if ln[0] == 'head' and (len(slots) % PER_PANE) == PER_PANE - 1:
+            slots.append(None)
+        slots.append(ln)
+
+    npages = max(1, (len(slots) + PER_PAGE - 1) // PER_PAGE)
+    page = max(0, min(page, npages - 1))
+    window = slots[page * PER_PAGE:(page + 1) * PER_PAGE]
+
+    keys = iter(HOTKEYS)
+    for i, ln in enumerate(window):
+        if ln is None:
+            continue
+        base = 0 if i < PER_PANE else 40
+        y = TOP + (i % PER_PANE)
+        r = sc.row(y)
+        if ln[0] == 'head':
+            r.put(base, (' ' + ln[1])[:38].ljust(38), reverse=True)
             r.ink(base, 38, INK['head'])
-            y += 1
-        for e in ents:
-            if y > BOTTOM:
-                break
-            st = states.get(e, {})
-            attrs = st.get('attributes', {})
-            domain = e.split('.')[0]
-            act = action_for(domain)
-            r = sc.row(y)
-            if act:
-                try:
-                    k = next(keys)
-                except StopIteration:
-                    k = None
-                if k:
-                    r.put(base, f'{k})')
-                    r.ink(base, 2, INK['key'])
-                    sc.keymap[k] = {
-                        'entity': e,
-                        'action': act,
-                        'confirm': domain in confirm_domains,
-                    }
-            r.put(base + 4, labels.get(e, e)[:24])
-            r.ink(base + 4, 24, INK['name'])
-            text, role = fmt_state(st.get('state'), attrs, domain)
-            r.put(base + 30, text.rjust(8))
-            r.ink(base + 30, 8, INK[role])
-            y += 1
-        panes[pane] = (base, y)
+            continue
+        e = ln[1]
+        st = states.get(e, {})
+        attrs = st.get('attributes', {})
+        domain = e.split('.')[0]
+        act = action_for(domain)
+        if act:
+            k = next(keys, None)
+            if k:
+                r.put(base, f'{k})')
+                r.ink(base, 2, INK['key'])
+                sc.keymap[k] = {'entity': e, 'action': act,
+                                'confirm': domain in confirm_domains}
+        r.put(base + 4, labels.get(e, e)[:24])
+        r.ink(base + 4, 24, INK['name'])
+        text, role = fmt_state(st.get('state'), attrs, domain)
+        r.put(base + 30, text.rjust(8))
+        r.ink(base + 30, 8, INK[role])
+
+    sc.page, sc.npages = page, npages
 
     foot = sc.row(24)
-    foot.put(0, ' a-z act   RET detail   R refresh   F7 views   F8 exit'.ljust(COLS),
-             reverse=True)
+    hint = ' a-z act   R refresh   F7 views   F8 exit'
+    if npages > 1:
+        hint += f'   F4/F6 page {page + 1}/{npages}'
+    foot.put(0, hint.ljust(COLS), reverse=True)
     foot.ink(0, COLS, GREY)
     # The graph occupies cells 8-39 of rows 22-23; cells 0-7 carry its
     # label, so the plot frame must not overwrite them.

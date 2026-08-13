@@ -48,6 +48,7 @@ class HASession:
         self.client: Optional[HAClient] = None
         self.dashboard = ''
         self.view = 0
+        self.page = 0
         self.screen_kind = 'view'         # view | climate | light | views
         self.entity: Optional[str] = None
         self.pending: Optional[float] = None      # uncommitted setpoint
@@ -72,6 +73,7 @@ class HASession:
         if self not in _listeners:
             _listeners.append(self)
         self.view = view_index
+        self.page = 0
         self.screen_kind = 'view'
         self.entity = None
         self.pending = None
@@ -134,7 +136,8 @@ class HASession:
                             title=str(view.get('title') or ''),
                             overrides=self.config.ha_names,
                             confirm_domains=self.config.ha_confirm,
-                            plot_label=self._plot_label)
+                            plot_label=self._plot_label,
+                            page=self.page)
         self._labels = sc.labels
         for band in sc.plots:
             if band.get('entity') == self._plot_eid and self._plot_blocks:
@@ -259,6 +262,11 @@ class HASession:
             self.entity = None
             await self.push()
             return
+        if k in ('N', 'P') and self.screen_kind == 'view':
+            self.page += 1 if k == 'N' else -1
+            self.page = max(0, self.page)      # render_view clamps the top
+            await self.push()
+            return
         entry = self._keymap.get(k) or self._keymap.get(k.lower())
         if not entry:
             return
@@ -275,6 +283,7 @@ class HASession:
             return
         if act == 'VIEW':
             self.view = entry['index']
+            self.page = 0
             self.screen_kind = 'view'
             await self.push()
             return

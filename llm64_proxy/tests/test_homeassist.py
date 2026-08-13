@@ -380,6 +380,70 @@ def test_an_entity_shown_twice_gets_one_row_and_keeps_its_name():
     assert 'front door' not in text, 'fell through to the entity id'
 
 
+def _big_view(n):
+    return {'sections': [{'cards': [
+        {'type': 'heading', 'heading': 'Everything'},
+        {'type': 'entities', 'entities': [f'switch.s{i}' for i in range(n)]},
+    ]}]}
+
+
+def _big_states(n):
+    return states_of(*[S(f'switch.s{i}', 'off', f'Switch Number {i}')
+                       for i in range(n)])
+
+
+def test_a_section_too_tall_for_one_pane_flows_into_the_next():
+    """Downstairs is thirty entities under one heading. Keeping the
+    section whole left the left pane empty and dropped the rest."""
+    sc = render_view(_big_view(30), _big_states(30), no_area)
+    left = [sc.rows[r].cells[4:28] for r in range(1, 22)]
+    used = sum(1 for row in left if bytes(row).strip(b' '))
+    assert used > 10, 'left pane is empty; the section jumped to pane two'
+
+
+def test_everything_on_a_page_is_reachable_across_pages():
+    n = 60
+    seen = set()
+    for page in range(4):
+        sc = render_view(_big_view(n), _big_states(n), no_area, page=page)
+        text = ''.join(chr(c & 0x7F) for r in sc.rows for c in r.cells)
+        for i in range(n):
+            if f'Switch Number {i}' in text:
+                seen.add(i)
+        if page + 1 >= sc.npages:
+            break
+    assert len(seen) == n, f'{n - len(seen)} entities unreachable'
+
+
+def test_page_count_and_clamping():
+    sc = render_view(_big_view(60), _big_states(60), no_area, page=99)
+    assert sc.page == sc.npages - 1, 'page past the end should clamp'
+    one = render_view(_big_view(5), _big_states(5), no_area)
+    assert one.npages == 1
+
+
+def test_a_heading_never_sits_alone_at_the_foot_of_a_pane():
+    view = {'sections': [
+        {'cards': [{'type': 'heading', 'heading': 'A'},
+                   {'type': 'entities',
+                    'entities': [f'switch.a{i}' for i in range(20)]}]},
+        {'cards': [{'type': 'heading', 'heading': 'B'},
+                   {'type': 'entities', 'entities': ['switch.b0']}]},
+    ]}
+    st = states_of(*([S(f'switch.a{i}', 'off', f'Alpha {i}') for i in range(20)]
+                     + [S('switch.b0', 'off', 'Bravo Zero')]))
+    sc = render_view(view, st, no_area)
+    # 'B' must not be the last row of a pane with nothing under it
+    row21 = ''.join(chr(c & 0x7F) for c in sc.rows[21].cells[:38])
+    assert 'B' not in row21.strip() or 'Bravo' in ''.join(
+        chr(c & 0x7F) for c in sc.rows[21].cells)
+
+
+def test_paging_only_applies_to_the_overview():
+    sc = render_view(_big_view(5), _big_states(5), no_area)
+    assert sc.npages == 1 and sc.page == 0
+
+
 def test_a_missing_entity_does_not_break_the_screen():
     view = {'cards': [{'type': 'entities', 'entities': ['sensor.gone']}]}
     sc = render_view(view, {}, no_area)
