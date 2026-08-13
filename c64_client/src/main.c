@@ -1209,6 +1209,52 @@ static void config_open(void) {
     chat_redraw();
 }
 
+/* Hang up and dial again, from inside a running session.
+
+   Recovering a dead link used to mean a reset: modem_connect only ran
+   in the startup path, so once the wire went quiet the program had no
+   way back. This is that path, reachable from the F1 menu.
+
+   No DTR games. The C64U's modem re-evaluates DTR/RTS on every command
+   register write, and dropping the line that way glitched it into lost
+   packets and spurious hangups (serial.s); +++ ATH is what this modem
+   answers reliably.
+
+   The server gets a NEW connection, so it gives us a new conversation.
+   The scrollback on screen is ours and stays put - what is gone is the
+   server's memory of it, which is worth saying out loud. */
+static void modem_redial(void) {
+    ui_frozen = 0;
+    serial_rx_resume();
+
+    /* A half-received frame from before the link died would otherwise
+       desync the first reply of the new session. */
+    proto_init(&proto, payload_buffer, MAX_PAYLOAD);
+    state = ST_IDLE;
+
+    acia_init_hw();
+#ifndef CONNECT_DIRECT
+    if (!modem_connect()) {
+        ui_status("Redial failed - f1 for the menu, or reset");
+        return;
+    }
+#endif
+    ui_status("Contacting server...");
+    proto_send_ping();
+    if (!wait_for_ack(8000)) {
+        ui_status("No reply from the server - f1, or reset");
+        return;
+    }
+    proto_send_set_baud();
+    proto_send_new_conversation();
+    wait_for_ack(4000);
+
+    chat_start(2);
+    chat_append_petscii("Reconnected. This is a new conversation.");
+    chat_finish();
+    ui_status("Ready. Type your message.");
+}
+
 /* Open the config editor from the pre-connection dial/ping retry loops.
    The editor is the llm64.1 overlay: loaded from DISK and run entirely
    locally - no server, no serial traffic - so unlike the server-fed F1
@@ -1252,6 +1298,7 @@ static void menu_local(uint8_t a) {
         case 'd': diskcopy_open(); break;
         case 'j': sound_open(); break;
         case 'o': ha_open(); break;
+        case 'R': modem_redial(); break;
 #endif
         default: break;
     }

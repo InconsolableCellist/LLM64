@@ -3443,6 +3443,9 @@ class ProtocolHandler:
         entries += [
             ('x', 'Cancel reply', '!x'),
             ('e', 'Server config', '!e'),
+            # Hang up and dial again without a reset. The client owns
+            # the whole sequence; we only put the door in the menu.
+            ('l', 'Reconnect the MODEM', '!R'),
         ]
         # A C64 program has to be able to copy itself onto a blank disk;
         # nothing any other machine runs does. The menu is the server's,
@@ -3450,7 +3453,18 @@ class ProtocolHandler:
         if self.profile.name == 'c64':
             entries.append(('d', 'Copy client disk', '!d'))
         entries.append(('h', 'Help', '/help'))
-        return entries[:13]  # the client panel caps at MAX_MENU
+        # The panel holds 13. Truncating the tail would drop Help, and
+        # before that Reconnect - the one entry whose whole purpose is
+        # being reachable when things have gone wrong. Copying a disk is
+        # what gives way instead; it is never urgent.
+        while len(entries) > 13:
+            for give in ('d', 'l'):
+                if any(e[0] == give for e in entries):
+                    entries = [e for e in entries if e[0] != give]
+                    break
+            else:
+                entries = entries[:13]
+        return entries
 
     async def handle_get_menu(self):
         """Send the server-fed menu: [count][more] then
