@@ -624,6 +624,7 @@ class ProtocolHandler:
                 "/print [what] - hardcopy on the printer\n"
                 "/save [name] - checkpoint this conversation\n"
                 "/saves - list, /restore <n> - roll back\n"
+                "/again - say the last reply again, unchanged\n"
                 "/redo - a different take on the last reply\n"
                 "/retcon - strike the last exchange from the record\n"
                 "/fork - split off a copy and keep both\n"
@@ -775,6 +776,20 @@ class ProtocolHandler:
         # The three history verbs. Plain commands on purpose: the same
         # words work from a C64, and the Windows client's message menu
         # is only a shorter way to type them.
+        # A frame lost on the wire takes text off the screen that the
+        # proxy still has. Repeating it costs nothing and asks the model
+        # nothing - /redo re-rolls, which is the wrong tool when what you
+        # wanted was the words you already paid for.
+        elif cmd in ('again', 'repeat'):
+            last = next((m.get('content') for m in
+                         reversed(self.conv_manager.get_messages())
+                         if m.get('role') == 'assistant' and m.get('content')),
+                        None)
+            if last:
+                await self._send_canned(last)
+            else:
+                await self._send_canned("Nothing said yet to repeat.")
+
         elif cmd == 'redo':
             if self.mode.name == 'claude':
                 await self._send_canned(
