@@ -36,6 +36,7 @@ void mod_convmgr_run(void);
 void mod_diskcopy_run(void);
 void mod_menu_run(void);
 void mod_sound_run(void);
+void mod_ha_run(void);
 #endif
 
 /* music.s */
@@ -373,7 +374,7 @@ static uint8_t modem_connect(void) {
     guard_pause();
     at_command("ATH", resp, sizeof(resp));
 
-    ui_status("Resetting modem...");
+    ui_status("Resetting MODEM...");
     at_command("ATZ", resp, sizeof(resp));
     at_command("ATE0", resp, sizeof(resp));
     at_command("ATV1", resp, sizeof(resp));
@@ -597,6 +598,11 @@ static void convmgr_open(void) {
 /* Open the jukebox / sound window (menu J) */
 static void sound_open(void) {
     mod_open("llm64.5", mod_sound_run);
+}
+
+/* Home Assistant (menu O - 'h' is /help) */
+static void ha_open(void) {
+    mod_open("llm64.6", mod_ha_run);
 }
 
 /* Open the server-fed menu module (F1). Falls back to the resident
@@ -1245,6 +1251,7 @@ static void menu_local(uint8_t a) {
         case 'e': config_open(); break;
         case 'd': diskcopy_open(); break;
         case 'j': sound_open(); break;
+        case 'o': ha_open(); break;
 #endif
         default: break;
     }
@@ -1288,7 +1295,7 @@ static void handle_key(uint8_t k) {
         switch (k) {
             case 'n': case 'x': case 's':
 #ifdef SOFT80
-            case 'c': case 'e': case 'd': case 'j':
+            case 'c': case 'e': case 'd': case 'j': case 'o':
 #endif
                 menu_local(k);
                 break;

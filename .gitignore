@@ -26,3 +26,6 @@ llm64_proxy/cards/
 
 # Launcher settings (addresses are yours, not the project's)
 run.conf
+
+# Home Assistant long-lived token (secret)
+.homeassistant.env

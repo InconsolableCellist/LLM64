@@ -129,6 +129,31 @@ class Config:
             'LLM64_CHUNK_PACE_PER_BYTE',
             _ser.get('chunk_pace_per_byte', 0.0018)))
 
+        # Home Assistant. No block = feature off, no socket opened.
+        # The screen comes from the user's Lovelace config; what lives
+        # here is taste: which view opens first, light presets, and any
+        # names the shortener gets wrong.
+        _ha = config.get('homeassistant', {})
+        self.ha_url = os.getenv('HOMEASSISTANT_URL', _ha.get('url', ''))
+        # Env beats config.toml so the token need not be on disk.
+        self.ha_token = (os.getenv('HOMEASSISTANT_API_KEY')
+                         or os.getenv('HOMEASSISTANT_TOKEN')
+                         or _ha.get('token', ''))
+        self.ha_enabled = bool(self.ha_url and self.ha_token)
+        self.ha_dashboard = str(_ha.get('dashboard', ''))
+        self.ha_view = int(_ha.get('view', 0))
+        self.ha_history_hours = int(_ha.get('history_hours', 24))
+        # Must fit the client's parser: the C64 reads into 512 bytes.
+        self.ha_max_payload = int(_ha.get('max_payload', 512))
+        # Overrides for friendly_names the shortener cannot save.
+        self.ha_names = dict(_ha.get('names', {}) or {})
+        # Presets: whatever light.turn_on accepts, plus a name.
+        self.ha_presets = list(_ha.get('presets', []) or [])
+        # Domains that ask before acting.
+        _confirm = _ha.get('confirm_domains')
+        self.ha_confirm = (set(_confirm) if _confirm is not None
+                           else {'cover', 'lock', 'vacuum'})
+
         # Hardcopy (/print, docs/14). `width` is the column the composed
         # document wraps at - the printer's, not the screen's: an
         # MPS-803 is 80 columns wide whichever mode the client is in.

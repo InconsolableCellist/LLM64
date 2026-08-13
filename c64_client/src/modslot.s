@@ -21,4 +21,10 @@
 .segment "OVL5ADDR"
         .addr *+2
 
+.segment "OVL6ADDR"
+        .addr *+2
+
+.segment "OVL7ADDR"
+        .addr *+2
+
 .endif

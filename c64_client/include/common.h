@@ -163,6 +163,18 @@ typedef enum {
                                          paused for the IEC write */
 #define MSG_PRINT_END           0x64  /* 'd' - close the channel */
 
+/* Home Assistant. The proxy formats, colours and resamples; these
+   frames carry placed cells and computed pixel columns. */
+#define MSG_GET_HA              0x45  /* 'E' - [view] send me this screen */
+#define MSG_HA_ACTION           0x46  /* 'F' - [key][view]; the proxy
+                                         maps the key to an entity */
+#define MSG_HA_ROWS             0x6D  /* 'm' - [first][count] then per
+                                         row [color:40][cells:80],
+                                         chunked to fit MAX_PAYLOAD */
+#define MSG_HA_PLOT             0x6F  /* 'o' - [row][rows][x0][n] then n
+                                         y-bytes from the band top,
+                                         already resampled and scaled */
+
 /* Pseudo message type returned by proto_process_byte on checksum failure
    (not a wire value - chosen outside the protocol's type range) */
 #define PROTO_CRC_FAIL          0xFE

@@ -324,6 +324,24 @@ and some additional design docs:
 
 [CHANGELOG.md](CHANGELOG.md) has the full list.
 
+### 1.2 -- 2026-08-12
+
+Your house, on the C64: a Home Assistant module that shows a Lovelace
+view as an 80-column screen and lets you drive it.
+
+- **The overview.** Every entity of a view on one screen, its state
+  coloured by what it means, a live hires graph along the bottom, and a
+  letter beside anything you can act on. Rows update by themselves as
+  things change.
+- **Editors for the things that are not toggles.** A setpoint you nudge
+  with `+` and `-` and commit with `RETURN`, and a light with
+  brightness, white temperature and a colour picker made of the C64's
+  own sixteen.
+- **It reads your dashboard, not a config file.** Which entities, in
+  what order, under what heading comes from your own Lovelace config;
+  what a state means comes from each entity's `device_class`. Rearrange
+  the dashboard and the C64 follows.
+
 ### 1.1 -- 2026-08-01
 
 The Windows client runs on Windows 10 and 11, and the proxy is

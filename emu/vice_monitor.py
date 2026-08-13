@@ -13,6 +13,7 @@ STX = 0x02
 API_VERSION = 0x02
 
 CMD_MEM_GET = 0x01
+CMD_MEM_SET = 0x02
 CMD_KEYBOARD_FEED = 0x72
 CMD_PING = 0x81
 CMD_EXIT = 0xAA        # resume emulation
@@ -131,6 +132,26 @@ class ViceMonitor:
         data = rbody[2:2 + length]
         self.resume()
         return data
+
+    def write_memory(self, start, data, bank=0):
+        """Write bytes into the emulated machine's memory."""
+        end = start + len(data) - 1
+        body = struct.pack('<BHHBH', 0, start, end, 0, bank) + bytes(data)
+        resp_type, error, rbody = self._transact(CMD_MEM_SET, body)
+        if error:
+            raise ViceMonitorError(f'memory write failed: error {error}')
+        self.resume()
+
+    def press_key(self, petscii):
+        """Put one key straight into the KERNAL buffer.
+
+        keyboard_feed goes through a PETSCII-to-matrix translation that
+        drops the function keys, and this client scans the matrix itself
+        anyway - it appends to the same buffer, so writing it directly is
+        what a keypress would have produced.
+        """
+        self.write_memory(0x0277, bytes([petscii]))   # KBUF
+        self.write_memory(0x00C6, bytes([1]))         # NDX
 
     def screen_rows(self):
         """Return the 25 screen rows as decoded ASCII-ish strings."""

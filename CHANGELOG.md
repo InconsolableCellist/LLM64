@@ -9,6 +9,79 @@ Windows client and the proxy -- ship together and share one number,
 because the wire protocol they speak is versioned separately and a
 client is only ever tested against the proxy released beside it.
 
+## 1.2 -- 2026-08-12
+
+Your house, on the C64.
+
+**Home Assistant on the dashboard screen.** A new overlay module shows a
+Lovelace view as an 80-column screen: every entity, its state in colour,
+a live graph along the bottom, and a letter beside anything you can act
+on. Doors, switches and sensors update by themselves as they change --
+no key to press. The thermostat and the lights get editors of their own,
+because a setpoint is a number you nudge and a light is three continuous
+axes, not a toggle.
+
+Nothing in it names an entity. The screen is derived from your own
+Lovelace config -- which cards, in what order, under what heading --
+plus each entity's `domain`, `device_class` and unit. Rearrange your
+dashboard in Home Assistant and the C64 follows on the next refresh.
+Point it at somebody else's instance and it renders theirs.
+
+### Home Assistant
+
+- **The overview**, from any view of any dashboard: two 38-column panes,
+  sections kept whole, all 37 entities of a real Home view on one screen
+  with nothing scrolling. Colour says what the state means rather than
+  which domain it came from -- green is nothing to see, red is an open
+  door, yellow is motion, grey is unavailable.
+- **Live updates.** The proxy holds one WebSocket and pushes a row when
+  a watched entity moves, so a door opening flips the row while you
+  watch it. Only rows whose bytes actually changed go on the wire; one
+  door costs 120 bytes.
+- **A graph**, drawn as real hires pixels rather than block characters,
+  with the entity's name, its range and the time span beside it. Soft-80
+  is already a bitmap, so the trace is one pixel wide.
+- **A setpoint editor** with seven-segment digits you can read across a
+  room. `+` and `-` move the target and nothing is sent until `RETURN`:
+  a Z-Wave thermostat answers slowly, and a service call per keypress
+  queues writes it cannot keep up with.
+- **A light editor** with brightness, white temperature and colour --
+  and the colour picker is the C64's own sixteen, which is both the joke
+  and the correct size. Which controls appear is read from the light's
+  `supported_color_modes`.
+- **Covers, locks and the vacuum ask first.** The default comes from
+  what the thing is, not from a list of your entity ids, so it is right
+  on an instance nobody has configured.
+- **Names are shortened by algorithm, not by table.** Words that every
+  sibling shares carry no information, so they go: "Basement Multisensor
+  Humidity" and "Family Room Multisensor Humidity" become "Basement
+  Humidity" and "Family Room Humidity". Uniqueness is guaranteed within
+  a screen, and the choice is made per group, so every door on the
+  screen shortens by the same amount or none of them does.
+- **A card-type registry** is the only place card knowledge lives. A
+  card nobody has taught it about degrades to a readable list of its
+  entities instead of vanishing.
+- Optional `[homeassistant]` config: the URL, which view opens first,
+  your light presets, and name overrides for the few an integration
+  names badly. The token comes from the environment, never the file.
+
+### Fixes
+
+- **Overlay modules past the fifth loaded at the wrong address.**
+  `modslot.s` emits the two-byte load header for each overlay file and
+  only had entries for one through five, so a sixth module loaded
+  wherever its own first two bytes pointed and the machine executed
+  whatever was already in the slot. Modules six and seven now have
+  theirs.
+- Graphs are rasterised by the proxy and copied by the client. The
+  bitmap lives under the KERNAL, where writes reach RAM but reads return
+  ROM, so a read-modify-write per pixel ORed ROM into the picture.
+- Home Assistant frames are paced like images and SIDs. An unpaced
+  3.4 KB burst bunched in the C64U's bridge and lost whole frames.
+- A Home Assistant session is torn down when its client disconnects. It
+  stayed subscribed, rendering a screen and writing it to a dead socket
+  on every state change in the house.
+
 ## 1.1 -- 2026-08-01
 
 Two large things and a lot of small ones.

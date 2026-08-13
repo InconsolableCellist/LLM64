@@ -53,6 +53,9 @@ class MessageType(IntEnum):
     FAV_TUNE = 0x3D  # '=' - toggle favorite on the current tune
     SET_BAUD = 0x3E  # '>' - client's wire rate: 2 bytes LE, nominal/100
     SET_OPTION = 0x43  # 'C' - [opt][value] session toggle, fire-and-forget
+    GET_HA = 0x45     # 'E' - [view] give me this Home Assistant screen
+    HA_ACTION = 0x46  # 'F' - [key][view] one keystroke; the proxy maps
+    #                   it to an entity, the client never knows which
     GET_SHEET = 0x44  # 'D' - send the sheets again (character, state,
     #                   map) out of what is already stored. No payload,
     #                   and by contract never an LLM or image call: it is
@@ -119,6 +122,12 @@ class MessageType(IntEnum):
     #                  2 you are here), E<a>\t<b>\t<dir>\t<flags> per
     #                  edge (dir n s e w u d or -, flags 1 one-way), and
     #                  X<hidden> if rooms did not fit. CAP_MAP_DATA only.
+    HA_ROWS = 0x6D    # 'm' - [first][count] then per row [color:40]
+    #                   [cells:80], chunked to fit MAX_PAYLOAD. A single
+    #                   state change sends one row.
+    HA_PLOT = 0x6F    # 'o' - [row][rows][x0][n] then n y-bytes from the
+    #                   band top, already resampled onto a uniform time
+    #                   grid and scaled to the band
     MOOD_LIST = 0x6A  # 'j' - [count] then [mood\0]: the mood vocabulary
     #                   of the library THIS listener plays from, for a
     #                   client with a music picker to fill
@@ -187,6 +196,9 @@ class ProtocolHandler:
         # background tasks: _send_begin waits for an ACK that only the
         # reader can dispatch, so awaiting it inline would deadlock
         self._media_tasks = set()
+        # Created on the first GET_HA, so an unconfigured proxy pays
+        # nothing.
+        self._ha = None
         self.logger = logging.getLogger(__name__)
 
         # Parser state
@@ -369,6 +381,10 @@ class ProtocolHandler:
                 self.handle_set_option()
             elif msg_type == MessageType.GET_SHEET:
                 await self.handle_get_sheet()
+            elif msg_type == MessageType.GET_HA:
+                await self.handle_get_ha()
+            elif msg_type == MessageType.HA_ACTION:
+                await self.handle_ha_action()
             elif msg_type == MessageType.ACK:
                 self.logger.debug("ACK received")
                 if self._begin_ack is not None \
@@ -559,6 +575,15 @@ class ProtocolHandler:
         self._cancel_stream()
         for t in list(self._media_tasks):
             t.cancel()
+        # A Home Assistant session subscribes to state changes; left
+        # registered it keeps rendering and writing to a dead socket on
+        # every state change in the house.
+        if self._ha is not None:
+            try:
+                self._ha.close()
+            except Exception:
+                pass
+            self._ha = None
         await self._stop_claude()
 
     def _cancel_stream(self):
@@ -1835,6 +1860,48 @@ class ProtocolHandler:
                          sheet.get('race') or '?', sheet.get('class') or '?')
         await self._send_char_sheet(sheet)
         return True
+
+    async def _ha_session(self):
+        """Build this connection's Home Assistant session on demand."""
+        if self._ha is not None:
+            return self._ha
+        from .hasession import HASession
+
+        # Paced, not raw: a screen is ~3.4KB in 482-byte frames, and the
+        # C64U bridge drops whole packets when an unpaced burst bunches
+        # up in its TCP->serial queue. Same reason images and SIDs go
+        # through _send_bulk.
+        async def send_rows(first, payload):
+            await self._send_bulk(MessageType.HA_ROWS, payload)
+
+        async def send_plot(payload):
+            await self._send_bulk(MessageType.HA_PLOT, payload)
+
+        self._ha = HASession(send_rows, send_plot, self.config)
+        return self._ha
+
+    async def handle_get_ha(self):
+        """[view] - draw a Home Assistant screen."""
+        if not getattr(self.config, 'ha_enabled', False):
+            await self.send_status("Home Assistant is not configured")
+            return
+        view = self.payload[0] if self.payload else 0
+        try:
+            session = await self._ha_session()
+            await session.open(view)
+        except Exception as exc:                       # noqa: BLE001
+            self.logger.warning("home assistant unavailable: %s", exc)
+            await self.send_status(f"Home Assistant: {exc}"[:80])
+
+    async def handle_ha_action(self):
+        """[key][view] - one keystroke on the current screen."""
+        if self._ha is None or not self.payload:
+            return
+        try:
+            await self._ha.key(chr(self.payload[0]))
+        except Exception as exc:                       # noqa: BLE001
+            self.logger.warning("home assistant action failed: %s", exc)
+            await self.send_status(f"Home Assistant: {exc}"[:80])
 
     async def handle_get_sheet(self):
         """A window just opened and wants filling. Everything here comes
@@ -3358,6 +3425,12 @@ class ProtocolHandler:
                 ('r', 'Roleplay characters', '/chars'),
                 ('m', 'Models', '/models'),
             ]
+        # Only in the chat modes: adventure and roleplay already fill the
+        # 13-entry panel, and appending here would push Help off the end.
+        if (mode not in ('adventure', 'roleplay')
+                and getattr(self.config, 'ha_enabled', False)
+                and self.profile.name == 'c64'):
+            entries.append(('o', 'Home Assistant', '!o'))
         # The jukebox panel is the C64's; a MIDI client has its own
         # playback controls in the Music window.
         if self.profile.music_fmt == 'sid' and self.music.available:

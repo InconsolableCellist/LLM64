@@ -214,3 +214,39 @@ cups_pic_scale = 4
 # The queue's real dot pitch. Stamped into the PNG and passed to lp as
 # `ppi`; if they disagree CUPS rescales and moires the halftone.
 cups_pic_dpi = 203
+
+# --- Home Assistant --------------------------------------------------
+#
+# Omit this section and the feature is off.
+#
+# The screen is derived from your Lovelace config - which cards, in what
+# order, under what heading - plus each entity's domain, device_class
+# and unit. Rearrange your dashboard and the C64 follows; nothing here
+# names an entity.
+#
+# [homeassistant]
+# url = "http://homeassistant.local:8123"
+#
+# The proxy reads HOMEASSISTANT_API_KEY (or HOMEASSISTANT_TOKEN) first,
+# so the token need not be written here.
+# token = ""
+#
+# Which dashboard and view open first. Empty = the default dashboard.
+# dashboard = ""
+# view = 0
+# history_hours = 24
+#
+# Light presets. `name` is the label; every other key is passed to
+# light.turn_on.
+# [[homeassistant.presets]]
+# name = "Warm 40%"
+# brightness_pct = 40
+# color_temp_kelvin = 2200
+#
+# Name overrides. Only needed where a friendly_name is unsalvageable -
+# the shortener drops the words a group of siblings share on its own.
+# [homeassistant.names]
+# "sensor.radon_bq_per_m3" = "Radon"
+#
+# Domains that ask before acting. [] to disable.
+# confirm_domains = ["cover", "lock", "vacuum"]

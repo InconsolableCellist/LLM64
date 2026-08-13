@@ -147,6 +147,7 @@ MOD2 = $(PRG).2
 MOD3 = $(PRG).3
 MOD4 = $(PRG).4
 MOD5 = $(PRG).5
+MOD6 = $(PRG).6
 D64 = $(TARGETDIR)/llm64.d64
 
 # Bootable distribution disk: client PRG first (LOAD"*",8,1 / the
@@ -163,7 +164,8 @@ $(D64): $(PRG)
 	       -write $(MOD2) "llm64.2" \
 	       -write $(MOD3) "llm64.3" \
 	       -write $(MOD4) "llm64.4" \
-	       -write $(MOD5) "llm64.5" >/dev/null
+	       -write $(MOD5) "llm64.5" \
+	       -write $(MOD6) "llm64.6" >/dev/null
 	@echo "Disk image: $(D64)"
 
 # VICE distribution disk: the same client and modules, built
@@ -183,7 +185,8 @@ $(D64VICE): $(PRG)
 	       -write $(MOD2) "llm64.2" \
 	       -write $(MOD3) "llm64.3" \
 	       -write $(MOD4) "llm64.4" \
-	       -write $(MOD5) "llm64.5" >/dev/null
+	       -write $(MOD5) "llm64.5" \
+	       -write $(MOD6) "llm64.6" >/dev/null
 	@echo "VICE disk image: $(D64VICE)"
 
 # Free (shareware) distribution disk: the shareware intro as the first
@@ -211,7 +214,8 @@ $(D64FREE): $(PRG) intro
 	       -write $(MOD2) "llm64.2" \
 	       -write $(MOD3) "llm64.3" \
 	       -write $(MOD4) "llm64.4" \
-	       -write $(MOD5) "llm64.5" >/dev/null
+	       -write $(MOD5) "llm64.5" \
+	       -write $(MOD6) "llm64.6" >/dev/null
 	@echo "Free disk image: $(D64FREE)"
 
 # Clean. Two levels, because a build that changes CONNECT or MODE80 has
@@ -221,7 +225,7 @@ $(D64FREE): $(PRG) intro
 # them would delete the first one's image.
 clean-obj:
 	@echo "Cleaning objects..."
-	rm -f $(TARGETDIR)/*.o $(TARGETDIR)/*.map $(PRG) $(MOD1) $(MOD2) $(MOD3) $(MOD4) $(MOD5)
+	rm -f $(TARGETDIR)/*.o $(TARGETDIR)/*.map $(PRG) $(MOD1) $(MOD2) $(MOD3) $(MOD4) $(MOD5) $(MOD6)
 
 clean: clean-obj
 	rm -f $(D64) $(D64VICE) $(D64FREE) $(INTRO) $(INTRODATA)
@@ -239,7 +243,7 @@ upload: $(PRG)
 	@echo "Uploading $(PRG) to C64 at $(C64_IP)..."
 	@curl -T $(PRG) ftp://$(C64_IP)$(C64_PATH)/$(TARGET).prg --user anonymous: || \
 		(echo "Upload failed! Make sure C64 FTP server is running at $(C64_IP)" && exit 1)
-	@for m in $(MOD1) $(MOD2) $(MOD3) $(MOD4) $(MOD5); do \
+	@for m in $(MOD1) $(MOD2) $(MOD3) $(MOD4) $(MOD5) $(MOD6); do \
 		[ -f $$m ] || continue; \
 		ext=$${m##*.}; \
 		curl -T $$m ftp://$(C64_IP)$(C64_PATH)/LLM64.$$ext --user anonymous: && \
