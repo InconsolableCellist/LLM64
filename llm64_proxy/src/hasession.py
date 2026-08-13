@@ -123,6 +123,10 @@ class HASession:
         views = self._views()
         if self.screen_kind == 'views':
             return ha.render_views(self.client.dashboards, views, self.view)
+        if self.screen_kind == 'number':
+            return ha.render_number(self.entity, self.client.states,
+                                    self._labels.get(self.entity, ''),
+                                    pending=self.pending)
         if self.screen_kind == 'climate':
             return ha.render_climate(self.entity, self.client.states,
                                      self._labels.get(self.entity, ''),
@@ -318,7 +322,13 @@ class HASession:
         eid = entry.get('entity')
         domain = eid.split('.')[0] if eid else ''
         try:
-            if act == 'EDIT_CLIMATE':
+            if act == 'EDIT_NUMBER':
+                self.screen_kind, self.entity, self.pending = 'number', eid, None
+            elif act == 'STEP_NUM':
+                self._step_num(eid, entry['delta'])
+            elif act == 'APPLY_NUM':
+                await self._apply_num(eid)
+            elif act == 'EDIT_CLIMATE':
                 self.screen_kind, self.entity, self.pending = 'climate', eid, None
             elif act == 'EDIT_LIGHT':
                 self.screen_kind, self.entity = 'light', eid
@@ -394,6 +404,27 @@ class HASession:
         except ValueError:
             nxt = modes[0]
         await self.client.call('climate', 'set_hvac_mode', eid, hvac_mode=nxt)
+
+    def _step_num(self, eid: str, delta: int) -> None:
+        """Nudge a slider. Batched like the setpoint: the value is the
+        argument to whatever you fire next, so it should land once."""
+        a = (self.client.states.get(eid) or {}).get('attributes', {})
+        try:
+            cur = float((self.client.states.get(eid) or {}).get('state'))
+        except (TypeError, ValueError):
+            cur = float(a.get('min', 0))
+        base = self.pending if self.pending is not None else cur
+        step = float(a.get('step', 1) or 1)
+        lo = float(a.get('min', 0))
+        hi = float(a.get('max', 100))
+        self.pending = max(lo, min(hi, base + delta * step))
+
+    async def _apply_num(self, eid: str) -> None:
+        if self.pending is None:
+            return
+        await self.client.call(eid.split('.')[0], 'set_value', eid,
+                               value=self.pending)
+        self.pending = None
 
     # -- light ---------------------------------------------------------
 

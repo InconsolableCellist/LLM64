@@ -105,6 +105,8 @@ BINARY = {
 
 # Domains whose primary verb is not "toggle".
 EDITOR_FOR = {
+    'number': 'EDIT_NUMBER',
+    'input_number': 'EDIT_NUMBER',
     'climate': 'EDIT_CLIMATE',
     'water_heater': 'EDIT_CLIMATE',
     'light': 'EDIT_LIGHT',
@@ -782,6 +784,65 @@ def render_climate(entity_id: str, states: Dict[str, dict],
         '-': {'entity': entity_id, 'action': 'STEP', 'delta': -1},
         '\r': {'entity': entity_id, 'action': 'APPLY'},
         'm': {'entity': entity_id, 'action': 'MODE'},
+    }
+    return sc
+
+
+def render_number(entity_id: str, states: Dict[str, dict],
+                  label: str = '', pending: Optional[float] = None) -> Screen:
+    """A slider, as a number you nudge.
+
+    Same contract as the setpoint: `pending` is dialled but not sent, and
+    is drawn in a different ink so it cannot be mistaken for the value
+    the entity actually holds.
+    """
+    st = states.get(entity_id, {})
+    a = st.get('attributes', {})
+    unit = (a.get('unit_of_measurement') or '').replace('\u00b0', '')
+    lo = float(a.get('min', 0))
+    hi = float(a.get('max', 100))
+    step = float(a.get('step', 1) or 1)
+    try:
+        cur = float(st.get('state'))
+    except (TypeError, ValueError):
+        cur = lo
+    shown = cur if pending is None else pending
+
+    sc = Screen()
+    _chrome(sc, label or entity_id,
+            '+ / -  adjust   RET apply   STOP back   F8 exit',
+            f'{shown:g}{unit} ')
+
+    sc.row(2).put(2, 'VALUE')
+    sc.row(2).ink(2, 8, YELLOW if pending is None else WHITE)
+    txt = f'{shown:g}'
+    big_digits(sc, 4, 2, txt, YELLOW if pending is None else WHITE)
+    if unit:
+        sc.row(8).put(2 + len(txt) * DIGIT_W, unit[:6])
+        sc.row(8).ink(2 + len(txt) * DIGIT_W, 8, DKGREY)
+    if pending is not None:
+        sc.row(9).put(2, f'not sent yet (now {cur:g})')
+        sc.row(9).ink(2, 28, WHITE)
+
+    # where the value sits in its range, as a bar of reverse cells
+    sc.row(11).put(2, 'RANGE')
+    sc.row(11).ink(2, 8, GREY)
+    span = (hi - lo) or 1.0
+    filled = int(round((shown - lo) / span * 60))
+    bar = sc.row(12)
+    for i in range(60):
+        bar.put(2 + i, ' ', reverse=(i < filled))
+    bar.ink(2, 60, YELLOW if pending is None else WHITE)
+    sc.row(13).put(2, f'{lo:g}')
+    sc.row(13).put(56, f'{hi:g}'.rjust(6))
+    sc.row(13).ink(0, COLS, DKGREY)
+    sc.row(15).put(2, f'step {step:g}')
+    sc.row(15).ink(2, 20, DKGREY)
+
+    sc.keymap = {
+        '+': {'entity': entity_id, 'action': 'STEP_NUM', 'delta': 1},
+        '-': {'entity': entity_id, 'action': 'STEP_NUM', 'delta': -1},
+        '\r': {'entity': entity_id, 'action': 'APPLY_NUM'},
     }
     return sc
 

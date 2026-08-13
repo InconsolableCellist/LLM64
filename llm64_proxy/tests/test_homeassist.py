@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.homeassist import (
+    render_number,
     BLACK, CYAN, GREEN, RED, DKGREY, YELLOW, LTGREY,
     COLS, PAIRS, ROWS,
     Row, Screen, build_blocks, cell, entities_of, fmt_state, mat,
@@ -442,6 +443,29 @@ def test_a_heading_never_sits_alone_at_the_foot_of_a_pane():
 def test_paging_only_applies_to_the_overview():
     sc = render_view(_big_view(5), _big_states(5), no_area)
     assert sc.npages == 1 and sc.page == 0
+
+
+def test_a_slider_gets_an_editor_not_a_toggle():
+    assert action_for('input_number') == 'EDIT_NUMBER'
+    assert action_for('number') == 'EDIT_NUMBER'
+
+
+def test_number_editor_shows_value_range_and_step():
+    st = states_of(S('input_number.sprinkler_minutes', '1.0',
+                     'Sprinkler Minutes', unit='min',
+                     min=1.0, max=30.0, step=1.0))
+    sc = render_number('input_number.sprinkler_minutes', st, 'Sprinkler Minutes')
+    text = ''.join(chr(c & 0x7F) for r in sc.rows for c in r.cells)
+    assert 'RANGE' in text and 'step 1' in text
+    assert '30' in text          # the top of the range is stated
+    assert set('+-\r') <= set(sc.keymap)
+
+
+def test_number_editor_marks_a_pending_value():
+    st = states_of(S('input_number.x', '5', 'X', min=0.0, max=10.0, step=1.0))
+    plain = render_number('input_number.x', st, 'X')
+    dirty = render_number('input_number.x', st, 'X', pending=7.0)
+    assert plain.rows[9].cells != dirty.rows[9].cells, 'pending is not flagged'
 
 
 def test_a_missing_entity_does_not_break_the_screen():
