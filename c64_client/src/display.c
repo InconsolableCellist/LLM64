@@ -26,7 +26,10 @@
    hayes build is the tight one; CODE growth eats BSS 1:1 there). Deep
    reading has /history now; reclaiming this rent is the overlay/module
    system's job. */
-#define MAX_LINES 121
+/* 121 until message recall wanted its code; each line costs 81 bytes of
+   BSS, and BSS is what CODE growth eats here. Five lines bought the
+   up-arrow. */
+#define MAX_LINES 116
 #else
 #define MAX_LINES 160
 #endif

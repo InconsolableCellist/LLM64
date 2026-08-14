@@ -12,6 +12,9 @@
 void editor_init(void);
 void editor_clear(void);
 
+/* Replace the line wholesale (message recall) */
+void editor_set(const char* text, uint16_t n);
+
 /* Handle an editing/typing key. Returns 1 if the key was consumed. */
 uint8_t editor_key(uint8_t key);
 

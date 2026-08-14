@@ -109,6 +109,19 @@ void editor_redraw(void) {
     full_repaint();
 }
 
+/* Replace the line wholesale, cursor at the end - what recalling a
+   sent message wants. Longer than the buffer is truncated rather than
+   refused; the recall is a convenience, not a contract. */
+void editor_set(const char* text, uint16_t n) {
+    if (n > EDIT_MAX) n = EDIT_MAX;
+    memcpy(buf, text, n);
+    buf[n] = 0;
+    len = n;
+    cur = n;
+    view_row = 0;
+    editor_redraw();
+}
+
 void editor_clear(void) {
     len = 0;
     cur = 0;

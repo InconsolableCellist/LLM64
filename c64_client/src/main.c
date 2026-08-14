@@ -25,6 +25,9 @@
 #include "loader.h"
 #include "modapi.h"
 #include "diag.h"
+#ifdef SOFT80
+#include "history.h"
+#endif
 
 #ifdef SOFT80
 /* Overlay module entries: 1 config, 2 conversation manager,
@@ -1152,6 +1155,9 @@ static void send_message(void) {
     chat_append_petscii(editor_text());
     chat_finish();
 
+#ifdef SOFT80
+    hist_add(editor_text(), editor_len());
+#endif
     proto_send_chat(editor_text());
     editor_clear();
     state = ST_WAITING;
@@ -1414,12 +1420,35 @@ static void handle_key(uint8_t k) {
         case 136: /* F7 */
             send_command("/help");
             break;
+#ifdef SOFT80
+        /* An empty line means "give me back what I sent"; a line with
+           something on it means the reader is scrolling. F4/F6 page the
+           chat either way, so nothing is lost by overloading these. */
+        case KEY_CRSR_UP:
+            if (editor_len() == 0 || hist_walking()) {
+                uint16_t n;
+                const char* t = hist_prev(&n);
+                if (t) editor_set(t, n);
+            } else {
+                chat_scroll(1);
+            }
+            break;
+        case KEY_CRSR_DOWN:
+            if (hist_walking()) {
+                hist_reset();
+                editor_clear();     /* back to an empty line */
+            } else {
+                chat_scroll(-1);
+            }
+            break;
+#else
         case KEY_CRSR_UP:
             chat_scroll(1);
             break;
         case KEY_CRSR_DOWN:
             chat_scroll(-1);
             break;
+#endif
         case KEY_F4:
             chat_scroll(PAGE_LINES);
             break;
@@ -1427,6 +1456,9 @@ static void handle_key(uint8_t k) {
             chat_scroll(-PAGE_LINES);
             break;
         default:
+#ifdef SOFT80
+            hist_reset();
+#endif
             editor_key(k);
     }
 }
