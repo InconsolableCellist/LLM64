@@ -420,7 +420,10 @@ static void menu_open(void) {
                 COLOR_CYAN, 0);
     ui_draw_row(5, "  s)ilence  x)cancel  e)config  d)iskcopy  h)elp",
                 COLOR_CYAN, 0);
-    ui_draw_row(7, "  f1 or stop: close", COLOR_GRAY2, 0);
+    /* Local, and the only entry here that works with the wire dead -
+       which is exactly when this menu is the one you get. */
+    ui_draw_row(6, "  l)ink: hang up and dial again", COLOR_YELLOW, 0);
+    ui_draw_row(8, "  f1 or stop: close", COLOR_GRAY2, 0);
 #else
     ui_draw_row(2,  "  Menu", COLOR_WHITE, 0);
     ui_draw_row(4,  "  N  new conversation", COLOR_CYAN, 0);
@@ -1299,6 +1302,7 @@ static void menu_local(uint8_t a) {
         case 'j': sound_open(); break;
         case 'o': ha_open(); break;
         case 'R': modem_redial(); break;
+        case 'M': menu_open(); break;   /* server menu gave up */
 #endif
         default: break;
     }
@@ -1349,6 +1353,7 @@ static void handle_key(uint8_t k) {
 #ifndef SOFT80
             case 'c': if (state == ST_IDLE) conv_open(); break;
 #endif
+            case 'l': modem_redial(); break;
             case 'm': send_command("/models"); break;
             case 'a': send_command("/adventure"); break;
             case 'r': send_command("/chars"); break;

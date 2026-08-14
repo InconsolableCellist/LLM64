@@ -52,7 +52,7 @@ static const char S_EMPTY[] = "   (no entries - /help still works)";
 static const char S_FOOT[]  = " key or return = run    f1 = close";
 static const char S_READY[] = "Ready.";
 static const char S_RETRYING[] = "No reply - retrying...";
-static const char S_NOREPLY[] = "No reply - close and reopen (f1).";
+static const char S_NOREPLY[] = "No reply from the server - local menu.";
 
 /* Request timeout, same as the conversation manager's (mod_convmgr.c)
    and for the same reason: the resident response watchdog only runs
@@ -200,8 +200,12 @@ static void mn_tick(void) {
         ui_status(S_RETRYING);
         return;
     }
-    conv_loading = 0;   /* stop claiming to be loading */
-    mn_draw();
+    /* The server is not answering, so this panel has nothing to offer
+       and its entries all need the server anyway. Hand back to the
+       resident menu, which is local - and carries the reconnect. */
+    conv_loading = 0;
+    menu_action = 'M';
+    mod_modal_end();
     ui_status(S_NOREPLY);
 }
 

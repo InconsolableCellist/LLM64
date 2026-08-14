@@ -35,8 +35,8 @@ void mod_ha_run(void);
 #define BITMAP    0xE000
 
 static const char S_WAIT[]  = "   asking the proxy...";
-static const char S_LOST[]  = "No reply - f8 closes, r retries.";
-static const char S_SILENT[] = "Link silent - f8 closes, r retries.";
+static const char S_LOST[]  = "No reply - r retries, f8 then f1 to redial.";
+static const char S_SILENT[] = "Link silent - f8, then f1 to reconnect.";
 
 static uint8_t  rbuf[80];
 static uint8_t  pend;          /* waiting on HA_ROWS */
